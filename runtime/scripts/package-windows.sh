@@ -12,6 +12,7 @@ cp "$here/packaging/windows/setup.bat" "$here/packaging/windows/run.bat" "$stage
 "$here/scripts/fetch-mesa-windows.sh"
 cp "$build/mesa/"*.dll "$stage/"
 cp "$here/packaging/THIRD-PARTY.txt" "$stage/"
+mkdir -p "$stage/gamedef" && cp -r "$here/../gamedef/"*.toml "$here/../gamedef/symbols" "$here/../gamedef/console" "$here/../gamedef/reflection" "$here/../gamedef/events" "$stage/gamedef/"
 for f in "$here/packaging/windows/"*.bat "$here/packaging/windows/README.txt" "$here/packaging/THIRD-PARTY.txt"; do sed -i 's/$/\r/' "$stage/$(basename "$f")"; done
 (cd "$build/package" && rm -f BOZ-Redux-windows-x86.zip && zip -qr BOZ-Redux-windows-x86.zip BOZ-Redux)
 echo "$build/package/BOZ-Redux-windows-x86.zip"

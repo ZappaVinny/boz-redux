@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "mod_runtime.h"
 
 #include <stdarg.h>
 
@@ -22,5 +23,27 @@ __attribute__((weak)) void present_rect(int32_t width, int32_t height, int32_t *
 }
 
 __attribute__((weak)) int32_t s3eDeviceRequestQuit(void) {
+    return 0;
+}
+
+/* Mod runtime hooks used by s3e_input.c; tests run without mods. */
+__attribute__((weak)) void overlay_event(const struct overlay_event *event) {
+    (void)event;
+}
+
+__attribute__((weak)) bool overlay_capturing(void) {
+    return false;
+}
+
+__attribute__((weak)) bool lua_runtime_key(const char *name, bool down, bool repeat) {
+    (void)name;
+    (void)down;
+    (void)repeat;
+    return false;
+}
+
+__attribute__((weak)) int egl_backend_drawable_size(int *width, int *height) {
+    (void)width;
+    (void)height;
     return 0;
 }

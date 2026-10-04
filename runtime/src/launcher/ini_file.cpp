@@ -68,6 +68,9 @@ bool IniFile::load(const std::string &path) {
 }
 
 bool IniFile::save() const {
+    if (path_.empty()) {
+        return false;  // never loaded: nothing to write to
+    }
     std::string temp = path_ + ".tmp";
     {
         std::ofstream out(temp, std::ios::binary | std::ios::trunc);

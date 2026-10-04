@@ -64,6 +64,25 @@ endif()
 
 set(BOZ_WARNINGS -Wall -Wextra -Werror -Wno-format-truncation)
 
+# Lua 5.4 for code mods: the core and standard libraries (no interpreter or test files).
+file(GLOB BOZ_LUA_SOURCES ${CMAKE_SOURCE_DIR}/third_party/lua/l*.c)
+list(REMOVE_ITEM BOZ_LUA_SOURCES ${CMAKE_SOURCE_DIR}/third_party/lua/lua.c
+     ${CMAKE_SOURCE_DIR}/third_party/lua/ltests.c)
+add_library(lua STATIC ${BOZ_LUA_SOURCES})
+target_include_directories(lua PUBLIC third_party/lua)
+if(NOT WIN32)
+  target_compile_definitions(lua PRIVATE LUA_USE_POSIX)
+  target_link_libraries(lua PUBLIC m)
+endif()
+
+# Dear ImGui core, shared by the launcher (with its SDL backends) and the game's mod overlay.
+add_library(imgui_core STATIC
+  third_party/imgui/imgui.cpp
+  third_party/imgui/imgui_draw.cpp
+  third_party/imgui/imgui_tables.cpp
+  third_party/imgui/imgui_widgets.cpp)
+target_include_directories(imgui_core PUBLIC third_party/imgui)
+
 add_library(boz_project INTERFACE)
 target_include_directories(boz_project INTERFACE include src third_party/lzma)
 target_compile_definitions(boz_project INTERFACE _GNU_SOURCE)
@@ -85,6 +104,12 @@ add_executable(codboz_s3e_loader
   src/codboz_assets.c
   src/codboz_frame_interpolation.c
   src/main.c
+  src/mods.c
+  src/gamedef.c
+  src/game_image.c
+  src/lua_runtime.c
+  src/lua_hooks.c
+  src/overlay.cpp
   src/s3e_config.c
   src/s3e_audio.c
   src/s3e_audio_unit.c
@@ -109,22 +134,21 @@ else()
   set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
   set(BOZ_SYSTEM_LINK_OPTIONS)
 endif()
-target_link_libraries(codboz_s3e_loader PRIVATE boz_project unicorn ${BOZ_SYSTEM_LIBS})
+target_link_libraries(codboz_s3e_loader PRIVATE boz_project unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
 target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+if(NOT WIN32)
+  target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
+endif()
 target_compile_options(codboz_s3e_loader PRIVATE -falign-functions=16)
 set_target_properties(codboz_s3e_loader PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH "$ORIGIN")
 add_dependencies(codboz_s3e_loader SDL2 SDL2_mixer)
 
 # Launcher: Dear ImGui on SDL's 2D renderer (Direct3D on Windows, OpenGL or software on Linux).
 add_library(imgui STATIC
-  third_party/imgui/imgui.cpp
-  third_party/imgui/imgui_draw.cpp
-  third_party/imgui/imgui_tables.cpp
-  third_party/imgui/imgui_widgets.cpp
   third_party/imgui/backends/imgui_impl_sdl2.cpp
   third_party/imgui/backends/imgui_impl_sdlrenderer2.cpp)
-target_include_directories(imgui PUBLIC third_party/imgui third_party/imgui/backends)
-target_link_libraries(imgui PUBLIC SDL2::SDL2)
+target_include_directories(imgui PUBLIC third_party/imgui/backends)
+target_link_libraries(imgui PUBLIC imgui_core SDL2::SDL2)
 
 add_executable(boz-redux
   src/launcher/main.cpp
@@ -132,7 +156,8 @@ add_executable(boz-redux
   src/launcher/ini_file.cpp
   src/launcher/os.cpp
   src/launcher/sha256.cpp
-  src/client_config.c)
+  src/client_config.c
+  src/mods.c)
 target_include_directories(boz-redux PRIVATE include)
 target_compile_options(boz-redux PRIVATE ${BOZ_WARNINGS})
 target_link_libraries(boz-redux PRIVATE imgui)
@@ -170,6 +195,11 @@ boz_test(s3e_zeroconf_test SOURCES tests/zeroconf_platform_fake.c src/s3e_zeroco
          INCLUDES tests)
 boz_test(s3e_timer_test SOURCES src/s3e_timer.c)
 boz_test(client_config_test SOURCES src/client_config.c)
+boz_test(mods_test SOURCES src/mods.c src/client_config.c)
+boz_test(gamedef_test SOURCES src/gamedef.c)
+boz_test(lua_runtime_test SOURCES src/lua_runtime.c src/mods.c src/client_config.c src/gamedef.c
+         src/game_image.c ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(lua_runtime_test PRIVATE lua ${CMAKE_DL_LIBS})
 boz_test(s3e_memory_test SOURCES src/s3e_memory.c)
 boz_test(device_id_test SOURCES src/device_id.c ${BOZ_PLATFORM_SOURCES})
 boz_test(s3e_audio_test SOURCES src/s3e_audio.c
@@ -186,3 +216,10 @@ target_compile_options(arm_emu_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(arm_emu_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 add_test(NAME arm_emu_test COMMAND arm_emu_test)
+
+add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(lua_hooks_test PRIVATE boz_project unicorn lua ${CMAKE_DL_LIBS} pthread m)
+target_compile_options(lua_hooks_test PRIVATE -falign-functions=16 -UNDEBUG)
+set_target_properties(lua_hooks_test PROPERTIES ENABLE_EXPORTS ON
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+add_test(NAME lua_hooks_test COMMAND lua_hooks_test)

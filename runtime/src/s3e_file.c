@@ -1,5 +1,8 @@
 #include "s3e_host_internal.h"
 
+#include "mod_runtime.h"
+#include "mods.h"
+
 static void make_path(char *out, size_t out_size, const char *name) {
     if (name && name[0] == '/') {
         snprintf(out, out_size, "%s", name);
@@ -411,6 +414,46 @@ static long file_size_for_seek(FILE *file) {
     return size;
 }
 
+/* assets.patch: hand a mod's Lua the whole file and serve what it returns from memory. */
+static FILE *patch_file(const char *name, FILE *file) {
+    long size = file_size_for_seek(file);
+    void *data = size > 0 ? malloc((size_t)size) : NULL;
+    if (!data || fseek(file, 0, SEEK_SET) != 0 || fread(data, 1, (size_t)size, file) != (size_t)size) {
+        free(data);
+        fseek(file, 0, SEEK_SET);
+        return file;
+    }
+    void *patched = NULL;
+    size_t patched_size = 0;
+    bool changed = lua_runtime_patch_asset(name, data, (size_t)size, &patched, &patched_size);
+    free(data);
+    if (!changed) {
+        fseek(file, 0, SEEK_SET);
+        return file;
+    }
+    FILE *memory = plat_memfile(patched, patched_size);
+    if (!memory) {
+        free(patched);
+        fseek(file, 0, SEEK_SET);
+        return file;
+    }
+    s3eFileClose(file);
+    track_memory_file(memory, patched);
+    return memory;
+}
+
+/* [debug] log_files: one line per open, so modders can see which paths to replace. */
+static void trace_open(const char *name, const char *mode, const char *source) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("BOZ_TRACE_FILES");
+        enabled = setting && setting[0] && strcmp(setting, "0") != 0;
+    }
+    if (enabled) {
+        fprintf(stderr, "[file] %s (%s) -> %s\n", name, mode, source ? source : "not found");
+    }
+}
+
 void *s3eFileOpen(const char *name, const char *mode) {
     char path[1200];
     char opened_path[1200] = "";
@@ -432,6 +475,8 @@ void *s3eFileOpen(const char *name, const char *mode) {
         if (file) {
             snprintf(opened_path, sizeof(opened_path), "%s", path);
         }
+    } else if (is_read_mode(safe_mode) && mods_find_override(safe_name, path, sizeof(path)) &&
+               (file = fopen(path, fopen_mode)) != NULL) {
     } else if (is_archive_read_mode(safe_mode) && dtrz_prefer_entry(safe_name) &&
                (file = open_dtrz_entry(safe_name, opened_path, sizeof(opened_path))) != NULL) {
     } else if (is_read_mode(safe_mode) && resolve_read_path(safe_name, path, sizeof(path))) {
@@ -454,12 +499,18 @@ void *s3eFileOpen(const char *name, const char *mode) {
         file = open_dtrz_entry(safe_name, opened_path, sizeof(opened_path));
     }
     if (!file && is_read_mode(safe_mode) && strcmp(base_name(safe_name), "console.bin") == 0) {
+        trace_open(safe_name, safe_mode, "(empty)");
 #if defined(_WIN32)
         file = fopen("NUL", "rb");
 #else
         file = fopen("/dev/null", "rb");
 #endif
+        return file;
     }
+    if (file && is_read_mode(safe_mode) && lua_runtime_has_asset_patch(safe_name)) {
+        file = patch_file(safe_name, file);
+    }
+    trace_open(safe_name, safe_mode, file ? (opened_path[0] ? opened_path : "(pack)") : NULL);
     return file;
 }
 
@@ -511,6 +562,9 @@ int32_t s3eFileCheckExists(const char *name) {
     if (is_user_file_name(safe_name)) {
         make_user_path(path, sizeof(path), safe_name);
         return access(path, F_OK) == 0 ? 1 : 0;
+    }
+    if (mods_find_override(safe_name, path, sizeof(path))) {
+        return 1;
     }
     if (dtrz_prefer_entry(safe_name) && dtrz_entry_exists(safe_name)) {
         return 1;

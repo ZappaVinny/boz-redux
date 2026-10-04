@@ -1,4 +1,6 @@
 #include "client_config.h"
+#include "mod_runtime.h"
+#include "mods.h"
 #include "codboz_frame_interpolation.h"
 #include "s3e_host.h"
 #include "s3e_host_internal.h"
@@ -279,6 +281,7 @@ int main(int argc, char **argv) {
     }
 
     client_config_load(root);
+    mods_init(root);
     /* Render resolution: --display-size, else BOZ_DISPLAY / client.ini, else 1280x720. */
     const char *display_setting = getenv("BOZ_DISPLAY");
     if (!display_size_given && display_setting &&
@@ -345,6 +348,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "mapped S3E at %p, entry=%p\n", (void *)loaded.base,
             (void *)(loaded.base + loaded.entry_offset));
     g_loaded_base = (uintptr_t)loaded.base;
+    game_set_image_base((uintptr_t)loaded.base);
     if (run) {
 #if defined(__arm__)
         int (*entry)(void) = (int (*)(void))(uintptr_t)(loaded.base + loaded.entry_offset);
@@ -359,6 +363,8 @@ int main(int argc, char **argv) {
         arm_emu_trace_ignore((uint32_t)(uintptr_t)&s3eFreeBase);
         arm_emu_trace_ignore((uint32_t)(uintptr_t)&s3eReallocBase);
         codboz_install_crash_recovery((uint32_t)(uintptr_t)loaded.base);
+        /* Mods start before the game so their hooks and asset patches see everything it does. */
+        lua_runtime_start();
         int rc = (int)arm_emu_call((uint32_t)(uintptr_t)(loaded.base + loaded.entry_offset), 0, NULL);
 #endif
         fprintf(stderr, "S3E entry returned %d\n", rc);

@@ -26,4 +26,21 @@ struct arm_emu_fault {
 typedef bool (*arm_emu_fault_handler)(struct arm_emu_fault *fault);
 void arm_emu_set_fault_handler(arm_emu_fault_handler handler);
 
+/* Guest registers at a code hook. r[15] is the hooked address (no Thumb bit). Edit r[0..14] to
+ * change them; set r[15] (and thumb) to continue somewhere else, e.g. at r[14] to return early. */
+struct arm_emu_regs {
+    uint32_t r[16];
+    bool thumb;
+};
+
+typedef void (*arm_emu_code_hook)(struct arm_emu_regs *regs, void *user);
+
+/* Calls fn before the guest instruction at address runs (Thumb bit ignored), on the calling
+ * thread's CPU only; the game's code is never patched. Returns an id, or -1. */
+int arm_emu_hook_add(uint32_t address, arm_emu_code_hook fn, void *user);
+void arm_emu_hook_remove(int id);
+/* An address in the emulator's own code page that guest code may jump to but that never runs:
+ * hook it (arm_emu_hook_add) and move on from the hook, e.g. as a return trap. */
+uint32_t arm_emu_trap_address(void);
+
 #endif

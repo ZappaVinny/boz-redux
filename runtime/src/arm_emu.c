@@ -534,6 +534,107 @@ uint64_t arm_emu_call(uint32_t fn, int argc, const uint32_t *argv) {
     return ((uint64_t)hi << 32) | lo;
 }
 
+/* Code hooks: Unicorn code hooks limited to one address, so they cost nothing elsewhere. Adding or
+ * removing one flushes the translation cache so code translated before picks the change up
+ * (Unicorn's single-range invalidate needs a TLB lookup that fails outside emulation; hooks
+ * change rarely, so a full flush is cheap). */
+enum { MAX_CODE_HOOKS = 256 };
+
+static struct code_hook {
+    uc_engine *uc;
+    uc_hook handle;
+    uint32_t address;
+    arm_emu_code_hook fn;
+    void *user;
+    bool used;
+} g_code_hooks[MAX_CODE_HOOKS];
+
+/* A flush while a code hook runs (a handler adding or removing hooks) waits until the outermost
+ * hook returns: the current translated block is still executing, and nested guest calls from the
+ * handler could translate new code over it. The PC is then rewritten to leave the block at once. */
+static __thread int t_hook_depth;
+static __thread bool t_flush_pending;
+
+static void flush_translations(uc_engine *uc) {
+    if (t_hook_depth > 0) {
+        t_flush_pending = true;
+    } else {
+        uc_ctl_flush_tb(uc);
+    }
+}
+
+static void on_code_hook(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
+    (void)address;
+    (void)size;
+    struct code_hook *hook = user_data;
+    struct arm_emu_regs regs;
+    uint32_t cpsr = 0;
+    for (int i = 0; i < 16; ++i) {
+        uc_reg_read(uc, k_gpr_ids[i], &regs.r[i]);
+    }
+    uc_reg_read(uc, UC_ARM_REG_CPSR, &cpsr);
+    regs.thumb = (cpsr & (1u << 5)) != 0;
+    regs.r[15] &= ~1u;
+    struct arm_emu_regs before = regs;
+    t_hook_depth++;
+    hook->fn(&regs, hook->user);
+    t_hook_depth--;
+    bool flush = t_hook_depth == 0 && t_flush_pending;
+    if (flush) {
+        t_flush_pending = false;
+        uc_ctl_flush_tb(uc);
+    }
+    for (int i = 0; i < 15; ++i) {
+        if (regs.r[i] != before.r[i]) {
+            uc_reg_write(uc, k_gpr_ids[i], &regs.r[i]);
+        }
+    }
+    if (flush || regs.r[15] != before.r[15] || regs.thumb != before.thumb) {
+        uint32_t pc = (regs.r[15] & ~1u) | (regs.thumb ? 1u : 0u);
+        uc_reg_write(uc, UC_ARM_REG_PC, &pc);
+    }
+}
+
+int arm_emu_hook_add(uint32_t address, arm_emu_code_hook fn, void *user) {
+    if (!t_emu) {
+        t_emu = emu_create();
+        if (!t_emu) {
+            return -1;
+        }
+    }
+    address &= ~1u;
+    for (int id = 0; id < MAX_CODE_HOOKS; ++id) {
+        struct code_hook *hook = &g_code_hooks[id];
+        if (hook->used) {
+            continue;
+        }
+        *hook = (struct code_hook){t_emu->uc, 0, address, fn, user, true};
+        if (uc_hook_add(t_emu->uc, &hook->handle, UC_HOOK_CODE, (void *)on_code_hook, hook,
+                        address, address) != UC_ERR_OK) {
+            hook->used = false;
+            return -1;
+        }
+        flush_translations(t_emu->uc);
+        return id;
+    }
+    return -1;
+}
+
+void arm_emu_hook_remove(int id) {
+    if (id < 0 || id >= MAX_CODE_HOOKS || !g_code_hooks[id].used) {
+        return;
+    }
+    struct code_hook *hook = &g_code_hooks[id];
+    uc_hook_del(hook->uc, hook->handle);
+    flush_translations(hook->uc);
+    hook->used = false;
+}
+
+uint32_t arm_emu_trap_address(void) {
+    /* The last word is the call sentinel; the one before it is free. */
+    return g_svc_page ? (uint32_t)(uintptr_t)g_svc_page + PAGE_SIZE_EMU - 8 : 0;
+}
+
 uint32_t arm_emu_call_scratch(void) {
     return t_call_scratch;
 }

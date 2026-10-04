@@ -6,6 +6,7 @@ BOZ Redux brings the original *Call of Duty: Black Ops Zombies* mobile game (And
 
 - The original game code runs on desktop Linux and Windows through a built-in ARM emulator. The full game is playable with mouse and keyboard, in a resizable or fullscreen window.
 - Automated builds produce a Linux tarball and a Windows zip.
+- **Mods work:** replacement files, Lua code mods with hooks, settings in the game's own pause menu, and a standard library that makes common changes one line. The Redux mod adds a field of view setting to the pause menu.
 - No game files are included in this project, and none ever will be.
 
 ## How it fits together
@@ -36,42 +37,55 @@ Gameplay changes always live in mods, never hard-coded into the client.
 - Set up your game files: choose your APK (it checks the version and warns about tampered copies), then get the data packs from Activision's server or import your own.
 - Enable, disable and order mods; change settings; play.
 
-### 4. Mod runtime
-- **Asset mods:** drop replacement files into a mod folder, and they override the originals without touching your game files.
-- **Code mods in Lua:** hook game functions, read and change game state, add settings to the launcher.
-- **A shared symbol database:** named game functions and data, so mods don't break when internals are mapped differently.
+### 4. Mod runtime (done)
+- **Asset mods:** drop replacement files into a mod folder, and they override the originals without touching your game files; or change a file as it loads.
+- **Code mods in Lua:** hook game functions, read and change game state, draw overlay windows, save settings.
+- **The standard lib:** player, perks, field of view, noclip, rounds, the console, pause-menu settings and menu building blocks as plain Lua functions.
+- **The game definition:** named game functions, data, events and console commands, so mods don't break when internals are mapped differently.
+- **The Developer mod:** the game's hidden developer console, cheats and noclip.
+- Documented in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): a guide to making mods and references for everything above.
 
-### 5. Redux base mod
-- FOV, uncapped mouse look, sensitivity curves, quality-of-life settings.
+### 5. Native PC controls (next)
+- Mouse look that feels like a modern PC shooter: raw input straight to the camera, no stick acceleration.
+- Movement and actions sent straight to the game, and automatic menu and game modes (no Tab).
+- Hooks for mods to adjust look and input.
+
+### 6. Redux base mod
+- Field of view (done), aim toggle or hold, and more quality-of-life settings, all in the game's own pause menu.
 - The first real mod, and the reference example for mod authors.
 
-### 6. Asset tools (bozkit)
+### 7. LAN co-op
+- The game's own local co-op over LAN and virtual LANs (ZeroTier, Radmin VPN, Hamachi), with no online accounts or servers.
+
+### 8. Asset tools (bozkit)
 - Open the game's `.group.bin` resource format, which holds every texture, model, UI screen and map.
 - Textures to and from PNG; models to and from glTF; UI, audio and text editing.
 - A Blender add-on for models and maps.
 
-### 7. Maps
+### 9. Maps
 - Edit existing maps first.
 - Then research what it takes to build brand-new ones: spawns, zombie pathing, barriers, rounds.
 
-### 8. macOS
+### 10. macOS
 - A 64-bit version of the client, which macOS requires and which also enables a faster emulator backend.
 
-## Mod format (planned)
+## Mod format
 
-A mod is a folder or `.zip`:
+A mod is a folder in `mods/`:
 
     mods/my-mod/
-      mod.toml      name, version, author, game version, dependencies
-      assets/       replacement files, using the game's own paths
-      scripts/      main.lua
+      mod.toml      id, name, version, author, game version, description
+      assets/       replacement files, using the game's own file names
+      scripts/      main.lua, and the standard lib as scripts/boz
+
+See [making mods](https://github.com/ZappaVinny/boz-redux-sdk/blob/main/docs/making-mods.md).
 
 ## Getting involved
 
 - **Players:** testing on different hardware, especially Windows, helps the most right now.
-- **Modders:** the mod format and Lua API will be documented here as they land.
+- **Modders:** start with [making mods](https://github.com/ZappaVinny/boz-redux-sdk/blob/main/docs/making-mods.md) and the [standard library](https://github.com/ZappaVinny/boz-redux-sdk/blob/main/docs/standard-library.md).
 - **Reverse engineers and modders:** the tools, the symbol database and the format documentation are in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk).
 
 ## Credits
 
-Built on [cod-boz-port](https://github.com/Producdevity/cod-boz-port) by Producdevity, [Unicorn](https://github.com/unicorn-engine/unicorn), [SDL](https://github.com/libsdl-org/SDL) and [destin](https://github.com/Tatsh/destin).
+Built on [cod-boz-port](https://github.com/Producdevity/cod-boz-port) by Producdevity, [Unicorn](https://github.com/unicorn-engine/unicorn), [SDL](https://github.com/libsdl-org/SDL), [Lua](https://www.lua.org), [Dear ImGui](https://github.com/ocornut/imgui) and [destin](https://github.com/Tatsh/destin).

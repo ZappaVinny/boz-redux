@@ -13,3 +13,6 @@
 [submodule "gamedef"]
 	path = gamedef
 	url = https://github.com/ZappaVinny/boz-redux-gamedef.git
+[submodule "runtime/third_party/lua"]
+	path = runtime/third_party/lua
+	url = https://github.com/lua/lua.git

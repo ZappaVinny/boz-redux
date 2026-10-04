@@ -1,5 +1,7 @@
 #include "s3e_host_internal.h"
 
+#include "mod_runtime.h"
+
 #define GL_WRAP_FLOAT1(name, t1)                                                                   \
     static S3E_SOFTFP void host_##name(t1 a) {                                                     \
         void (GL_APIENTRY *real)(t1) = lookup_gl(#name);                                                       \
@@ -523,7 +525,8 @@ static void clear_letterbox_rect(GLint x, GLint y, GLsizei width, GLsizei height
 
 static void frontend_overlay_gl_present(void) {
     int has_letterbox = g_surface.x || g_surface.y;
-    if (!has_letterbox && !g_cursor_active) {
+    int draw_cursor = input_draw_software_cursor();
+    if (!has_letterbox && !draw_cursor) {
         return;
     }
 
@@ -567,7 +570,7 @@ static void frontend_overlay_gl_present(void) {
                              gl_scissor, gl_clear);
     }
 
-    if (g_cursor_active) {
+    if (draw_cursor) {
         int x = g_pointer_x;
         int y = g_pointer_y;
         const int outline_radius = cursor_scaled_size(10);
@@ -595,6 +598,29 @@ static void frontend_overlay_gl_present(void) {
     }
 }
 
+/* Code mods: the Lua "frame" event and the overlay, drawn over the scaled frame at window size. */
+static void mod_runtime_present(void) {
+    static uint64_t last_us;
+    static int active = -1;
+    if (active < 0) {
+        active = lua_runtime_start();
+    }
+    if (!active) {
+        return;
+    }
+    uint64_t now = monotonic_us();
+    double dt = last_us ? (double)(now - last_us) / 1e6 : 1.0 / 60.0;
+    last_us = now;
+    int width = 0, height = 0;
+    if (!egl_backend_drawable_size(&width, &height)) {
+        width = g_native_window.width;
+        height = g_native_window.height;
+    }
+    overlay_begin_frame(width, height, dt);
+    lua_runtime_frame(dt);
+    overlay_end_frame();
+}
+
 static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
     input_pump();
     dispatch_due_timers();
@@ -604,6 +630,7 @@ static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
     }
     frontend_overlay_gl_present();
     scale_present();
+    mod_runtime_present();
     EGLBoolean result = egl_backend_swap_buffers(display, surface);
     if (previous_framebuffer) {
         driver_bind_framebuffer(previous_framebuffer);

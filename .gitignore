@@ -2,6 +2,7 @@
 original/
 assets/
 saves/
+mods/
 client.ini
 boz-log.txt
 setup-log.txt
@@ -14,6 +15,7 @@ setup-log.txt
 build/
 
 # Local, personal or secret config
+CLAUDE.local.md
 .mcp.json
 .vscode/
 .claude/

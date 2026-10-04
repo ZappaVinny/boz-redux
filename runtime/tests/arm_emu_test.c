@@ -49,6 +49,43 @@ static uint32_t host_reenter(uint32_t x) {
     return (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[0], 1, &arg);
 }
 
+/* Code hooks. */
+static void hook_double_r0(struct arm_emu_regs *regs, void *user) {
+    (void)user;
+    regs->r[0] *= 2;
+}
+
+static void hook_skip(struct arm_emu_regs *regs, void *user) {
+    (void)user;
+    regs->r[0] = 7;
+    regs->thumb = (regs->r[14] & 1u) != 0;
+    regs->r[15] = regs->r[14] & ~1u;
+}
+
+static uint32_t g_trap;        /* return trap: the function returns here instead of to its caller */
+static uint32_t g_saved_lr;
+
+static void hook_redirect_return(struct arm_emu_regs *regs, void *user) {
+    (void)user;
+    g_saved_lr = regs->r[14];
+    regs->r[14] = g_trap;
+}
+
+static void hook_at_trap(struct arm_emu_regs *regs, void *user) {
+    (void)user;
+    regs->r[0] += 1000;
+    regs->thumb = (g_saved_lr & 1u) != 0;
+    regs->r[15] = g_saved_lr & ~1u;
+}
+
+static int g_thumb_hits;
+
+static void hook_count(struct arm_emu_regs *regs, void *user) {
+    (void)user;
+    g_thumb_hits++;
+    regs->r[0] += 10;
+}
+
 int main(void) {
     if (!arm_emu_init()) {
         return 1;
@@ -108,6 +145,36 @@ int main(void) {
            (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[24], 1, args), 0x5eed);
     expect("fault handler ran once", (uint64_t)g_recoveries, 1);
     arm_emu_set_fault_handler(NULL);
+
+    /* Hooks on code that already ran (cached translation) must still fire. */
+    uint32_t add_one = (uint32_t)(uintptr_t)&g_code[0];
+    int id = arm_emu_hook_add(add_one, hook_double_r0, NULL);
+    args[0] = 41;
+    expect("hook changes an argument", (uint32_t)arm_emu_call(add_one, 1, args), 83);
+    arm_emu_hook_remove(id);
+    expect("removed hook no longer runs", (uint32_t)arm_emu_call(add_one, 1, args), 42);
+
+    id = arm_emu_hook_add(add_one, hook_skip, NULL);
+    expect("hook skips the function", (uint32_t)arm_emu_call(add_one, 1, args), 7);
+    arm_emu_hook_remove(id);
+
+    g_trap = (uint32_t)(uintptr_t)&g_code[40];
+    g_code[40] = 0xe12fff1eu; /* never runs: the trap hook moves on first */
+    int entry = arm_emu_hook_add(add_one, hook_redirect_return, NULL);
+    int trap = arm_emu_hook_add(g_trap, hook_at_trap, NULL);
+    expect("return trap changes the result", (uint32_t)arm_emu_call(add_one, 1, args), 1042);
+    arm_emu_hook_remove(entry);
+    arm_emu_hook_remove(trap);
+
+    /* 48: Thumb "adds r0, #1; bx lr", called with the Thumb bit, hooked without it. */
+    uint16_t thumb[] = {0x3001u, 0x4770u};
+    memcpy(&g_code[48], thumb, sizeof(thumb));
+    uint32_t thumb_fn = (uint32_t)(uintptr_t)&g_code[48];
+    id = arm_emu_hook_add(thumb_fn | 1u, hook_count, NULL);
+    args[0] = 1;
+    expect("hook on a Thumb function", (uint32_t)arm_emu_call(thumb_fn | 1u, 1, args), 12);
+    expect("Thumb hook ran once", (uint64_t)g_thumb_hits, 1);
+    arm_emu_hook_remove(id);
 
     return g_failures ? 1 : 0;
 }

@@ -26,6 +26,8 @@ ARM `#if defined(__arm__)` paths are left in the source but nothing builds or sh
 - `gamedef/`: submodule (boz-redux-gamedef), the game definition the mod runtime will read. Update it by moving the submodule pin to a commit the SDK published; check `schema` in `gamedef/gamedef.toml`.
 - `original/` (gitignored): `com.activision.boz.apk` (1.0.11) and `obb/` with the CDN packs plus `.dz.dat` markers.
 - `assets/` (gitignored): extracted game data and pack links, made by `setup-game.sh`. The repo root is the game root (`--root`); the port looks up files in `<root>/assets/`.
+- `mods/` (gitignored): installed mods, one folder each (`mod.toml`, `assets/`, later `scripts/`). `src/mods.c` scans them; the launcher's Mods tab writes `client.ini [mods] order/disabled`; `s3eFileOpen`/`s3eFileCheckExists` check enabled mods' `assets/` first (whole path, then file name, no case; later mods win). `[debug] log_files` (`BOZ_TRACE_FILES`) logs every open.
+- Code mods: `src/lua_runtime.c` (Lua 5.4 submodule `runtime/third_party/lua`, one state on the game thread; runs each enabled mod's `scripts/main.lua` in its own env at the first swap), `src/lua_hooks.c` (`hook` module on `arm_emu_hook_add`: per-address Unicorn code hooks, return trap for after handlers), `src/game_image.c` (image base, gamedef name to address), `src/gamedef.c` (reads `<root>/gamedef` or `<exe>/gamedef`; packages bundle it), `src/overlay.cpp` (ImGui core + own GLES2 renderer on `lookup_gl`, drawn in `host_eglSwapBuffers` after `scale_present`; input from `input_pump`'s `SDL_PollEvent` loop; `overlay.capture` takes all input from the game). API reference: `../boz-redux-sdk/docs/lua-api.md`. The client has no game-specific Lua: the standard lib (`boz.*`) lives in `../boz-redux-sdk/lib/boz` and mods carry a copy (`scripts/boz`); the SDK's Developer and Redux mods are linked into `mods/`. Lua hooks: `assets.patch` (s3e_file.c serves patched files from memory), `shared` (one table all mods see). Mods start right before the game's entry point (main.c) so hooks and patches see everything.
 - `saves/` (gitignored): game saves and `device-id.bin`. `run-desktop.sh` sets `HOME` to it (override with `BOZ_SAVES`) and keeps `XDG_CACHE_HOME` on the real cache.
 
 Never commit game files (`*.apk`, `*.dz`, extracted assets).
@@ -44,10 +46,8 @@ Never commit game files (`*.apk`, `*.dz`, extracted assets).
 - Emulator faults print `[arm] ... pc= lr=` with all registers.
 - Settings: `<root>/client.ini` (`src/client_config.c`) is translated into the `BOZ_*` variables below at startup; a variable already set wins.
 - Other env: `BOZ_DISPLAY=WxH`, `BOZ_STRETCH=1`, `BOZ_NO_SCALE=1`, `BOZ_MOUSE_SENS` (default 12000), `BOZ_LOOK_RADIUS`, `BOZ_LOOK_MODE=swipe`.
-- Hyprland here uses Lua dispatchers: `hyprctl dispatch 'hl.dsp.focus({ window = "class:codboz_s3e_loader" })'`.
 - Reverse engineering (Ghidra, symbol tools) lives in `../boz-redux-sdk`; see its `docs/reverse-engineering.md`.
 
-## Working with the user
+## Building
 
-- The user runs the game and reports what they see; don't launch windows or change their desktop unless asked.
 - Building needs 32-bit libs: `lib32-glibc`, `lib32-mesa`, `lib32-libglvnd`, `lib32-libxkbcommon`, `lib32-libdecor`. SDL2 is built from the submodule, not installed.

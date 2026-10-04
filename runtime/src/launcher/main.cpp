@@ -2,6 +2,7 @@
 #include "client_config.h"
 #include "game_files.h"
 #include "ini_file.h"
+#include "mods.h"
 #include "os.h"
 
 #include "imgui.h"
@@ -14,6 +15,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <string>
 #include <vector>
@@ -65,6 +68,11 @@ struct Launcher {
     char custom_resolution[32] = "";
 
     int capturing = -1;  // binding index waiting for a key or mouse press
+
+    std::vector<mod_info> mods;
+    std::map<std::string, std::vector<std::string>> mod_conflicts;  // file -> enabled mod ids
+    bool mods_scanned = false;
+    int mod_selected = -1;
 
     os::Process game;
     bool game_running = false;
@@ -303,6 +311,14 @@ void settings_tab(Launcher &l) {
             save_setting(l, "display", "scaling", chosen);
         }
     }
+    bool software_cursor = l.ini.get("display", "software_cursor", "false") == "true";
+    if (ImGui::Checkbox("Crosshair pointer in menus", &software_cursor)) {
+        save_setting(l, "display", "software_cursor", software_cursor ? "true" : "false");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Draw the port's crosshair instead of the system mouse pointer.\n"
+                          "Controllers always show it.");
+    }
 
     ImGui::SeparatorText("Mouse");
     int sensitivity = std::atoi(l.ini.get("input", "mouse_sensitivity", "12000").c_str());
@@ -370,10 +386,189 @@ void settings_tab(Launcher &l) {
     if (ImGui::Checkbox("Log frame rate and emulator statistics", &status)) {
         save_setting(l, "debug", "status", status ? "true" : "false");
     }
+    bool log_files = l.ini.get("debug", "log_files", "false") == "true";
+    if (ImGui::Checkbox("Log every file the game opens (for mod makers)", &log_files)) {
+        save_setting(l, "debug", "log_files", log_files ? "true" : "false");
+    }
     ImGui::PopItemWidth();
     ImGui::EndChild();
     ImGui::TextDisabled("%s", l.settings_note.empty() ? "Changes apply the next time the game starts."
                                                       : l.settings_note.c_str());
+}
+
+// --- Mods tab ------------------------------------------------------------------------------
+
+void collect_conflict(const char *relative, const char *, void *user) {
+    auto *files = static_cast<std::vector<std::string> *>(user);
+    std::string key = relative;
+    for (char &c : key) {
+        c = (char)std::tolower((unsigned char)c);
+    }
+    size_t slash = key.rfind('/');
+    files->push_back(slash == std::string::npos ? key : key.substr(slash + 1));
+}
+
+// Files that more than one enabled mod replaces, matched by file name like the game's lookup.
+void find_mod_conflicts(Launcher &l) {
+    std::map<std::string, std::vector<std::string>> owners;
+    for (const mod_info &mod : l.mods) {
+        if (!mod.enabled) {
+            continue;
+        }
+        std::vector<std::string> files;
+        mods_list_assets(&mod, collect_conflict, &files);
+        std::sort(files.begin(), files.end());
+        files.erase(std::unique(files.begin(), files.end()), files.end());
+        for (const std::string &file : files) {
+            owners[file].push_back(mod.id);
+        }
+    }
+    l.mod_conflicts.clear();
+    for (auto &entry : owners) {
+        if (entry.second.size() > 1) {
+            l.mod_conflicts[entry.first] = entry.second;
+        }
+    }
+}
+
+void scan_mods(Launcher &l) {
+    std::vector<mod_info> found(MODS_MAX);
+    std::string order = l.ini.get("mods", "order"), disabled = l.ini.get("mods", "disabled");
+    int count = mods_scan(l.root.c_str(), order.c_str(), disabled.c_str(), found.data(), MODS_MAX);
+    found.resize(count);
+    l.mods = found;
+    l.mods_scanned = true;
+    if (l.mod_selected >= count) {
+        l.mod_selected = count - 1;
+    }
+    find_mod_conflicts(l);
+}
+
+void save_mods(Launcher &l) {
+    std::string order, disabled;
+    for (const mod_info &mod : l.mods) {
+        order += (order.empty() ? "" : ", ") + std::string(mod.id);
+        if (!mod.enabled) {
+            disabled += (disabled.empty() ? "" : ", ") + std::string(mod.id);
+        }
+    }
+    l.ini.set("mods", "order", order);
+    save_setting(l, "mods", "disabled", disabled);
+    find_mod_conflicts(l);
+}
+
+void mods_tab(Launcher &l) {
+    ensure_ini(l);
+    if (!l.ini_loaded) {
+        ImGui::TextColored(rgb(220, 120, 90), "Could not open client.ini in %s.", l.root.c_str());
+        return;
+    }
+    if (!l.mods_scanned) {
+        scan_mods(l);
+    }
+    std::string folder = os::join(l.root, "mods");
+    if (ImGui::Button("Open mods folder")) {
+        os::make_dir(folder);
+        os::open_path(folder);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh")) {
+        scan_mods(l);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Later mods win when two replace the same file.");
+
+    if (l.mods.empty()) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("No mods installed. Put each mod in its own folder in %s, with a "
+                           "mod.toml and an assets folder, then press Refresh.",
+                           folder.c_str());
+        return;
+    }
+
+    float details_height = ImGui::GetTextLineHeightWithSpacing() * 6;
+    ImGui::BeginChild("mod_list", ImVec2(0, -details_height), ImGuiChildFlags_Borders);
+    int move_from = -1, move_to = -1;
+    if (ImGui::BeginTable("mods", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Mod");
+        ImGui::TableSetupColumn("Version", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Order", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < (int)l.mods.size(); ++i) {
+            mod_info &mod = l.mods[i];
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (ImGui::Checkbox("##on", &mod.enabled)) {
+                save_mods(l);
+            }
+            ImGui::TableNextColumn();
+            if (ImGui::Selectable(mod.name, l.mod_selected == i,
+                                  ImGuiSelectableFlags_SpanAllColumns |
+                                      ImGuiSelectableFlags_AllowOverlap)) {
+                l.mod_selected = i;
+            }
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(mod.version[0] ? mod.version : "-");
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled(i == 0);
+            if (ImGui::ArrowButton("##up", ImGuiDir_Up)) {
+                move_from = i, move_to = i - 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(i + 1 == (int)l.mods.size());
+            if (ImGui::ArrowButton("##down", ImGuiDir_Down)) {
+                move_from = i, move_to = i + 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (move_from >= 0) {
+        std::swap(l.mods[move_from], l.mods[move_to]);
+        if (l.mod_selected == move_from) {
+            l.mod_selected = move_to;
+        } else if (l.mod_selected == move_to) {
+            l.mod_selected = move_from;
+        }
+        save_mods(l);
+    }
+    ImGui::EndChild();
+
+    if (l.mod_selected >= 0 && l.mod_selected < (int)l.mods.size()) {
+        const mod_info &mod = l.mods[l.mod_selected];
+        ImGui::Text("%s", mod.name);
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s%s%s  folder: mods/%s", mod.id, mod.author[0] ? "  by " : "",
+                            mod.author, mod.folder);
+        if (!mod.has_manifest) {
+            ImGui::TextColored(rgb(230, 180, 80), "No mod.toml: named after its folder.");
+        } else if (mod.game[0] && std::strcmp(mod.game, "1.0.11") != 0) {
+            ImGui::TextColored(rgb(230, 180, 80), "Made for game version %s; this client runs 1.0.11.",
+                               mod.game);
+        }
+        if (mod.description[0]) {
+            ImGui::TextWrapped("%s", mod.description);
+        }
+    } else {
+        ImGui::TextDisabled("Select a mod to see its details.");
+    }
+    if (!l.mod_conflicts.empty()) {
+        std::string list;
+        for (auto &entry : l.mod_conflicts) {
+            list += (list.empty() ? "" : ", ") + entry.first + " (";
+            for (size_t i = 0; i < entry.second.size(); ++i) {
+                list += (i ? ", " : "") + entry.second[i];
+            }
+            list += ")";
+        }
+        ImGui::TextColored(rgb(230, 180, 80), "%d file%s replaced by more than one mod: %s",
+                           (int)l.mod_conflicts.size(), l.mod_conflicts.size() == 1 ? "" : "s",
+                           list.c_str());
+    }
 }
 
 // Turns a key or mouse press into a binding while a "Set" button is waiting.
@@ -484,8 +679,7 @@ void draw(Launcher &l, SDL_Window *window) {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Mods")) {
-            ImGui::TextWrapped("Mod support is coming: asset replacements and Lua code mods, "
-                               "including the Redux base mod (FOV, faster mouse look).");
+            mods_tab(l);
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

@@ -25,6 +25,9 @@ static const char DEFAULT_CONFIG[] =
     "resolution = 1280x720\n"
     "# fit: keep the 16:9 picture with black bars; stretch: fill the window; none: no scaling.\n"
     "scaling = fit\n"
+    "# Draw the port's crosshair pointer in menus instead of the system mouse pointer. A\n"
+    "# controller always gets it (it is the only pointer a controller has).\n"
+    "software_cursor = false\n"
     "\n"
     "[input]\n"
     "# Mouse look speed in game mode (Tab).\n"
@@ -56,9 +59,17 @@ static const char DEFAULT_CONFIG[] =
     "# Fullscreen toggle (Alt+Enter also works).\n"
     "fullscreen = F11\n"
     "\n"
+    "[mods]\n"
+    "# Set by the launcher's Mods tab. order: load order (when two mods replace the same file, the\n"
+    "# later one wins); disabled: mods switched off. Mods not listed load last, switched on.\n"
+    "order =\n"
+    "disabled =\n"
+    "\n"
     "[debug]\n"
     "# Print emulator and frame rate statistics every two seconds.\n"
-    "status = false\n";
+    "status = false\n"
+    "# Log every file the game opens and where it came from (finds the paths mods replace).\n"
+    "log_files = false\n";
 
 static char *trim(char *text) {
     while (isspace((unsigned char)*text)) {
@@ -115,6 +126,17 @@ static struct {
 } g_bindings[MAX_BINDINGS];
 static int g_binding_count;
 
+static char g_mods_order[1024];
+static char g_mods_disabled[1024];
+
+const char *client_config_mods_order(void) {
+    return g_mods_order;
+}
+
+const char *client_config_mods_disabled(void) {
+    return g_mods_disabled;
+}
+
 static void store_binding(const char *action, const char *value) {
     int slot = 0;
     while (slot < g_binding_count && strcmp(g_bindings[slot].action, action) != 0) {
@@ -145,6 +167,17 @@ static bool apply(const char *section, const char *key, const char *value) {
     if (!strcmp(section, "keys")) {
         store_binding(key, value);
         return true;
+    }
+    if (!strcmp(section, "mods")) {
+        if (!strcmp(key, "order")) {
+            snprintf(g_mods_order, sizeof(g_mods_order), "%s", value);
+            return true;
+        }
+        if (!strcmp(key, "disabled")) {
+            snprintf(g_mods_disabled, sizeof(g_mods_disabled), "%s", value);
+            return true;
+        }
+        return false;
     }
     if (!strcmp(section, "display")) {
         if (!strcmp(key, "fullscreen") && parse_bool(value, &flag)) {
@@ -179,6 +212,12 @@ static bool apply(const char *section, const char *key, const char *value) {
             set_default("BOZ_DISPLAY", value);
             return true;
         }
+        if (!strcmp(key, "software_cursor") && parse_bool(value, &flag)) {
+            if (flag) {
+                set_default("BOZ_SOFTWARE_CURSOR", "1");
+            }
+            return true;
+        }
         if (!strcmp(key, "scaling")) {
             if (user_set("BOZ_STRETCH") || user_set("BOZ_NO_SCALE")) {
                 return true;
@@ -211,6 +250,12 @@ static bool apply(const char *section, const char *key, const char *value) {
         if (!strcmp(key, "status") && parse_bool(value, &flag)) {
             if (flag) {
                 set_default("BOZ_TRACE_STATUS", "1");
+            }
+            return true;
+        }
+        if (!strcmp(key, "log_files") && parse_bool(value, &flag)) {
+            if (flag) {
+                set_default("BOZ_TRACE_FILES", "1");
             }
             return true;
         }

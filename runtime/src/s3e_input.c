@@ -1,6 +1,7 @@
 #include "s3e_host_internal.h"
 
 #include "client_config.h"
+#include "mod_runtime.h"
 
 #include <strings.h>
 
@@ -149,6 +150,8 @@ struct sdl_input_api {
     int (*SetWindowFullscreen)(void *window, uint32_t flags);
     void (*GetWindowSize)(void *window, int *w, int *h);
     int (*HasEvent)(uint32_t type);
+    int (*PollEvent)(void *event);
+    const char *(*GetScancodeName)(int scancode);
 };
 
 static const uint32_t KEY_ACTION[] = {XPERIA_KEY_ACTION_SPRINT};
@@ -298,6 +301,8 @@ static void input_open(void) {
     sdl_load_optional_symbol((void **)&g_sdl.SetWindowFullscreen, "SDL_SetWindowFullscreen");
     sdl_load_optional_symbol((void **)&g_sdl.GetWindowSize, "SDL_GetWindowSize");
     sdl_load_optional_symbol((void **)&g_sdl.HasEvent, "SDL_HasEvent");
+    sdl_load_optional_symbol((void **)&g_sdl.PollEvent, "SDL_PollEvent");
+    sdl_load_optional_symbol((void **)&g_sdl.GetScancodeName, "SDL_GetScancodeName");
     if (!ok || g_sdl.InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
         if (!ok) {
             fprintf(stderr, "[input] SDL2 controller symbols unavailable\n");
@@ -1097,6 +1102,154 @@ static void input_refresh_controller(uint64_t now) {
     }
 }
 
+/* Code mods: SDL events go to the overlay and to Lua key handlers. While a mod has the overlay
+ * take input, the game gets no input at all. SDL_Event layouts are those of SDL 2.0.18+. */
+enum {
+    SDL_KEYDOWN_EVENT = 0x300,
+    SDL_KEYUP_EVENT = 0x301,
+    SDL_TEXTINPUT_EVENT = 0x303,
+    SDL_MOUSEMOTION_EVENT = 0x400,
+    SDL_MOUSEBUTTONDOWN_EVENT = 0x401,
+    SDL_MOUSEBUTTONUP_EVENT = 0x402,
+    SDL_MOUSEWHEEL_EVENT = 0x403,
+    SDL_EVENT_BYTES = 56,
+};
+
+static int g_overlay_captured;
+static int g_suppress_text;
+
+static void mod_mouse_scale(float *sx, float *sy) {
+    *sx = *sy = 1.0f;
+    void *window = g_sdl.GetMouseFocus ? g_sdl.GetMouseFocus() : NULL;
+    int ww = 0, wh = 0, dw = 0, dh = 0;
+    if (window && g_sdl.GetWindowSize) {
+        g_sdl.GetWindowSize(window, &ww, &wh);
+    }
+    if (ww > 0 && wh > 0 && egl_backend_drawable_size(&dw, &dh) && dw > 0 && dh > 0) {
+        *sx = (float)dw / (float)ww;
+        *sy = (float)dh / (float)wh;
+    }
+}
+
+static void mod_handle_event(const uint8_t *ev) {
+    uint32_t type;
+    memcpy(&type, ev, 4);
+    struct overlay_event out;
+    memset(&out, 0, sizeof(out));
+    switch (type) {
+    case SDL_KEYDOWN_EVENT:
+    case SDL_KEYUP_EVENT: {
+        int32_t scancode;
+        uint16_t mod;
+        memcpy(&scancode, ev + 16, 4);
+        memcpy(&mod, ev + 24, 2);
+        out.kind = OVERLAY_KEY;
+        out.scancode = scancode;
+        out.down = type == SDL_KEYDOWN_EVENT;
+        out.modifiers = ((mod & 0x00c0) ? 1 : 0) | ((mod & 0x0003) ? 2 : 0) | ((mod & 0x0300) ? 4 : 0) |
+                        ((mod & 0x0c00) ? 8 : 0);
+        overlay_event(&out);
+        const char *name = g_sdl.GetScancodeName ? g_sdl.GetScancodeName(scancode) : NULL;
+        if (lua_runtime_key(name, out.down, ev[13] != 0) && out.down) {
+            g_suppress_text = 1; /* the key a mod used should not also type its character */
+        } else if (out.down) {
+            g_suppress_text = 0;
+        }
+        break;
+    }
+    case SDL_TEXTINPUT_EVENT: {
+        char text[33];
+        memcpy(text, ev + 12, 32);
+        text[32] = '\0';
+        if (g_suppress_text) {
+            g_suppress_text = 0;
+            break;
+        }
+        out.kind = OVERLAY_TEXT;
+        out.text = text;
+        overlay_event(&out);
+        break;
+    }
+    case SDL_MOUSEMOTION_EVENT: {
+        int32_t x, y;
+        float sx, sy;
+        memcpy(&x, ev + 20, 4);
+        memcpy(&y, ev + 24, 4);
+        mod_mouse_scale(&sx, &sy);
+        out.kind = OVERLAY_MOUSE_MOVE;
+        out.x = (float)x * sx;
+        out.y = (float)y * sy;
+        overlay_event(&out);
+        break;
+    }
+    case SDL_MOUSEBUTTONDOWN_EVENT:
+    case SDL_MOUSEBUTTONUP_EVENT: {
+        static const int buttons[] = {-1, 0, 2, 1}; /* SDL left, middle, right -> ImGui 0, 2, 1 */
+        uint8_t button = ev[16];
+        int32_t x, y;
+        float sx, sy;
+        memcpy(&x, ev + 20, 4);
+        memcpy(&y, ev + 24, 4);
+        mod_mouse_scale(&sx, &sy);
+        out.kind = OVERLAY_MOUSE_MOVE;
+        out.x = (float)x * sx;
+        out.y = (float)y * sy;
+        overlay_event(&out);
+        if (button >= 1 && button <= 3) {
+            out.kind = OVERLAY_MOUSE_BUTTON;
+            out.button = buttons[button];
+            out.down = type == SDL_MOUSEBUTTONDOWN_EVENT;
+            overlay_event(&out);
+        }
+        break;
+    }
+    case SDL_MOUSEWHEEL_EVENT: {
+        uint32_t direction;
+        float px, py;
+        memcpy(&direction, ev + 24, 4);
+        memcpy(&px, ev + 28, 4);
+        memcpy(&py, ev + 32, 4);
+        out.kind = OVERLAY_MOUSE_WHEEL;
+        out.wheel_x = direction == 1 ? px : -px;
+        out.wheel_y = direction == 1 ? -py : py;
+        overlay_event(&out);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/* Returns true while the overlay owns input (the game gets none this frame). */
+static int mod_overlay_input(void) {
+    int capturing = overlay_capturing();
+    if (capturing != g_overlay_captured) {
+        g_overlay_captured = capturing;
+        touchpad_release_all();
+        keyboard_release_all();
+        input_release_pointer();
+        input_reset_triggers();
+        if (g_sdl.SetRelativeMouseMode) {
+            g_sdl.SetRelativeMouseMode(capturing ? 0 : g_desktop_game_mode);
+        }
+        if (g_sdl.GetRelativeMouseState) {
+            g_sdl.GetRelativeMouseState(NULL, NULL);
+        }
+    }
+    return capturing;
+}
+
+/* The crosshair pointer is drawn for controllers, and for the mouse only when [display]
+ * software_cursor is on (otherwise the system pointer shows). */
+int input_draw_software_cursor(void) {
+    static int setting = -1;
+    if (setting < 0) {
+        const char *value = getenv("BOZ_SOFTWARE_CURSOR");
+        setting = value && value[0] && strcmp(value, "0") != 0;
+    }
+    return g_cursor_active && (g_controller != NULL || setting);
+}
+
 void input_pump(void) {
     if (g_input_pumping) {
         return;
@@ -1121,9 +1274,20 @@ void input_pump(void) {
             _Exit(0);
         }
     }
-    g_sdl.FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+    if (g_sdl.PollEvent) {
+        uint8_t event[SDL_EVENT_BYTES + 8];
+        while (g_sdl.PollEvent(event)) {
+            mod_handle_event(event);
+        }
+    } else {
+        g_sdl.FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+    }
 
     uint64_t now = monotonic_ms();
+    if (mod_overlay_input()) {
+        g_input_last_ms = now;
+        goto out;
+    }
     input_refresh_controller(now);
     if (!g_input_last_ms) {
         g_input_last_ms = now;

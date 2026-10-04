@@ -16,8 +16,12 @@ SDL2_mixer (SDL2_mixer.dll / libSDL2_mixer-2.0.so.0), with its bundled minimp3 M
   https://github.com/libsdl-org/SDL_mixer - zlib license
   https://github.com/lieff/minimp3 - CC0
 
-Dear ImGui (launcher user interface, built into boz-redux)
+Dear ImGui (launcher user interface and the in-game mod overlay, built into boz-redux and
+codboz_s3e_loader)
   https://github.com/ocornut/imgui - MIT license
+
+Lua 5.4 (code mods, built into codboz_s3e_loader)
+  https://www.lua.org - MIT license
 
 LZMA SDK (APK extractor)
   https://www.7-zip.org/sdk.html - public domain
