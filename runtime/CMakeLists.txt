@@ -109,6 +109,7 @@ add_executable(codboz_s3e_loader
   src/game_image.c
   src/lua_runtime.c
   src/lua_hooks.c
+  src/native_input.c
   src/overlay.cpp
   src/s3e_config.c
   src/s3e_audio.c

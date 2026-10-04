@@ -9,11 +9,20 @@ See [ROADMAP.md](ROADMAP.md) for where the project is headed.
 ## Creation Information
 This project is being done by a human guided Generative AI (LLM) system, with minimal human verification besides functionality testing. Ideally the mod tools become human workable without AI. 
 
-## Downloads
+## Play
 
-Builds for Linux (`BOZ-Redux-linux-x86.tar.gz`) and Windows (`BOZ-Redux-windows-x86.zip`) come from GitHub Actions: see the latest run's artifacts, or the Releases page for tagged versions. Start `boz-redux` (Linux) or `boz-redux.exe` (Windows): the launcher installs your APK, downloads or imports the data packs, edits settings and key bindings, and starts the game.
+1. Download a build: `BOZ-Redux-windows-x86.zip` (Windows) or `BOZ-Redux-linux-x86.tar.gz` (Linux) from the Releases page, or from the artifacts of the latest GitHub Actions run.
+2. Unpack it anywhere and start `boz-redux.exe` (Windows) or `./boz-redux` (Linux). On Linux you need 32-bit OpenGL drivers (Arch: `lib32-mesa lib32-libglvnd lib32-libxkbcommon lib32-libdecor`; Debian/Ubuntu: `libegl1:i386 libgles2:i386 libxkbcommon0:i386`).
+3. In the launcher's **Game files** tab, choose your own Black Ops Zombies APK (Android 1.0.11) and click **Install**, then **Download** to fetch the data packs from Activision's server (or import them from a folder).
+4. Click **PLAY**. Settings and key bindings are on the **Settings** tab; the log is `boz-log.txt` next to the launcher.
 
-## Requirements
+### Mods
+
+The launcher's **Mods** tab lists everything in the `mods/` folder next to it. The first mods live in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): **Developer** (the game's hidden console, cheats, noclip) and **Redux** (a field of view setting in the pause menu). To install one, copy its folder from the SDK's `mods/` into `mods/`, and copy the SDK's `lib/boz` folder into it as `scripts/boz` (in the SDK that is a link, which a plain copy or a Windows checkout does not keep).
+
+## Building from source
+
+### Requirements
 
 Arch Linux with the multilib repo (For now in Proof of Concept):
 
@@ -22,7 +31,7 @@ sudo pacman -S --needed base-devel cmake lib32-glibc lib32-gcc-libs lib32-mesa l
   lib32-libxkbcommon lib32-libdecor lib32-wayland lib32-libx11 lib32-alsa-lib
 ```
 
-## Build and run (For now in Proof of Concept)
+### Build and run on Linux
 
 ```bash
 git submodule update --init --recursive
@@ -52,22 +61,26 @@ scripts/package-windows.sh    # downloads Mesa for Windows and writes build/wind
 
 The Windows client renders through a bundled Mesa (`opengl32.dll`). At startup it tests Mesa's GPU driver (Direct3D 12) and falls back to its software renderer when that can't open a window. Set `GALLIUM_DRIVER` to force one.
 
-## Controls (For now in Proof of Concept, so are not functional)
+## Controls
 
-| Input | Menus | Game (press Tab) |
+The mouse is captured while a match runs and freed in menus and when the game is paused, so there is no mode to switch. In Zombies the mouse turns the view directly (no stick acceleration) and the keys go straight to the game's actions.
+
+| Input | Menus | During a match |
 | --- | --- | --- |
 | Mouse | Pointer | Look |
 | Left / right click | Tap / - | Shoot / aim |
 | WASD | | Move |
-| R / E / V | | Reload / action / melee |
+| Left Shift | | Sprint |
+| E or F | | Use (buy, open, revive) |
+| R / V | | Reload / knife |
 | G / Q | | Grenade / tactical |
-| C or Space | | Crouch |
-| X / 1 | | Alt fire / switch weapon |
-| Esc | | Pause |
-| Tab | Switch to game mode | Switch to menus |
+| C or Space | | Crouch (hold for prone) |
+| X / 1 | | Fire mode / switch weapon |
+| Esc | Resume (in the pause menu) | Pause |
+| Tab | | Free the mouse until pressed again |
 | F11 or Alt+Enter | Toggle fullscreen | Toggle fullscreen |
 
-Settings live in `client.ini` next to the game data (the repo root when running from source), written with comments on first run: fullscreen, vsync, frame rate limit, scaling, mouse sensitivity and look mode. A matching `BOZ_*` environment variable overrides a setting for one run. Keyboard and mouse controls can be rebound in the `[keys]` section; controllers are mapped automatically.
+Settings live in `client.ini` next to the game data (the repo root when running from source), written with comments on first run: fullscreen, vsync, frame rate limit, scaling, look and aiming sensitivity, invert look. A matching `BOZ_*` environment variable overrides a setting for one run. Keyboard and mouse controls can be rebound in the launcher or the `[keys]` section; controllers are mapped automatically. Dead Ops Arcade still steers the game's touch stick with the mouse.
 
 ## Credits
 

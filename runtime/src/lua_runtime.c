@@ -2,6 +2,7 @@
  * scripts/main.lua runs in its own environment (globals are per mod, the API is shared). The API
  * is documented in the SDK's docs/lua-api.md. */
 #include "mod_runtime.h"
+#include "native_input.h"
 
 #include "gamedef.h"
 #include "mods.h"
@@ -191,6 +192,36 @@ static int api_input_bind(lua_State *state) {
     }
     lua_setfield(state, -2, key);
     return 0;
+}
+
+/* input.send(action, down): the game action as is, without the "action" event. */
+static int api_input_send(lua_State *state) {
+    int action = native_input_action_from_name(luaL_checkstring(state, 1));
+    if (action < 0) {
+        return luaL_argerror(state, 1, "unknown action");
+    }
+    native_input_send((enum native_action)action, lua_isnone(state, 2) || lua_toboolean(state, 2));
+    return 0;
+}
+
+/* input.down(action): whether the player holds the action's binding. */
+static int api_input_down(lua_State *state) {
+    int action = native_input_action_from_name(luaL_checkstring(state, 1));
+    if (action < 0) {
+        return luaL_argerror(state, 1, "unknown action");
+    }
+    lua_pushboolean(state, native_input_action_down((enum native_action)action));
+    return 1;
+}
+
+static int api_input_aiming(lua_State *state) {
+    lua_pushboolean(state, native_input_aiming());
+    return 1;
+}
+
+static int api_input_native(lua_State *state) {
+    lua_pushboolean(state, native_input_available());
+    return 1;
 }
 
 static int api_input_unbind(lua_State *state) {
@@ -767,7 +798,10 @@ static void open_api(void) {
     lua_setglobal(L, "print");
 
     static const luaL_Reg events[] = {{"on", api_events_on}, {"off", api_events_off}, {NULL, NULL}};
-    static const luaL_Reg input[] = {{"bind", api_input_bind}, {"unbind", api_input_unbind}, {NULL, NULL}};
+    static const luaL_Reg input[] = {{"bind", api_input_bind},     {"unbind", api_input_unbind},
+                                     {"send", api_input_send},     {"down", api_input_down},
+                                     {"aiming", api_input_aiming}, {"native", api_input_native},
+                                     {NULL, NULL}};
     static const luaL_Reg gamedef[] = {{"cvars", api_gamedef_cvars},
                                        {"commands", api_gamedef_commands},
                                        {"symbol", api_game_symbol},
@@ -925,6 +959,22 @@ bool lua_runtime_key(const char *name, bool down, bool repeat) {
     struct key_args args = {name, down, repeat};
     used |= dispatch_event("key", push_key_args, &args, 3);
     return used;
+}
+
+struct action_args {
+    const char *name;
+    bool down;
+};
+
+static void push_action_args(void *user) {
+    const struct action_args *action = user;
+    lua_pushstring(L, action->name);
+    lua_pushboolean(L, action->down);
+}
+
+bool lua_runtime_action(const char *name, bool down) {
+    struct action_args args = {name, down};
+    return dispatch_event("action", push_action_args, &args, 2);
 }
 
 int lua_runtime_current_mod(void) {

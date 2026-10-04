@@ -2,6 +2,7 @@
 
 #include "client_config.h"
 #include "mod_runtime.h"
+#include "native_input.h"
 
 #include <strings.h>
 
@@ -770,6 +771,7 @@ enum binding_id {
     BIND_AIM,
     BIND_RELOAD,
     BIND_ACTION,
+    BIND_SPRINT,
     BIND_MELEE,
     BIND_GRENADE,
     BIND_TACTICAL,
@@ -794,7 +796,8 @@ static const struct {
     [BIND_SHOOT] = {"shoot", "Mouse1"},
     [BIND_AIM] = {"aim", "Mouse3"},
     [BIND_RELOAD] = {"reload", "R"},
-    [BIND_ACTION] = {"action", "E, F, Left Shift"},
+    [BIND_ACTION] = {"action", "E, F"},
+    [BIND_SPRINT] = {"sprint", "Left Shift"},
     [BIND_MELEE] = {"melee", "V"},
     [BIND_GRENADE] = {"grenade", "G"},
     [BIND_TACTICAL] = {"tactical", "Q"},
@@ -850,6 +853,9 @@ static void load_bindings(void) {
     g_bindings_loaded = 1;
     for (int id = 0; id < BIND_COUNT; ++id) {
         const char *configured = client_config_key_binding(BINDING_DEFAULTS[id].action);
+        if (id == BIND_ACTION && configured && !strcmp(configured, "E, F, Left Shift")) {
+            configured = NULL; /* the old default, from before sprint had its own key */
+        }
         parse_binding((enum binding_id)id, configured ? configured : BINDING_DEFAULTS[id].defaults);
     }
 }
@@ -868,6 +874,7 @@ static int binding_down(const uint8_t *keys, int count, enum binding_id id) {
 }
 
 static int g_desktop_game_mode;
+static int g_pause_blocked; /* the pause key held across a mode switch counts only once */
 static int g_prev_tab;
 static int g_prev_fullscreen_key;
 static int g_prev_mouse_left;
@@ -891,6 +898,7 @@ static void desktop_set_game_mode(int enabled) {
         return;
     }
     g_desktop_game_mode = enabled;
+    g_pause_blocked = 1;
     g_look_x = 0;
     g_look_y = 0;
     if (enabled) {
@@ -898,6 +906,7 @@ static void desktop_set_game_mode(int enabled) {
     } else {
         touchpad_release_all();
         keyboard_release_all();
+        native_input_release();
     }
     if (g_sdl.SetRelativeMouseMode) {
         g_sdl.SetRelativeMouseMode(enabled);
@@ -933,6 +942,14 @@ static void desktop_update_menu(void *window) {
         pointer_dispatch_button(0, left ? 1 : 0);
     }
     g_prev_mouse_left = left;
+}
+
+static int pause_down(const uint8_t *keys, int count) {
+    int down = binding_down(keys, count, BIND_PAUSE);
+    if (!down) {
+        g_pause_blocked = 0;
+    }
+    return down && !g_pause_blocked;
 }
 
 static int32_t desktop_axis(int negative, int positive) {
@@ -1013,14 +1030,43 @@ static void desktop_update_game(const uint8_t *keys, int count, uint64_t dt) {
     game_action_apply(binding_down(keys, count, BIND_SHOOT), &KEYMAP_SHOOT);
     game_action_apply(binding_down(keys, count, BIND_AIM), &KEYMAP_AIM);
     game_action_apply(binding_down(keys, count, BIND_RELOAD), &KEYMAP_RELOAD);
-    game_action_apply(binding_down(keys, count, BIND_ACTION), &KEYMAP_ACTION);
+    game_action_apply(binding_down(keys, count, BIND_ACTION) || binding_down(keys, count, BIND_SPRINT),
+                      &KEYMAP_ACTION);
     game_action_apply(binding_down(keys, count, BIND_MELEE), &KEYMAP_MELEE);
     game_action_apply(binding_down(keys, count, BIND_GRENADE), &KEYMAP_GRENADE);
     game_action_apply(binding_down(keys, count, BIND_TACTICAL), &KEYMAP_TACTICAL);
     game_action_apply(binding_down(keys, count, BIND_CROUCH), &KEYMAP_CROUCH);
     game_action_apply(binding_down(keys, count, BIND_ALT_FIRE), &KEYMAP_ALT_FIRE);
     game_action_apply(binding_down(keys, count, BIND_SWITCH_WEAPON), &KEYMAP_CHANGE_WEAPON);
-    game_action_apply(binding_down(keys, count, BIND_PAUSE), &KEYMAP_START);
+    game_action_apply(pause_down(keys, count), &KEYMAP_START);
+}
+
+/* Game mode in a Zombies match with native controls: the mouse turns the player directly, the
+ * movement keys and buttons go to the game's own input functions (native_input.c). Only pause
+ * still goes through the Xperia Play key. */
+static void desktop_update_native(const uint8_t *keys, int count) {
+    static const struct {
+        enum binding_id binding;
+        enum native_action action;
+    } BUTTONS[] = {
+        {BIND_SHOOT, NATIVE_SHOOT},       {BIND_AIM, NATIVE_AIM},
+        {BIND_RELOAD, NATIVE_RELOAD},     {BIND_ACTION, NATIVE_USE},
+        {BIND_MELEE, NATIVE_MELEE},       {BIND_GRENADE, NATIVE_GRENADE},
+        {BIND_TACTICAL, NATIVE_TACTICAL}, {BIND_CROUCH, NATIVE_CROUCH},
+        {BIND_ALT_FIRE, NATIVE_FIRE_MODE}, {BIND_SWITCH_WEAPON, NATIVE_SWITCH_WEAPON},
+    };
+    int dx = 0, dy = 0;
+    if (g_sdl.GetRelativeMouseState) {
+        g_sdl.GetRelativeMouseState(&dx, &dy);
+    }
+    native_input_look((float)dx, (float)dy);
+    float x = (float)(binding_down(keys, count, BIND_MOVE_RIGHT) - binding_down(keys, count, BIND_MOVE_LEFT));
+    float y = (float)(binding_down(keys, count, BIND_MOVE_BACK) - binding_down(keys, count, BIND_MOVE_FORWARD));
+    native_input_move(x, y, binding_down(keys, count, BIND_SPRINT) != 0);
+    for (size_t i = 0; i < ARRAY_SIZE(BUTTONS); ++i) {
+        native_input_action(BUTTONS[i].action, binding_down(keys, count, BUTTONS[i].binding) != 0);
+    }
+    game_action_apply(pause_down(keys, count), &KEYMAP_START);
 }
 
 /* F11 or Alt+Enter switches between a window and borderless fullscreen. */
@@ -1038,6 +1084,12 @@ static void desktop_toggle_fullscreen(void) {
     }
     fprintf(stderr, "[input] %s\n", fullscreen ? "windowed" : "fullscreen");
 }
+
+/* Menu or game mode. With native controls the mode follows the game: game mode (mouse captured)
+ * while a match runs unpaused and the window has focus, menu mode (mouse pointer) otherwise, so
+ * pausing frees the mouse. The toggle key frees the mouse during a match until pressed again.
+ * Without native controls the toggle key switches modes by hand. */
+static int g_mouse_freed;
 
 static void desktop_update(uint64_t dt) {
     if (!desktop_available()) {
@@ -1057,16 +1109,37 @@ static void desktop_update(uint64_t dt) {
     }
     g_prev_fullscreen_key = fullscreen_key;
     int tab = binding_down(keys, count, BIND_TOGGLE_MODE);
-    if (tab && !g_prev_tab) {
+    int tab_pressed = tab && !g_prev_tab;
+    g_prev_tab = tab;
+
+    enum native_match match = native_input_match();
+    if (native_input_available()) {
+        if (match == NATIVE_MATCH_NONE) {
+            g_mouse_freed = 0;
+        } else if (tab_pressed) {
+            g_mouse_freed = !g_mouse_freed;
+        }
+        int focused = g_sdl.GetKeyboardFocus ? g_sdl.GetKeyboardFocus() != NULL : 1;
+        desktop_set_game_mode(match != NATIVE_MATCH_NONE && !g_mouse_freed && focused);
+    } else if (tab_pressed) {
         desktop_set_game_mode(!g_desktop_game_mode);
     }
-    g_prev_tab = tab;
+
     if (g_desktop_game_mode) {
-        if (keys) {
+        if (!keys) {
+            return;
+        }
+        if (match == NATIVE_MATCH_ZOMBIES) {
+            touchpad_release_all();
+            desktop_update_native(keys, count);
+        } else {
+            native_input_release();
             desktop_update_game(keys, count, dt);
         }
     } else if (window) {
         desktop_update_menu(window);
+        /* Escape in the pause menu resumes, as the pause key does on the phone. */
+        game_action_apply(keys && pause_down(keys, count), &KEYMAP_START);
     }
 }
 
@@ -1225,6 +1298,7 @@ static int mod_overlay_input(void) {
     int capturing = overlay_capturing();
     if (capturing != g_overlay_captured) {
         g_overlay_captured = capturing;
+        native_input_release();
         touchpad_release_all();
         keyboard_release_all();
         input_release_pointer();

@@ -10,7 +10,7 @@ Sibling repos (local layout `~/Work/boz/`): `../boz-redux-sdk` (reverse engineer
 
 - `src/arm_emu.c`: Unicorn-based ARM CPU. The loader is built as 32-bit x86 so guest and host share addresses. Host memory is identity-mapped into the emulator on first touch (whole `/proc/self/maps` regions). Any guest jump into host code lands on a shadow page of `svc` instructions; the trap calls that x86 function with r0-r3 plus stack words and returns r0:r1. No thunk table.
 - `s3e_guest_call()` (in `s3e_host.c`): every place the C code calls back into game code goes through it.
-- Desktop input in `s3e_input.c`: mouse pointer for menus, Tab toggles game mode (WASD on touchpad 0 stick, mouse look on touchpad 1 stick centered at x=768, keys mapped to Xperia Play keys).
+- Desktop input in `s3e_input.c`: mouse pointer in menus; game mode (mouse captured) follows the game, on while a match's player update runs (paused = menus). In Zombies, `src/native_input.c` sends input straight to the game through gamedef symbols: mouse counts added to `CPlayerController` yaw/pitch at the start of `FixedStep`, movement as `CInputManager::SendAnalogStick` from the move pad's update, buttons as `CInputManager::OnInputAction`. Dead Ops (and `BOZ_TOUCHPAD_CONTROLS=1`, or missing symbols) keeps the old path: WASD on touchpad 0 stick, mouse on the touchpad 1 stick, Xperia Play keys. Pause is still the Xperia pause key.
 - Window scaling in `s3e_gl.c`: game renders to a 1280x720 FBO, blitted to the window each swap. Super+W/close maps to `s3eDeviceRequestQuit`.
 
 ARM `#if defined(__arm__)` paths are left in the source but nothing builds or ships them.
@@ -45,7 +45,7 @@ Never commit game files (`*.apk`, `*.dz`, extracted assets).
 - `BOZ_TRACE_CALLS=N`: log the first N host calls with arguments.
 - Emulator faults print `[arm] ... pc= lr=` with all registers.
 - Settings: `<root>/client.ini` (`src/client_config.c`) is translated into the `BOZ_*` variables below at startup; a variable already set wins.
-- Other env: `BOZ_DISPLAY=WxH`, `BOZ_STRETCH=1`, `BOZ_NO_SCALE=1`, `BOZ_MOUSE_SENS` (default 12000), `BOZ_LOOK_RADIUS`, `BOZ_LOOK_MODE=swipe`.
+- Other env: `BOZ_DISPLAY=WxH`, `BOZ_STRETCH=1`, `BOZ_NO_SCALE=1`, `BOZ_LOOK_SENS` (default 3.0, 0.022 degrees per count), `BOZ_AIM_SENS`, `BOZ_INVERT_Y=1`, `BOZ_TOUCHPAD_CONTROLS=1` (old touchpad input everywhere); Dead Ops touch stick: `BOZ_MOUSE_SENS` (default 12000), `BOZ_LOOK_RADIUS`, `BOZ_LOOK_MODE=swipe`.
 - Reverse engineering (Ghidra, symbol tools) lives in `../boz-redux-sdk`; see its `docs/reverse-engineering.md`.
 
 ## Building

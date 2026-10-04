@@ -48,7 +48,7 @@ Gameplay changes always live in mods, never hard-coded into the client.
 ### 5. Native PC controls (next)
 - Mouse look that feels like a modern PC shooter: raw input straight to the camera, no stick acceleration.
 - Movement and actions sent straight to the game, and automatic menu and game modes (no Tab).
-- Hooks for mods to adjust look and input.
+- Hooks for mods to watch, block and send the player's actions (`boz.input`).
 
 ### 6. Redux base mod
 - Field of view (done), aim toggle or hold, and more quality-of-life settings, all in the game's own pause menu.
@@ -63,6 +63,7 @@ Gameplay changes always live in mods, never hard-coded into the client.
 - A Blender add-on for models and maps.
 
 ### 9. Maps
+- Debug views for map work: wireframe, overdraw and untextured rendering, and the navmesh, collision, spawn points, zombie paths and barriers drawn in the world, switchable from mods and the Developer mod.
 - Edit existing maps first.
 - Then research what it takes to build brand-new ones: spawns, zombie pathing, barriers, rounds.
 

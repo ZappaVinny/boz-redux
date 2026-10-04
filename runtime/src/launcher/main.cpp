@@ -42,7 +42,8 @@ const Binding BINDINGS[] = {
     {"shoot", "Shoot", "Mouse1"},
     {"aim", "Aim", "Mouse3"},
     {"reload", "Reload", "R"},
-    {"action", "Use / sprint", "E, F, Left Shift"},
+    {"action", "Use", "E, F"},
+    {"sprint", "Sprint", "Left Shift"},
     {"melee", "Knife", "V"},
     {"grenade", "Grenade", "G"},
     {"tactical", "Tactical", "Q"},
@@ -50,7 +51,7 @@ const Binding BINDINGS[] = {
     {"alt_fire", "Alternate fire", "X"},
     {"switch_weapon", "Switch weapon", "1"},
     {"pause", "Pause", "Escape"},
-    {"toggle_mode", "Menu / game mode", "Tab"},
+    {"toggle_mode", "Free the mouse", "Tab"},
     {"fullscreen", "Toggle fullscreen", "F11"},
 };
 const int BINDING_COUNT = (int)(sizeof(BINDINGS) / sizeof(BINDINGS[0]));
@@ -151,6 +152,13 @@ void ensure_ini(Launcher &l) {
         client_config_write_default(path.c_str());
     }
     l.ini_loaded = l.ini.load(path);
+}
+
+// A setting value with two decimals ("3.25"), the precision the sliders show.
+std::string format_float(float value) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.2f", value);
+    return text;
 }
 
 void save_setting(Launcher &l, const char *section, const char *key, const std::string &value) {
@@ -321,8 +329,36 @@ void settings_tab(Launcher &l) {
     }
 
     ImGui::SeparatorText("Mouse");
+    float look = (float)std::atof(l.ini.get("input", "look_sensitivity", "3.0").c_str());
+    ImGui::SliderFloat("Look sensitivity", &look, 0.2f, 15.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("0.022 degrees per mouse count at 1.0, the same scale as Source and Quake games.");
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        save_setting(l, "input", "look_sensitivity", format_float(look));
+    } else if (ImGui::IsItemActive()) {
+        l.ini.set("input", "look_sensitivity", format_float(look));
+    }
+    float aim = (float)std::atof(l.ini.get("input", "aim_sensitivity", "1.0").c_str());
+    ImGui::SliderFloat("Aiming sensitivity", &aim, 0.1f, 3.0f, "%.2f");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Multiplier while aiming down sights. 1.0 feels the same as without aiming\n"
+                          "(the zoom is already allowed for).");
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        save_setting(l, "input", "aim_sensitivity", format_float(aim));
+    } else if (ImGui::IsItemActive()) {
+        l.ini.set("input", "aim_sensitivity", format_float(aim));
+    }
+    bool invert = l.ini.get("input", "invert_y", "false") == "true";
+    if (ImGui::Checkbox("Invert vertical look", &invert)) {
+        save_setting(l, "input", "invert_y", invert ? "true" : "false");
+    }
+
+    ImGui::SeparatorText("Mouse in Dead Ops Arcade");
+    ImGui::TextDisabled("Dead Ops still steers the game's touch stick with the mouse.");
     int sensitivity = std::atoi(l.ini.get("input", "mouse_sensitivity", "12000").c_str());
-    ImGui::SliderInt("Look sensitivity", &sensitivity, 2000, 60000);
+    ImGui::SliderInt("Stick sensitivity", &sensitivity, 2000, 60000);
     // Keep the dragged value in memory each frame; write the file once on release.
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         save_setting(l, "input", "mouse_sensitivity", std::to_string(sensitivity));
@@ -338,7 +374,7 @@ void settings_tab(Launcher &l) {
         }
     }
 
-    ImGui::SeparatorText("Controls (game mode)");
+    ImGui::SeparatorText("Controls (during a match)");
     ImGui::TextDisabled("Click Set, then press a key or mouse button. Separate several with commas.");
     if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);

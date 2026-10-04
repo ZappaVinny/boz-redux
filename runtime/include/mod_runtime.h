@@ -29,6 +29,9 @@ bool lua_runtime_start(void);
 void lua_runtime_frame(double dt);
 /* A key went down or up (SDL scancode name, as in client.ini). Returns true if a mod used it. */
 bool lua_runtime_key(const char *name, bool down, bool repeat);
+/* A game action changed during a match ("shoot", "aim", ...; native_input.c). Returns true if a
+ * mod handled it, so the game should not get it. */
+bool lua_runtime_action(const char *name, bool down);
 /* True once at least one mod script is running. */
 bool lua_runtime_active(void);
 /* assets.patch: true if a mod transforms this file (matched by file name, no case), on the

@@ -30,13 +30,21 @@ static const char DEFAULT_CONFIG[] =
     "software_cursor = false\n"
     "\n"
     "[input]\n"
-    "# Mouse look speed in game mode (Tab).\n"
+    "# Mouse look speed: 0.022 degrees per mouse count at 1.0, the scale Source and Quake games\n"
+    "# use, so the same number feels the same.\n"
+    "look_sensitivity = 3.0\n"
+    "# Multiplier while aiming down sights. The zoom is already allowed for: 1.0 turns the same\n"
+    "# distance on screen per mouse movement as without aiming.\n"
+    "aim_sensitivity = 1.0\n"
+    "# Mouse up looks down.\n"
+    "invert_y = false\n"
+    "# Dead Ops Arcade still drives the game's touch stick with the mouse: its speed, and stick or\n"
+    "# swipe.\n"
     "mouse_sensitivity = 12000\n"
-    "# stick: the mouse drives the right touch stick; swipe: the mouse swipes the screen.\n"
     "look_mode = stick\n"
     "\n"
     "[keys]\n"
-    "# Game mode bindings: comma-separated key names (as SDL names them, e.g. W, Left Shift,\n"
+    "# Bindings during a match: comma-separated key names (as SDL names them, e.g. W, Left Shift,\n"
     "# Space, Escape, F) or mouse buttons Mouse1 (left), Mouse2 (middle), Mouse3 (right),\n"
     "# Mouse4, Mouse5. Leave a value empty to unbind. Controllers are mapped automatically.\n"
     "move_forward = W\n"
@@ -46,7 +54,9 @@ static const char DEFAULT_CONFIG[] =
     "shoot = Mouse1\n"
     "aim = Mouse3\n"
     "reload = R\n"
-    "action = E, F, Left Shift\n"
+    "# Use: buy, open doors, pick up, revive.\n"
+    "action = E, F\n"
+    "sprint = Left Shift\n"
     "melee = V\n"
     "grenade = G\n"
     "tactical = Q\n"
@@ -54,7 +64,8 @@ static const char DEFAULT_CONFIG[] =
     "alt_fire = X\n"
     "switch_weapon = 1\n"
     "pause = Escape\n"
-    "# Switch between menu mode (mouse pointer) and game mode (mouse look).\n"
+    "# The mouse is captured while a match runs and freed in menus and when paused. This key frees\n"
+    "# it during a match until pressed again.\n"
     "toggle_mode = Tab\n"
     "# Fullscreen toggle (Alt+Enter also works).\n"
     "fullscreen = F11\n"
@@ -232,6 +243,20 @@ static bool apply(const char *section, const char *key, const char *value) {
             return true;
         }
     } else if (!strcmp(section, "input")) {
+        if (!strcmp(key, "look_sensitivity") && is_number(value)) {
+            set_default("BOZ_LOOK_SENS", value);
+            return true;
+        }
+        if (!strcmp(key, "aim_sensitivity") && is_number(value)) {
+            set_default("BOZ_AIM_SENS", value);
+            return true;
+        }
+        if (!strcmp(key, "invert_y") && parse_bool(value, &flag)) {
+            if (flag) {
+                set_default("BOZ_INVERT_Y", "1");
+            }
+            return true;
+        }
         if (!strcmp(key, "mouse_sensitivity") && is_number(value)) {
             set_default("BOZ_MOUSE_SENS", value);
             return true;

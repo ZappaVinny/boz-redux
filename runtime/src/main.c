@@ -1,6 +1,7 @@
 #include "client_config.h"
 #include "mod_runtime.h"
 #include "mods.h"
+#include "native_input.h"
 #include "codboz_frame_interpolation.h"
 #include "s3e_host.h"
 #include "s3e_host_internal.h"
@@ -365,6 +366,7 @@ int main(int argc, char **argv) {
         codboz_install_crash_recovery((uint32_t)(uintptr_t)loaded.base);
         /* Mods start before the game so their hooks and asset patches see everything it does. */
         lua_runtime_start();
+        native_input_init();
         int rc = (int)arm_emu_call((uint32_t)(uintptr_t)(loaded.base + loaded.entry_offset), 0, NULL);
 #endif
         fprintf(stderr, "S3E entry returned %d\n", rc);

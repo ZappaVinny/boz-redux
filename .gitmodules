@@ -1,6 +1,7 @@
 [submodule "runtime/third_party/unicorn"]
 	path = runtime/third_party/unicorn
 	url = https://github.com/unicorn-engine/unicorn
+	ignore = dirty
 [submodule "runtime/third_party/SDL2"]
 	path = runtime/third_party/SDL2
 	url = https://github.com/libsdl-org/SDL
