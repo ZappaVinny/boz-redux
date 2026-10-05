@@ -9,8 +9,14 @@ cp "$build/bin/boz-redux.exe" "$build/bin/codboz_s3e_loader.exe" "$build/bin/cod
 i686-w64-mingw32-strip "$stage/boz-redux.exe" "$stage/codboz_s3e_loader.exe" "$stage/codboz_apk_extract.exe"
 cp "$here/packaging/windows/README.txt" "$stage/"
 cp "$here/packaging/windows/setup.bat" "$here/packaging/windows/run.bat" "$stage/"
+# ANGLE (Direct3D 11) next to the game is the default renderer; Mesa (software, Direct3D 12 or
+# Vulkan through zink) lives in mesa\ for the renderer setting.
+"$here/scripts/fetch-angle-windows.sh"
+cp "$build/angle/"*.dll "$stage/"
+cp "$build/angle/LICENSES.chromium.html" "$stage/ANGLE-LICENSES.html"
 "$here/scripts/fetch-mesa-windows.sh"
-cp "$build/mesa/"*.dll "$stage/"
+mkdir -p "$stage/mesa"
+cp "$build/mesa/"*.dll "$stage/mesa/"
 cp "$here/packaging/THIRD-PARTY.txt" "$stage/"
 mkdir -p "$stage/gamedef" && cp -r "$here/../gamedef/"*.toml "$here/../gamedef/symbols" "$here/../gamedef/console" "$here/../gamedef/reflection" "$here/../gamedef/events" "$stage/gamedef/"
 for f in "$here/packaging/windows/"*.bat "$here/packaging/windows/README.txt" "$here/packaging/THIRD-PARTY.txt"; do sed -i 's/$/\r/' "$stage/$(basename "$f")"; done

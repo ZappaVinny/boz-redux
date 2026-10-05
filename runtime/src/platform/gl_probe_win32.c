@@ -48,13 +48,23 @@ static int exe_directory(char *path, size_t size) {
     return 1;
 }
 
+/* Mesa lives in mesa\ next to the executable; its DLLs load each other from there. */
+static void use_mesa_directory(void) {
+    char path[MAX_PATH];
+    if (exe_directory(path, sizeof(path)) && strlen(path) + sizeof("mesa") <= sizeof(path)) {
+        strcat(path, "mesa");
+        SetDllDirectoryA(path);
+    }
+}
+
 static int load_wgl(struct wgl_api *wgl, HMODULE *module_out) {
     char path[MAX_PATH];
+    use_mesa_directory();
     if (!exe_directory(path, sizeof(path)) ||
-        strlen(path) + sizeof("opengl32.dll") > sizeof(path)) {
+        strlen(path) + sizeof("mesa\\opengl32.dll") > sizeof(path)) {
         return 0;
     }
-    strcat(path, "opengl32.dll");
+    strcat(path, "mesa\\opengl32.dll");
     HMODULE module = LoadLibraryA(path);
     if (!module) {
         fprintf(stderr, "[gl-probe] cannot load %s (error %lu)\n", path, GetLastError());
@@ -211,6 +221,11 @@ static int probe_in_child(const char *driver) {
 }
 
 void gl_probe_select_driver(void) {
+    const char *renderer = getenv("BOZ_RENDERER");
+    if (!renderer || strcmp(renderer, "mesa") != 0) {
+        return; /* ANGLE: no driver to pick */
+    }
+    use_mesa_directory();
     const char *configured = getenv("GALLIUM_DRIVER");
     if (configured && configured[0]) {
         fprintf(stderr, "[gl-probe] GALLIUM_DRIVER=%s set by the user\n", configured);

@@ -28,7 +28,14 @@ LZMA SDK (APK extractor)
 
 Windows package only:
 
-Mesa 3D, built by mesa-dist-win (opengl32.dll, libgallium_wgl.dll, libEGL.dll,
+ANGLE (libEGL.dll, libGLESv2.dll), from Electron's win32-ia32 release (Chromium's build)
+  https://chromium.googlesource.com/angle/angle - BSD 3-clause license
+  https://github.com/electron/electron - MIT license; Chromium's notices: ANGLE-LICENSES.html
+
+Microsoft D3DCompiler (d3dcompiler_47.dll), as shipped with Electron/Chromium
+  redistributed under the Windows SDK redistribution terms
+
+Mesa 3D, built by mesa-dist-win (mesa\: opengl32.dll, libgallium_wgl.dll, libEGL.dll,
 libGLESv2.dll, libGLESv1_CM.dll)
   https://gitlab.freedesktop.org/mesa/mesa - MIT license
   https://github.com/pal1000/mesa-dist-win - MIT license

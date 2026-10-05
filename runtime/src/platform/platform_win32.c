@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <io.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,6 +77,48 @@ static LONG WINAPI report_crash(EXCEPTION_POINTERS *info) {
             context->Esp, context->Ebp);
     fflush(stderr);
     return EXCEPTION_EXECUTE_HANDLER;
+}
+
+/* First-chance exceptions that usually end the process, logged before any other handler (SDL,
+ * Mesa or the C runtime may replace the unhandled-exception filter above). Some may be handled
+ * later, so only the first few are logged. */
+static LONG WINAPI log_first_chance(EXCEPTION_POINTERS *info) {
+    static volatile LONG logged;
+    DWORD code = info->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION &&
+        code != EXCEPTION_STACK_OVERFLOW && code != EXCEPTION_INT_DIVIDE_BY_ZERO &&
+        code != EXCEPTION_PRIV_INSTRUCTION && code != 0xc0000409u /* fail fast */ &&
+        code != 0xc0000374u /* heap corruption */) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    /* Unicorn grows its code buffer by catching writes at the next 64 KB-aligned uncommitted
+     * page (patches/unicorn-win32-codegen-commit-tail.patch); those are expected. */
+    if (code == EXCEPTION_ACCESS_VIOLATION && info->ExceptionRecord->NumberParameters >= 2 &&
+        info->ExceptionRecord->ExceptionInformation[0] == 1 &&
+        (info->ExceptionRecord->ExceptionInformation[1] & 0xffff) == 0) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (InterlockedIncrement(&logged) <= 20) {
+        fprintf(stderr, "[crash] first chance (thread %lu): ", (unsigned long)GetCurrentThreadId());
+        report_crash(info);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* SDL or Mesa may install their own unhandled-exception filter; put ours back once they are up. */
+void plat_reinstall_crash_handler(void) {
+    SetUnhandledExceptionFilter(report_crash);
+}
+
+static void log_abort(int sig) {
+    (void)sig;
+    fprintf(stderr, "[crash] abort() called\n");
+    fflush(stderr);
+}
+
+static void log_exit(void) {
+    fprintf(stderr, "[platform] process exiting\n");
+    fflush(stderr);
 }
 
 enum { PROFILE_SLOTS = 4096, PROFILE_TOP = 25 };
@@ -176,6 +219,9 @@ static DWORD WINAPI profile_thread(LPVOID unused) {
 
 bool plat_init(void) {
     SetUnhandledExceptionFilter(report_crash);
+    AddVectoredExceptionHandler(1, log_first_chance);
+    signal(SIGABRT, log_abort);
+    atexit(log_exit);
     if (getenv("BOZ_PROFILE") &&
         DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(),
                         &g_profile_target, THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0)) {

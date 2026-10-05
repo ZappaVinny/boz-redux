@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 bool plat_init(void);
+/* Windows: installs the crash logger again (other libraries may replace it); no-op elsewhere. */
+void plat_reinstall_crash_handler(void);
 void plat_sleep_us(uint64_t microseconds);
 
 void *plat_lib_open(const char *name);

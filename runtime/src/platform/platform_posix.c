@@ -79,6 +79,8 @@ static void *profile_report_thread(void *unused) {
 }
 #endif
 
+void plat_reinstall_crash_handler(void) {}
+
 bool plat_init(void) {
 #if defined(__i386__)
     if (getenv("BOZ_PROFILE")) {

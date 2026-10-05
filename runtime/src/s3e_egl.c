@@ -167,18 +167,31 @@ static void set_sdl_sibling_library(const char *variable, const char *const *nam
     }
 }
 
+#if defined(_WIN32)
+/* Windows renderers: ANGLE (libEGL.dll and libGLESv2.dll next to the game, OpenGL ES on
+ * Direct3D 11) through SDL's EGL path, like Linux; or with BOZ_RENDERER=mesa the bundled Mesa in
+ * mesa\ through WGL. */
+static int win_use_mesa(void) {
+    const char *renderer = getenv("BOZ_RENDERER");
+    return renderer && !strcmp(renderer, "mesa");
+}
+#endif
+
 static void configure_sdl_graphics_libraries(void) {
 #if defined(_WIN32)
-    /* Mesa's EGL cannot create window surfaces on Windows, so SDL uses Mesa's WGL driver and
-     * ensure_context() creates the OpenGL ES context through WGL_EXT_create_context_es_profile. */
-    const char *wgl_names[] = {"opengl32.dll", NULL};
-    set_sdl_sibling_library("SDL_VIDEO_GL_DRIVER", wgl_names);
-#else
+    if (win_use_mesa()) {
+        /* Mesa's EGL cannot create window surfaces on Windows, so SDL uses Mesa's WGL driver and
+         * ensure_context() creates the OpenGL ES context through WGL_EXT_create_context_es_profile. */
+        const char *wgl_names[] = {"mesa/opengl32.dll", NULL};
+        set_sdl_sibling_library("SDL_VIDEO_GL_DRIVER", wgl_names);
+        return;
+    }
+    setenv("SDL_OPENGL_ES_DRIVER", "1", 1); /* SDL: OpenGL ES through EGL, not WGL */
+#endif
     const char *egl_names[] = {BOZ_LIB_EGL, NULL};
     const char *gles_names[] = {BOZ_LIB_GLES2, NULL};
     set_sdl_sibling_library("SDL_VIDEO_EGL_DRIVER", egl_names);
     set_sdl_sibling_library("SDL_VIDEO_GL_DRIVER", gles_names);
-#endif
 }
 
 static int load_sdl_video(void) {
@@ -254,9 +267,16 @@ static void *open_graphics_library(const char *configured, const char *const *si
 
 bool egl_backend_load_libraries(void) {
 #if defined(_WIN32)
-    const char *egl_names[] = {"libEGL.dll", NULL};
-    const char *gles1_names[] = {"libGLESv1_CM.dll", NULL};
-    const char *gles2_names[] = {"libGLESv2.dll", NULL};
+    const char *angle_egl[] = {"libEGL.dll", NULL};
+    const char *angle_gles1[] = {"libGLESv1_CM.dll", NULL};
+    const char *angle_gles2[] = {"libGLESv2.dll", NULL};
+    const char *mesa_egl[] = {"mesa/libEGL.dll", NULL};
+    const char *mesa_gles1[] = {"mesa/libGLESv1_CM.dll", NULL};
+    const char *mesa_gles2[] = {"mesa/libGLESv2.dll", NULL};
+    const char *const *egl_names = win_use_mesa() ? mesa_egl : angle_egl;
+    const char *const *gles1_names = win_use_mesa() ? mesa_gles1 : angle_gles1;
+    const char *const *gles2_names = win_use_mesa() ? mesa_gles2 : angle_gles2;
+    fprintf(stderr, "[egl] renderer: %s\n", win_use_mesa() ? "Mesa (WGL)" : "ANGLE (Direct3D 11)");
 #else
     const char *egl_names[] = {"libEGL.so.1", "libEGL.so", "libmali.so", NULL};
     const char *gles1_names[] = {"libGLESv1_CM.so.1", "libGLESv1_CM.so", "libmali.so", NULL};
@@ -277,7 +297,7 @@ bool egl_backend_load_libraries(void) {
     g_gles1 =
         open_graphics_library(NULL, gles1_names, gles1_names, gles1_error, sizeof(gles1_error));
 #if defined(_WIN32)
-    const char *gles2_configured = NULL;
+    const char *gles2_configured = win_use_mesa() ? NULL : getenv("SDL_VIDEO_GL_DRIVER");
 #else
     const char *gles2_configured = getenv("SDL_VIDEO_GL_DRIVER");
 #endif
@@ -362,15 +382,18 @@ static int sdl_owns_display(void) {
 
 static void apply_window_attributes(void) {
 #if defined(_WIN32)
-    /* SDL only offers WGL for desktop profiles; see create_wgl_es_context(). */
-    g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 0);
-    g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-#else
-    g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, g_sdl.context_major);
-    g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    if (win_use_mesa()) {
+        /* SDL only offers WGL for desktop profiles; see create_wgl_es_context(). */
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 0);
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    } else
 #endif
+    {
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, g_sdl.context_major);
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    }
     g_sdl.api.GL_SetAttribute(SDL_GL_RED_SIZE, g_sdl.red_size);
     g_sdl.api.GL_SetAttribute(SDL_GL_GREEN_SIZE, g_sdl.green_size);
     g_sdl.api.GL_SetAttribute(SDL_GL_BLUE_SIZE, g_sdl.blue_size);
@@ -461,7 +484,8 @@ static int ensure_context(void) {
     }
     apply_window_attributes();
 #if defined(_WIN32)
-    g_sdl.context = create_wgl_es_context();
+    g_sdl.context = win_use_mesa() ? create_wgl_es_context()
+                                   : g_sdl.api.GL_CreateContext(g_sdl.window);
 #else
     g_sdl.context = g_sdl.api.GL_CreateContext(g_sdl.window);
 #endif

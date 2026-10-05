@@ -28,6 +28,9 @@ static const char DEFAULT_CONFIG[] =
     "# Draw the port's crosshair pointer in menus instead of the system mouse pointer. A\n"
     "# controller always gets it (it is the only pointer a controller has).\n"
     "software_cursor = false\n"
+    "# Windows only. auto: ANGLE (Direct3D 11, works on almost every GPU). d3d12, vulkan and\n"
+    "# software use the bundled Mesa instead; software is slow but always works.\n"
+    "renderer = auto\n"
     "\n"
     "[input]\n"
     "# Mouse look speed: 0.022 degrees per mouse count at 1.0, the scale Source and Quake games\n"
@@ -221,6 +224,20 @@ static bool apply(const char *section, const char *key, const char *value) {
                 return false;
             }
             set_default("BOZ_DISPLAY", value);
+            return true;
+        }
+        if (!strcmp(key, "renderer")) {
+            /* Windows: ANGLE (Direct3D 11) by default; the others use the bundled Mesa. */
+            const char *mesa_driver = !strcmp(value, "d3d12") || !strcmp(value, "gpu") ? "d3d12"
+                                      : !strcmp(value, "vulkan")                       ? "zink"
+                                      : !strcmp(value, "software")                     ? "llvmpipe"
+                                                                                       : NULL;
+            if (mesa_driver) {
+                set_default("BOZ_RENDERER", "mesa");
+                set_default("GALLIUM_DRIVER", mesa_driver);
+            } else if (strcmp(value, "auto") != 0 && strcmp(value, "angle") != 0) {
+                return false;
+            }
             return true;
         }
         if (!strcmp(key, "software_cursor") && parse_bool(value, &flag)) {

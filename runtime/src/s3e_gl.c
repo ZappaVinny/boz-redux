@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "platform/platform.h"
 
 #include "mod_runtime.h"
 
@@ -401,9 +402,29 @@ static void map_drawable_rect_to_surface(GLint *rect) {
     rect[3] = top > bottom ? top - bottom : 0;
 }
 
+enum {
+    GL_EXTENSIONS_VALUE = 0x1F03,
+    GL_NUM_COMPRESSED_TEXTURE_FORMATS_VALUE = 0x86A2,
+    GL_COMPRESSED_TEXTURE_FORMATS_VALUE = 0x86A3,
+};
+enum { GL_ETC1_RGB8_OES_VALUE = 0x8D64, GL_COMPRESSED_RGB8_ETC2_VALUE = 0x9274 };
+static int driver_has_etc1(void);
+
 static S3E_SOFTFP void host_glGetIntegerv(GLenum name, GLint *values) {
     void (GL_APIENTRY *real)(GLenum, GLint *) = lookup_gl("glGetIntegerv");
     if (!real) {
+        return;
+    }
+    if ((name == GL_NUM_COMPRESSED_TEXTURE_FORMATS_VALUE ||
+         name == GL_COMPRESSED_TEXTURE_FORMATS_VALUE) && values && !driver_has_etc1()) {
+        GLint count = 0;
+        real(GL_NUM_COMPRESSED_TEXTURE_FORMATS_VALUE, &count);
+        if (name == GL_NUM_COMPRESSED_TEXTURE_FORMATS_VALUE) {
+            values[0] = count + 1;
+        } else {
+            real(name, values);
+            values[count] = GL_ETC1_RGB8_OES_VALUE;
+        }
         return;
     }
     real(name, values);
@@ -427,6 +448,74 @@ static S3E_SOFTFP void host_glReadPixels(GLint x, GLint y, GLsizei width, GLsize
             y += g_surface.y;
         }
         real(x, y, width, height, format, type, pixels);
+    }
+}
+
+/* The game's textures are ETC1 (GL_OES_compressed_ETC1_RGB8_texture). ANGLE on Direct3D 11 does
+ * not offer ETC1 but does offer ETC2 (OpenGL ES 3), which decodes ETC1 data unchanged, so ETC1
+ * uploads are relabelled when the driver lacks the extension. */
+
+static const char ETC1_EXTENSION[] = "GL_OES_compressed_ETC1_RGB8_texture";
+
+/* 1 if the driver has ETC1 itself; 0 if the client converts it (ETC2 exists). */
+static int driver_has_etc1(void) {
+    static int etc1 = -1;
+    if (etc1 < 0) {
+        const char *(GL_APIENTRY *get_string)(GLenum) = lookup_gl("glGetString");
+        const char *extensions = get_string ? get_string(GL_EXTENSIONS_VALUE) : NULL;
+        if (!extensions) {
+            return 1; /* no context yet: ask again later */
+        }
+        etc1 = strstr(extensions, ETC1_EXTENSION) != NULL;
+        if (!etc1) {
+            fprintf(stderr, "[gl] no ETC1 support; the game's ETC1 textures are uploaded as ETC2\n");
+        }
+    }
+    return etc1;
+}
+
+static GLenum compressed_format(GLenum format) {
+    return format == GL_ETC1_RGB8_OES_VALUE && !driver_has_etc1() ? GL_COMPRESSED_RGB8_ETC2_VALUE
+                                                                  : format;
+}
+
+/* The game only uses ETC1 textures when the driver lists the extension. */
+static S3E_SOFTFP const char *host_glGetString(GLenum name) {
+    const char *(GL_APIENTRY *real)(GLenum) = lookup_gl("glGetString");
+    const char *value = real ? real(name) : NULL;
+    if (name != GL_EXTENSIONS_VALUE || !value || driver_has_etc1()) {
+        return value;
+    }
+    static char *extended;
+    if (!extended) {
+        size_t length = strlen(value) + sizeof(ETC1_EXTENSION) + 2;
+        extended = malloc(length);
+        if (!extended) {
+            return value;
+        }
+        snprintf(extended, length, "%s %s", value, ETC1_EXTENSION);
+    }
+    return extended;
+}
+
+static S3E_SOFTFP void host_glCompressedTexImage2D(GLenum target, GLint level, GLenum format,
+                                                   GLsizei width, GLsizei height, GLint border,
+                                                   GLsizei size, const void *data) {
+    void (GL_APIENTRY *real)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei,
+                             const void *) = lookup_gl("glCompressedTexImage2D");
+    if (real) {
+        real(target, level, compressed_format(format), width, height, border, size, data);
+    }
+}
+
+static S3E_SOFTFP void host_glCompressedTexSubImage2D(GLenum target, GLint level, GLint x,
+                                                      GLint y, GLsizei width, GLsizei height,
+                                                      GLenum format, GLsizei size,
+                                                      const void *data) {
+    void (GL_APIENTRY *real)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLsizei,
+                             const void *) = lookup_gl("glCompressedTexSubImage2D");
+    if (real) {
+        real(target, level, x, y, width, height, compressed_format(format), size, data);
     }
 }
 
@@ -622,6 +711,11 @@ static void mod_runtime_present(void) {
 }
 
 static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
+    static int first_swap = 1;
+    if (first_swap) {
+        first_swap = 0;
+        plat_reinstall_crash_handler(); /* SDL and the GL driver are up by now */
+    }
     input_pump();
     dispatch_due_timers();
     GLuint previous_framebuffer = g_bound_framebuffer;
@@ -814,6 +908,8 @@ static const struct host_symbol WRAPPED_SYMBOLS[] = {
     WRAPPED(glClearDepthf),
     WRAPPED(glClearDepthfOES),
     WRAPPED(glColor4f),
+    WRAPPED(glCompressedTexImage2D),
+    WRAPPED(glCompressedTexSubImage2D),
     WRAPPED(glCopyTexImage2D),
     WRAPPED(glCopyTexSubImage2D),
     WRAPPED(glDepthRangef),
@@ -823,6 +919,7 @@ static const struct host_symbol WRAPPED_SYMBOLS[] = {
     WRAPPED(glFrustumf),
     WRAPPED(glFrustumfOES),
     WRAPPED(glGetIntegerv),
+    WRAPPED(glGetString),
     WRAPPED(glLightModelf),
     WRAPPED(glLightf),
     WRAPPED(glLineWidth),

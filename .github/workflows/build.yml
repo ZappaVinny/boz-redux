@@ -40,7 +40,7 @@ jobs:
         if: matrix.target == 'windows'
         with:
           path: runtime/build/downloads
-          key: mesa-${{ hashFiles('runtime/scripts/fetch-mesa-windows.sh') }}
+          key: windows-gl-${{ hashFiles('runtime/scripts/fetch-mesa-windows.sh', 'runtime/scripts/fetch-angle-windows.sh') }}
 
       - name: Build, test and package
         working-directory: runtime

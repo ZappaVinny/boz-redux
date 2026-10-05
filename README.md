@@ -56,10 +56,10 @@ Needs `mingw-w64-gcc` (the POSIX-threads variant), `zip` and `bsdtar`:
 cd runtime
 cmake --preset windows-x86
 cmake --build --preset windows-x86
-scripts/package-windows.sh    # downloads Mesa for Windows and writes build/windows-x86/package/BOZ-Redux-windows-x86.zip
+scripts/package-windows.sh    # downloads ANGLE and Mesa for Windows and writes build/windows-x86/package/BOZ-Redux-windows-x86.zip
 ```
 
-The Windows client renders through a bundled Mesa (`opengl32.dll`). At startup it tests Mesa's GPU driver (Direct3D 12) and falls back to its software renderer when that can't open a window. Set `GALLIUM_DRIVER` to force one.
+The Windows client renders through ANGLE (OpenGL ES on Direct3D 11, as in Chrome), which works on almost every GPU. A bundled Mesa in `mesa\` is the fallback: the launcher's Renderer setting (or `renderer` in `client.ini`) picks Mesa's Direct3D 12, Vulkan or software renderer; software is slow but always works.
 
 ## Controls
 

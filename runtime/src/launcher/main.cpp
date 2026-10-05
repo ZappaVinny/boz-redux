@@ -315,6 +315,17 @@ void settings_tab(Launcher &l) {
     {
         const char *values[] = {"fit", "stretch", "none"};
         const char *names[] = {"Fit (keep 16:9)", "Stretch to window", "None"};
+#if defined(_WIN32)
+        {
+            const char *renderers[] = {"auto", "d3d12", "vulkan", "software"};
+            const char *renderer_names[] = {"Auto (ANGLE, Direct3D 11)", "Mesa Direct3D 12",
+                                            "Mesa Vulkan", "Software (slow, always works)"};
+            if (combo("Renderer", l.ini.get("display", "renderer", "auto"), renderers, renderer_names,
+                      4, &chosen)) {
+                save_setting(l, "display", "renderer", chosen);
+            }
+        }
+#endif
         if (combo("Scaling", l.ini.get("display", "scaling", "fit"), values, names, 3, &chosen)) {
             save_setting(l, "display", "scaling", chosen);
         }
@@ -669,6 +680,16 @@ void poll_game(Launcher &l, SDL_Window *window) {
                       ? ""
                       : "The game stopped with an error (code " + std::to_string(l.game.exit_code) +
                             "). Details are in boz-log.txt.";
+#if defined(_WIN32)
+    // 0x80070057 (E_INVALIDARG): the GPU renderer gave up after opening the window (seen with
+    // Mesa's Direct3D 12 driver on AMD). Software rendering works everywhere.
+    if ((unsigned)l.game.exit_code == 0x80070057u &&
+        l.ini.get("display", "renderer", "auto") == "auto") {
+        save_setting(l, "display", "renderer", "software");
+        l.game_note = "The GPU renderer failed on this PC, so the renderer is now set to Software "
+                      "(Settings tab). Press PLAY to try again.";
+    }
+#endif
 }
 
 void draw(Launcher &l, SDL_Window *window) {
