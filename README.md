@@ -18,7 +18,7 @@ This project is being done by a human guided Generative AI (LLM) system, with mi
 
 ### Mods
 
-The launcher's **Mods** tab lists everything in the `mods/` folder next to it. The first mods live in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): **Developer** (the game's hidden console, cheats, noclip) and **Redux** (a field of view setting in the pause menu). To install one, copy its folder from the SDK's `mods/` into `mods/`, and copy the SDK's `lib/boz` folder into it as `scripts/boz` (in the SDK that is a link, which a plain copy or a Windows checkout does not keep).
+The launcher's **Mods** tab lists everything in the `mods/` folder next to it. The first mods live in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): **Developer** (the game's hidden console, cheats, noclip) and **Redux** (a field of view setting in the pause menu). To install one, copy its folder from the SDK's `mods/` into `mods/` (each mod already contains the standard lib in `scripts/boz`).
 
 ## Building from source
 

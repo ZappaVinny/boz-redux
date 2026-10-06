@@ -7,7 +7,8 @@ BOZ Redux brings the original *Call of Duty: Black Ops Zombies* mobile game (And
 - The original game code runs on desktop Linux and Windows through a built-in ARM emulator. The full game is playable with mouse and keyboard, in a resizable or fullscreen window.
 - Automated builds produce a Linux tarball and a Windows zip.
 - **Mods work:** replacement files, Lua code mods with hooks, settings in the game's own pause menu, and a standard library that makes common changes one line. The Redux mod adds a field of view setting to the pause menu.
-- No game files are included in this project, and none ever will be.
+- Official repositories and releases contain no game files. SDK users may work with their own
+  extracted files locally.
 
 ## How it fits together
 
@@ -45,7 +46,7 @@ Gameplay changes always live in mods, never hard-coded into the client.
 - **The Developer mod:** the game's hidden developer console, cheats and noclip.
 - Documented in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): a guide to making mods and references for everything above.
 
-### 5. Native PC controls (next)
+### 5. Native PC controls (done)
 - Mouse look that feels like a modern PC shooter: raw input straight to the camera, no stick acceleration.
 - Movement and actions sent straight to the game, and automatic menu and game modes (no Tab).
 - Hooks for mods to watch, block and send the player's actions (`boz.input`).
@@ -54,21 +55,26 @@ Gameplay changes always live in mods, never hard-coded into the client.
 - Field of view (done), aim toggle or hold, and more quality-of-life settings, all in the game's own pause menu.
 - The first real mod, and the reference example for mod authors.
 
-### 7. LAN co-op
-- The game's own local co-op over LAN and virtual LANs (ZeroTier, Radmin VPN, Hamachi), with no online accounts or servers.
+### 7. SDK projects and asset compilers
+- Deterministic project builds produce complete installable mod folders and ZIPs.
+- Writable native textures, materials, models, entities, collision, sectors, portals and navigation.
+- A desktop SDK manages projects, validation, builds and installation.
 
-### 8. Asset tools (bozkit)
-- Open the game's `.group.bin` resource format, which holds every texture, model, UI screen and map.
-- Textures to and from PNG; models to and from glTF; UI, audio and text editing.
-- A Blender add-on for models and maps.
+### 8. Existing-map editing
+- A Blender add-on imports and exports map geometry, materials, entities, collision and navigation.
+- Debug views expose navmeshes, collision, spawn points, paths and barriers.
 
-### 9. Maps
-- Debug views for map work: wireframe, overdraw and untextured rendering, and the navmesh, collision, spawn points, zombie paths and barriers drawn in the world, switchable from mods and the Developer mod.
-- Edit existing maps first.
-- Then research what it takes to build brand-new ones: spawns, zombie pathing, barriers, rounds.
+### 9. Custom Zombies maps
+- Generate complete native map groups and register them through reusable Lua APIs.
+- Keep each map's objectives, encounters and special rules in its own mod.
 
-### 10. macOS
-- A 64-bit version of the client, which macOS requires and which also enables a faster emulator backend.
+### 10. Full content-creation suite
+- Models, skeletons, animations, weapons, effects, audio, localization, UI and lightmaps.
+- Stable project migrations, compatibility contracts and complete tutorials.
+
+### 11. 64-bit client and macOS
+- Prototype after existing-map tools mature; begin the full rewrite after the custom-map MVP.
+- Preserve Lua, package, project and gamedef compatibility across the runtime change.
 
 ## Mod format
 
