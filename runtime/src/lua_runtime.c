@@ -698,9 +698,11 @@ static const luaL_Reg assets_api[] = {{"patch", api_assets_patch}, {NULL, NULL}}
 /* --- Logging and per-mod environments ---------------------------------------------------------- */
 
 static int api_log(lua_State *state) {
+    /* Count the arguments first: in Lua 5.4 luaL_buffinit pushes a placeholder onto the stack,
+     * which would otherwise be printed as an extra "userdata: 0x..." value. */
+    int count = lua_gettop(state);
     luaL_Buffer buffer;
     luaL_buffinit(state, &buffer);
-    int count = lua_gettop(state);
     for (int i = 1; i <= count; ++i) {
         if (i > 1) {
             luaL_addchar(&buffer, ' ');
