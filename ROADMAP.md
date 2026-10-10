@@ -71,6 +71,10 @@ Gameplay changes always live in mods, never hard-coded into the client.
 ### 10. Full content-creation suite
 - Models, skeletons, animations, weapons, effects, audio, localization, UI and lightmaps.
 - Stable project migrations, compatibility contracts and complete tutorials.
+- Client support for the suite:
+  - reload a mod's Lua scripts in a running game;
+  - let mods add `fixed` entries at startup, so two maps no longer conflict over `fixed.group.bin`;
+  - after a crash, show the end of the log and the last Lua error.
 
 ### 11. 64-bit client and macOS
 - Prototype after existing-map tools mature; begin the full rewrite after the custom-map MVP.
