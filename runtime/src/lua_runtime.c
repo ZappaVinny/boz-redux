@@ -760,6 +760,30 @@ static int api_require(lua_State *state) {
     return 1;
 }
 
+/* loadscript(name, env) inside a mod: <mod>/scripts/<name>.lua loaded (not run, not cached) with
+ * env as its _ENV, so one script can run once per object with its own globals (boz.prefabs runs
+ * a prefab's script for every prefab using it, each with its own self). */
+static int api_loadscript(lua_State *state) {
+    const char *name = luaL_checkstring(state, 1);
+    luaL_checktype(state, 2, LUA_TTABLE);
+    int mod = (int)lua_tointeger(state, lua_upvalueindex(1));
+    const struct mod_info *info = mods_enabled_at(mod);
+    char relative[256];
+    snprintf(relative, sizeof(relative), "%s", name);
+    for (char *c = relative; *c; ++c) {
+        if (*c == '.') {
+            *c = '/';
+        }
+    }
+    if (strstr(relative, "..")) {
+        return luaL_error(state, "bad script name %s", name);
+    }
+    char path[1400];
+    snprintf(path, sizeof(path), "%s/scripts/%s.lua", info ? info->dir : ".", relative);
+    load_into_env(state, path, 2);
+    return 1;
+}
+
 static void add_functions(const char *name, const luaL_Reg *functions) {
     lua_newtable(L);
     luaL_setfuncs(L, functions, 0);
@@ -850,6 +874,9 @@ static void run_mod(int index) {
     lua_newtable(L);
     lua_pushcclosure(L, api_require, 3);
     lua_setfield(L, env, "require");
+    lua_pushinteger(L, index);
+    lua_pushcclosure(L, api_loadscript, 1);
+    lua_setfield(L, env, "loadscript");
     lua_createtable(L, 0, 1);
     lua_pushglobaltable(L);
     lua_setfield(L, -2, "__index");
