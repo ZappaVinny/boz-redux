@@ -710,6 +710,51 @@ static void mod_runtime_present(void) {
     overlay_end_frame();
 }
 
+/* BOZ_SCREENSHOT_DIR: save the presented frame there as a PPM every BOZ_SCREENSHOT_EVERY frames
+ * (default 60), for checking what the game draws in automated (offscreen) runs. */
+static void debug_screenshot(void) {
+    static int ready = 0, every = 60;
+    static const char *dir = NULL;
+    static unsigned frame = 0, saved = 0;
+    if (!ready) {
+        ready = 1;
+        dir = getenv("BOZ_SCREENSHOT_DIR");
+        const char *value = getenv("BOZ_SCREENSHOT_EVERY");
+        if (value && atoi(value) > 0) {
+            every = atoi(value);
+        }
+    }
+    if (!dir || ++frame % (unsigned)every) {
+        return;
+    }
+    int width = 0, height = 0;
+    if (!egl_backend_drawable_size(&width, &height) || width <= 0 || height <= 0) {
+        return;
+    }
+    void (GL_APIENTRY *read)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *) =
+        lookup_gl("glReadPixels");
+    unsigned char *pixels = malloc((size_t)width * height * 4);
+    if (!read || !pixels) {
+        free(pixels);
+        return;
+    }
+    raw_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, 0);
+    read(0, 0, width, height, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pixels);
+    char path[1024];
+    snprintf(path, sizeof path, "%s/frame_%05u.ppm", dir, saved++);
+    FILE *out = fopen(path, "wb");
+    if (out) {
+        fprintf(out, "P6\n%d %d\n255\n", width, height);
+        for (int y = height - 1; y >= 0; y--) {
+            for (int x = 0; x < width; x++) {
+                fwrite(pixels + ((size_t)y * width + x) * 4, 1, 3, out);
+            }
+        }
+        fclose(out);
+    }
+    free(pixels);
+}
+
 static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
     static int first_swap = 1;
     if (first_swap) {
@@ -725,6 +770,7 @@ static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
     frontend_overlay_gl_present();
     scale_present();
     mod_runtime_present();
+    debug_screenshot();
     EGLBoolean result = egl_backend_swap_buffers(display, surface);
     if (previous_framebuffer) {
         driver_bind_framebuffer(previous_framebuffer);
