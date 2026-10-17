@@ -200,6 +200,8 @@ boz_test(s3e_socket_test SOURCES src/s3e_socket.c src/s3e_config.c)
 boz_test(s3e_config_test SOURCES src/s3e_config.c src/game_patches/player_name.c)
 boz_test(mdns_wire_test SOURCES src/mdns_wire.c)
 boz_test(hud_sticks_test SOURCES src/game_patches/hud_sticks.c)
+boz_test(crash_recovery_test SOURCES src/game_patches/crash_recovery.c)
+boz_test(str_util_test)
 boz_test(s3e_zeroconf_test SOURCES tests/zeroconf_platform_fake.c src/s3e_zeroconf.c src/mdns_wire.c
          INCLUDES tests)
 boz_test(s3e_timer_test SOURCES src/s3e_timer.c)

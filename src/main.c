@@ -42,23 +42,6 @@ static void usage(const char *argv0) {
             argv0);
 }
 
-static bool parse_display_size(const char *value, uint32_t *width, uint32_t *height) {
-    char *width_end = NULL;
-    char *height_end = NULL;
-    unsigned long parsed_width = strtoul(value, &width_end, 10);
-    if (width_end == value || (*width_end != 'x' && *width_end != 'X')) {
-        return false;
-    }
-    unsigned long parsed_height = strtoul(width_end + 1, &height_end, 10);
-    if (height_end == width_end + 1 || *height_end != '\0' || !parsed_width || !parsed_height ||
-        parsed_width > UINT16_MAX || parsed_height > UINT16_MAX) {
-        return false;
-    }
-    *width = (uint32_t)parsed_width;
-    *height = (uint32_t)parsed_height;
-    return true;
-}
-
 static void terminate_handler(int sig) {
     (void)sig;
     _Exit(0);
@@ -107,7 +90,7 @@ int main(int argc, char **argv) {
                 return 2;
             }
             display_size_given = true;
-            if (!parse_display_size(argv[++i], &display_width, &display_height)) {
+            if (!str_parse_size(argv[++i], &display_width, &display_height)) {
                 fprintf(stderr, "invalid display size: %s\n", argv[i]);
                 return 2;
             }
@@ -132,7 +115,7 @@ int main(int argc, char **argv) {
     /* Render resolution: --display-size, else BOZ_DISPLAY / client.ini, else 1280x720. */
     const char *display_setting = getenv("BOZ_DISPLAY");
     if (!display_size_given && display_setting &&
-        !parse_display_size(display_setting, &display_width, &display_height)) {
+        !str_parse_size(display_setting, &display_width, &display_height)) {
         fprintf(stderr, "invalid render resolution: %s (expected WIDTHxHEIGHT)\n", display_setting);
         return 2;
     }
