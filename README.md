@@ -20,6 +20,8 @@ This project is being done by a human guided Generative AI (LLM) system, with mi
 
 The launcher's **Mods** tab lists everything in the `mods/` folder next to it. The first mod lives in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): **Developer** (the game's hidden console, cheats, noclip). To install it, copy its folder from the SDK's `mods/` into `mods/` (each mod already contains the standard lib in `scripts/boz`).
 
+A mod that adds a map lists it in its `mod.toml` (`maps = ["name"]`; the SDK writes this for map projects). The launcher then offers the map in the list next to **PLAY**: pick it to start the game straight into the map, or **Main menu** to start normally.
+
 ## Building from source
 
 How the runtime works, and every `BOZ_*` setting: [docs/runtime.md](docs/runtime.md).

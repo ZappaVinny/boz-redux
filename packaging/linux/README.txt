@@ -18,4 +18,5 @@ use, R reload, V knife, G grenade, Q tactical, C or Space crouch (hold for prone
 1 switch weapon, Esc pause (Esc again resumes), Tab frees the mouse until pressed again.
 F11 or Alt+Enter toggles fullscreen. Look and aiming sensitivity are on the Settings tab.
 
-./setup.sh and ./run.sh still work from a terminal if you prefer.
+./setup.sh and ./run.sh still work from a terminal if you prefer. ./add-to-menu.sh adds BOZ
+Redux, with its icon, to your desktop's application menu.

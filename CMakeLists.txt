@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(boz_redux_client C CXX)
+project(boz_redux_client VERSION 0.1.1 LANGUAGES C CXX)
+set(BOZ_VERSION ${PROJECT_VERSION})
+if(WIN32)
+  enable_language(RC)
+endif()
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
   message(FATAL_ERROR "The client must be built as a 32-bit program; use a preset (cmake --preset linux-x86)")
@@ -83,6 +87,43 @@ add_library(imgui_core STATIC
   third_party/imgui/imgui_widgets.cpp)
 target_include_directories(imgui_core PUBLIC third_party/imgui)
 
+# Branding (branding/): the logo, window icon and fonts are built into the programs; Windows
+# executables also get the icon and version information as resources.
+set(BOZ_BRANDING_FILES
+  BRAND_LOGO=${CMAKE_SOURCE_DIR}/branding/boz-redux-logo.png
+  BRAND_ICON=${CMAKE_SOURCE_DIR}/branding/icons/boz-redux-256.png
+  BRAND_FONT_REGULAR=${CMAKE_SOURCE_DIR}/branding/fonts/Barlow-Regular.ttf
+  BRAND_FONT_SEMIBOLD=${CMAKE_SOURCE_DIR}/branding/fonts/Barlow-SemiBold.ttf
+  BRAND_FONT_HEADING=${CMAKE_SOURCE_DIR}/branding/fonts/BarlowCondensed-Bold.ttf)
+set(BOZ_BRANDING_DEPENDS)
+foreach(entry IN LISTS BOZ_BRANDING_FILES)
+  string(REGEX REPLACE "^[^=]*=" "" path "${entry}")
+  list(APPEND BOZ_BRANDING_DEPENDS "${path}")
+endforeach()
+file(WRITE ${CMAKE_BINARY_DIR}/generated/branding_files.txt "${BOZ_BRANDING_FILES}")
+add_custom_command(
+  OUTPUT ${CMAKE_BINARY_DIR}/generated/branding_data.c
+  COMMAND ${CMAKE_COMMAND} -DOUTPUT=${CMAKE_BINARY_DIR}/generated/branding_data.c
+          -DLIST=${CMAKE_BINARY_DIR}/generated/branding_files.txt -P ${CMAKE_SOURCE_DIR}/cmake/embed_files.cmake
+  DEPENDS ${BOZ_BRANDING_DEPENDS} ${CMAKE_SOURCE_DIR}/cmake/embed_files.cmake
+  COMMENT "Embedding the branding")
+add_library(boz_branding STATIC src/branding/brand_image.c ${CMAKE_BINARY_DIR}/generated/branding_data.c)
+target_include_directories(boz_branding PUBLIC include PRIVATE third_party/stb)
+
+# boz_windows_resources(target "Description"): the icon and version information.
+function(boz_windows_resources target description)
+  if(NOT WIN32)
+    return()
+  endif()
+  set(BOZ_RC_ICON "${CMAKE_SOURCE_DIR}/branding/boz-redux.ico")
+  set(BOZ_RC_NAME "${target}")
+  set(BOZ_RC_DESCRIPTION "${description}")
+  string(REPLACE "." "," BOZ_RC_VERSION_COMMAS "${BOZ_VERSION}")
+  configure_file(${CMAKE_SOURCE_DIR}/packaging/windows/app.rc.in
+                 ${CMAKE_BINARY_DIR}/generated/${target}.rc @ONLY)
+  target_sources(${target} PRIVATE ${CMAKE_BINARY_DIR}/generated/${target}.rc)
+endfunction()
+
 add_library(boz_project INTERFACE)
 target_include_directories(boz_project INTERFACE include src third_party/lzma)
 target_compile_definitions(boz_project INTERFACE _GNU_SOURCE)
@@ -117,6 +158,7 @@ add_executable(codboz_s3e_loader
   src/lua_assets.c
   src/native_input.c
   src/overlay.cpp
+  src/branding/brand_imgui.cpp
   src/s3e_config.c
   src/s3e_audio.c
   src/s3e_audio_unit.c
@@ -142,7 +184,8 @@ else()
   set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
   set(BOZ_SYSTEM_LINK_OPTIONS)
 endif()
-target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
+target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
+boz_windows_resources(codboz_s3e_loader "BOZ Redux game")
 target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
 if(NOT WIN32)
   target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
@@ -160,6 +203,7 @@ target_link_libraries(imgui PUBLIC imgui_core SDL2::SDL2)
 
 add_executable(boz-redux
   src/launcher/main.cpp
+  src/branding/brand_imgui.cpp
   src/launcher/game_files.cpp
   src/launcher/ini_file.cpp
   src/launcher/os.cpp
@@ -168,7 +212,9 @@ add_executable(boz-redux
   src/mods.c)
 target_include_directories(boz-redux PRIVATE include)
 target_compile_options(boz-redux PRIVATE ${BOZ_WARNINGS})
-target_link_libraries(boz-redux PRIVATE imgui boz_common)
+target_link_libraries(boz-redux PRIVATE imgui boz_common boz_branding)
+target_compile_definitions(boz-redux PRIVATE BOZ_VERSION="${BOZ_VERSION}")
+boz_windows_resources(boz-redux "BOZ Redux launcher")
 if(WIN32)
   target_link_libraries(boz-redux PRIVATE comdlg32 shell32 ole32)
   target_link_options(boz-redux PRIVATE -static -static-libgcc -static-libstdc++)
@@ -182,6 +228,7 @@ add_dependencies(boz-redux codboz_s3e_loader codboz_apk_extract)
 
 add_executable(codboz_apk_extract tools/apk_extract/codboz_apk_extract.c third_party/lzma/LzmaDec.c)
 target_link_libraries(codboz_apk_extract PRIVATE boz_project)
+boz_windows_resources(codboz_apk_extract "BOZ Redux game file installer")
 
 enable_testing()
 

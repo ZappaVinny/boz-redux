@@ -26,6 +26,13 @@ Lua 5.4 (code mods, built into codboz_s3e_loader)
 LZMA SDK (APK extractor)
   https://www.7-zip.org/sdk.html - public domain
 
+Barlow and Barlow Condensed fonts (launcher and in-game overlay, built into boz-redux and
+codboz_s3e_loader)
+  https://github.com/jpt/barlow - SIL Open Font License 1.1
+
+stb_image (PNG decoding of the built-in logo and icon)
+  https://github.com/nothings/stb - public domain (or MIT)
+
 Windows package only:
 
 ANGLE (libEGL.dll, libGLESv2.dll), from Electron's win32-ia32 release (Chromium's build)

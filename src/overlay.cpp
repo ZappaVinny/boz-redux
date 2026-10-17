@@ -5,6 +5,8 @@
 // Lua draws through the `ui` module; widgets that contain others take a function, so a Lua error
 // can never leave a window open.
 #include "mod_runtime.h"
+#include "brand_imgui.h"
+#include "branding.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -509,12 +511,20 @@ void ensure_context() {
     io.BackendPlatformName = "boz_client";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
     io.ConfigErrorRecoveryEnableAssert = false;
-    io.Fonts->AddFontDefaultVector();
+    if (!brand_imgui_font(BRAND_FONT_REGULAR, 17.0f)) {
+        io.Fonts->AddFontDefaultVector();
+    }
     ImGui::StyleColorsDark();
     ImGuiStyle &style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f;
-    style.FrameRounding = 4.0f;
-    style.Colors[ImGuiCol_WindowBg].w = 0.92f;
+    style.WindowRounding = 4.0f;
+    style.FrameRounding = 3.0f;
+    style.GrabRounding = 3.0f;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+    style.FramePadding = ImVec2(8, 5);
+    brand_imgui_colours(style);
+    style.Colors[ImGuiCol_WindowBg].w = 0.94f;
+    style.Colors[ImGuiCol_TitleBgActive] = brand(BRAND_RED_DARK);
 }
 
 }  // namespace

@@ -1,3 +1,4 @@
+#include "branding.h"
 #include "s3e_host_internal.h"
 
 #include <limits.h>
@@ -69,6 +70,10 @@ struct sdl_video_api {
     void (*DestroyWindow)(void *window);
     const char *(*GetCurrentVideoDriver)(void);
     const char *(*GetError)(void);
+    void *(*CreateRGBSurfaceWithFormatFrom)(void *pixels, int w, int h, int depth, int pitch,
+                                            uint32_t format);
+    void (*SetWindowIcon)(void *window, void *icon);
+    void (*FreeSurface)(void *surface);
 };
 
 struct sdl_egl_state {
@@ -221,6 +226,10 @@ static int load_sdl_video(void) {
     ok &= load_symbol((void **)&g_sdl.api.DestroyWindow, "SDL_DestroyWindow");
     ok &= load_symbol((void **)&g_sdl.api.GetError, "SDL_GetError");
     load_symbol((void **)&g_sdl.api.GetCurrentVideoDriver, "SDL_GetCurrentVideoDriver");
+    load_symbol((void **)&g_sdl.api.CreateRGBSurfaceWithFormatFrom,
+                "SDL_CreateRGBSurfaceWithFormatFrom");
+    load_symbol((void **)&g_sdl.api.SetWindowIcon, "SDL_SetWindowIcon");
+    load_symbol((void **)&g_sdl.api.FreeSurface, "SDL_FreeSurface");
     if (!ok) {
         plat_lib_close(g_sdl.library);
         memset(&g_sdl.api, 0, sizeof(g_sdl.api));
@@ -403,13 +412,31 @@ static void apply_window_attributes(void) {
     g_sdl.api.GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 }
 
+static void set_window_icon(void) {
+    enum { SDL_PIXELFORMAT_RGBA32_LE = 0x16762004u }; /* SDL_PIXELFORMAT_ABGR8888 */
+    if (!g_sdl.api.CreateRGBSurfaceWithFormatFrom || !g_sdl.api.SetWindowIcon ||
+        !g_sdl.api.FreeSurface) {
+        return;
+    }
+    int w = 0, h = 0;
+    unsigned char *pixels = brand_image_decode(&BRAND_ICON, &w, &h);
+    void *icon = pixels ? g_sdl.api.CreateRGBSurfaceWithFormatFrom(pixels, w, h, 32, w * 4,
+                                                                   SDL_PIXELFORMAT_RGBA32_LE)
+                        : NULL;
+    if (icon) {
+        g_sdl.api.SetWindowIcon(g_sdl.window, icon);
+        g_sdl.api.FreeSurface(icon);
+    }
+    brand_image_free(pixels);
+}
+
 static int ensure_window(void) {
     if (g_sdl.window) {
         return 1;
     }
     apply_window_attributes();
     g_sdl.window = g_sdl.api.CreateWindow(
-        "Call of Duty: Black Ops Zombies", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+        "BOZ Redux", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
         g_native_window.width, g_native_window.height,
         SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN |
             (getenv("BOZ_WINDOWED") && strcmp(getenv("BOZ_WINDOWED"), "0") != 0
@@ -426,6 +453,7 @@ static int ensure_window(void) {
         set_error(EGL_BAD_NATIVE_WINDOW);
         return 0;
     }
+    set_window_icon();
     fprintf(stderr, "[egl] SDL window size=%ux%u\n", g_native_window.width, g_native_window.height);
     return 1;
 }

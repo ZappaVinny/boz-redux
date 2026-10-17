@@ -1,4 +1,6 @@
 // BOZ Redux launcher: sets up game files, edits client.ini and starts the game client.
+#include "brand_imgui.h"
+#include "branding.h"
 #include "client_config.h"
 #include "game_files.h"
 #include "ini_file.h"
@@ -56,63 +58,127 @@ ImVec4 rgb(int r, int g, int b) {
     return ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
 }
 
+const ImVec4 OK_COLOUR = rgb(62, 196, 109);
+const ImVec4 WARN_COLOUR = rgb(232, 168, 56);
+const ImVec4 ERROR_COLOUR = rgb(255, 92, 98);
+
+// The brand fonts (built in from branding/fonts) and the logo texture.
+struct Brand {
+    ImFont *body = nullptr;
+    ImFont *strong = nullptr;
+    ImFont *heading = nullptr;
+    SDL_Texture *logo = nullptr;
+    int logo_width = 0, logo_height = 0;
+};
+Brand g_brand;
+
 void apply_style() {
     ImGui::StyleColorsDark();
     ImGuiStyle &style = ImGui::GetStyle();
+    style.WindowPadding = ImVec2(28, 22);
     style.WindowRounding = 0.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.TabRounding = 4.0f;
-    style.FramePadding = ImVec2(10, 6);
-    style.ItemSpacing = ImVec2(10, 8);
-    ImVec4 *c = style.Colors;
-    c[ImGuiCol_WindowBg] = rgb(22, 22, 20);
-    c[ImGuiCol_ChildBg] = rgb(30, 30, 27);
-    c[ImGuiCol_FrameBg] = rgb(44, 43, 38);
-    c[ImGuiCol_FrameBgHovered] = rgb(62, 60, 52);
-    c[ImGuiCol_FrameBgActive] = rgb(75, 72, 60);
-    c[ImGuiCol_Button] = rgb(92, 26, 22);
-    c[ImGuiCol_ButtonHovered] = rgb(128, 36, 30);
-    c[ImGuiCol_ButtonActive] = rgb(150, 44, 36);
-    c[ImGuiCol_Header] = rgb(92, 26, 22);
-    c[ImGuiCol_HeaderHovered] = rgb(128, 36, 30);
-    c[ImGuiCol_HeaderActive] = rgb(150, 44, 36);
-    c[ImGuiCol_Tab] = rgb(44, 43, 38);
-    c[ImGuiCol_TabHovered] = rgb(128, 36, 30);
-    c[ImGuiCol_TabSelected] = rgb(92, 26, 22);
-    c[ImGuiCol_CheckMark] = rgb(214, 170, 80);
-    c[ImGuiCol_SliderGrab] = rgb(214, 170, 80);
-    c[ImGuiCol_SliderGrabActive] = rgb(240, 196, 100);
-    c[ImGuiCol_PlotHistogram] = rgb(214, 170, 80);
-    c[ImGuiCol_Separator] = rgb(60, 58, 50);
+    style.ChildRounding = 4.0f;
+    style.FrameRounding = 3.0f;
+    style.PopupRounding = 4.0f;
+    style.GrabRounding = 3.0f;
+    style.TabRounding = 3.0f;
+    style.ScrollbarRounding = 3.0f;
+    style.FrameBorderSize = 1.0f;
+    style.ChildBorderSize = 1.0f;
+    style.PopupBorderSize = 1.0f;
+    style.TabBorderSize = 0.0f;
+    style.TabBarBorderSize = 1.0f;
+    style.TabBarOverlineSize = 3.0f;
+    style.FramePadding = ImVec2(12, 7);
+    style.ItemSpacing = ImVec2(10, 9);
+    style.ItemInnerSpacing = ImVec2(8, 6);
+    style.CellPadding = ImVec2(8, 6);
+    style.ScrollbarSize = 12.0f;
+    style.SeparatorTextBorderSize = 1.0f;
+    style.DisabledAlpha = 0.38f;
+    brand_imgui_colours(style);
 }
 
-void load_font() {
-    ImGuiIO &io = ImGui::GetIO();
-    const char *candidates[] = {
-#if defined(_WIN32)
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
-#else
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-#endif
-    };
-    for (const char *path : candidates) {
-        if (os::exists(path) && io.Fonts->AddFontFromFileTTF(path, 18.0f)) {
-            return;
-        }
+void load_fonts() {
+    g_brand.body = brand_imgui_font(BRAND_FONT_REGULAR, 18.0f);
+    g_brand.strong = brand_imgui_font(BRAND_FONT_SEMIBOLD, 18.0f);
+    g_brand.heading = brand_imgui_font(BRAND_FONT_HEADING, 18.0f);
+    if (!g_brand.body) {
+        g_brand.body = ImGui::GetIO().Fonts->AddFontDefault();
     }
-    io.Fonts->AddFontDefault();
+    ImGui::GetIO().FontDefault = g_brand.body;
+}
+
+SDL_Surface *brand_surface(const struct brand_blob &blob, unsigned char **pixels, int *w, int *h) {
+    *pixels = brand_image_decode(&blob, w, h);
+    if (!*pixels) {
+        return nullptr;
+    }
+    return SDL_CreateRGBSurfaceWithFormatFrom(*pixels, *w, *h, 32, *w * 4, SDL_PIXELFORMAT_RGBA32);
+}
+
+void set_window_icon(SDL_Window *window) {
+    unsigned char *pixels = nullptr;
+    int w = 0, h = 0;
+    if (SDL_Surface *icon = brand_surface(BRAND_ICON, &pixels, &w, &h)) {
+        SDL_SetWindowIcon(window, icon);
+        SDL_FreeSurface(icon);
+    }
+    brand_image_free(pixels);
+}
+
+void load_logo(SDL_Renderer *renderer) {
+    unsigned char *pixels = nullptr;
+    if (SDL_Surface *logo = brand_surface(BRAND_LOGO, &pixels, &g_brand.logo_width,
+                                          &g_brand.logo_height)) {
+        g_brand.logo = SDL_CreateTextureFromSurface(renderer, logo);
+        if (g_brand.logo) {
+            SDL_SetTextureBlendMode(g_brand.logo, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(g_brand.logo, SDL_ScaleModeBest);
+        }
+        SDL_FreeSurface(logo);
+    }
+    brand_image_free(pixels);
+}
+
+// A section heading: condensed capitals with a red bar in front, then a thin rule.
+void section(const char *title) {
+    ImGui::Spacing();
+    ImGui::PushFont(g_brand.heading, 20.0f);
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    float height = ImGui::GetTextLineHeight();
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(at.x, at.y + 3), ImVec2(at.x + 4, at.y + height - 3),
+                                              ImGui::GetColorU32(brand(BRAND_RED)));
+    ImGui::SetCursorScreenPos(ImVec2(at.x + 14, at.y));
+    std::string upper = title;
+    for (char &ch : upper) {
+        ch = (char)std::toupper((unsigned char)ch);
+    }
+    ImGui::TextUnformatted(upper.c_str());
+    ImGui::PopFont();
+    ImGui::Separator();
+}
+
+// A button in the brand red, for the main action of a section.
+bool primary_button(const char *label, const ImVec2 &size = ImVec2(0, 0)) {
+    ImGui::PushStyleColor(ImGuiCol_Button, brand(BRAND_RED));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, rgb(240, 52, 64));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, brand(BRAND_RED_DARK));
+    ImGui::PushStyleColor(ImGuiCol_Border, brand(BRAND_RED));
+    ImGui::PushFont(g_brand.strong, 0.0f);
+    bool pressed = ImGui::Button(label, size);
+    ImGui::PopFont();
+    ImGui::PopStyleColor(4);
+    return pressed;
 }
 
 void status_line(bool ok, const char *good, const char *bad) {
-    ImGui::TextColored(ok ? rgb(120, 200, 110) : rgb(220, 120, 90), "%s %s", ok ? "[ok]" : "[--]",
-                       ok ? good : bad);
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    float height = ImGui::GetTextLineHeight();
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + 6, at.y + height * 0.5f), 4.5f,
+                                                ImGui::GetColorU32(ok ? OK_COLOUR : ERROR_COLOUR));
+    ImGui::SetCursorScreenPos(ImVec2(at.x + 20, at.y));
+    ImGui::TextUnformatted(ok ? good : bad);
 }
 
 void ensure_ini(Launcher &l) {
@@ -143,7 +209,7 @@ void save_setting(Launcher &l, const char *section, const char *key, const std::
 void game_files_tab(Launcher &l, const GameStatus &status) {
     bool busy = l.files->busy();
 
-    ImGui::SeparatorText("1. Game APK");
+    section("1. Game APK");
     if (!status.image) {
         status_line(false, "", "Not installed. Use your own Black Ops Zombies APK, version 1.0.11.");
     } else if (!status.image_checked) {
@@ -151,8 +217,7 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
     } else if (status.image_verified) {
         status_line(true, "Installed: version 1.0.11", "");
     } else {
-        ImGui::TextColored(rgb(230, 190, 90),
-                           "[!!] Installed, but not the 1.0.11 release. It may not work.");
+        ImGui::TextColored(WARN_COLOUR, "Installed, but not the 1.0.11 release. It may not work.");
     }
     ImGui::SetNextItemWidth(-260);
     ImGui::InputTextWithHint("##apk", "Path to com.activision.boz.apk (or drag it onto this window)",
@@ -168,18 +233,18 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(busy || !l.apk_path[0]);
-    if (ImGui::Button(status.image ? "Reinstall" : "Install")) {
+    if (primary_button(status.image ? "Reinstall" : "Install")) {
         l.files->install_apk(l.apk_path);
     }
     ImGui::EndDisabled();
 
-    ImGui::SeparatorText("2. Data packs");
+    section("2. Data packs");
     for (const PackStatus &pack : status.packs) {
         status_line(pack.present, pack.name, pack.name);
     }
     bool packs_ready = status.packs[0].present && status.packs[1].present;
     ImGui::BeginDisabled(busy || packs_ready);
-    if (ImGui::Button("Download from Activision (825 MB)")) {
+    if (primary_button("Download from Activision (825 MB)")) {
         l.files->download_packs();
     }
     ImGui::EndDisabled();
@@ -198,7 +263,7 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(busy || packs_ready || !l.pack_folder[0]);
-    if (ImGui::Button("Import")) {
+    if (primary_button("Import")) {
         l.files->import_packs(l.pack_folder);
     }
     ImGui::EndDisabled();
@@ -250,14 +315,14 @@ bool combo(const char *label, const std::string &current, const char *const *val
 void settings_tab(Launcher &l) {
     ensure_ini(l);
     if (!l.ini_loaded) {
-        ImGui::TextColored(rgb(220, 120, 90), "Could not open client.ini in %s.", l.root.c_str());
+        ImGui::TextColored(ERROR_COLOUR, "Could not open client.ini in %s.", l.root.c_str());
         return;
     }
     std::string chosen;
     ImGui::BeginChild("settings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.2f));
     ImGui::PushItemWidth(260);
 
-    ImGui::SeparatorText("Display");
+    section("Display");
     bool fullscreen = l.ini.get("display", "fullscreen", "true") != "false";
     if (ImGui::Checkbox("Fullscreen (F11 toggles in game)", &fullscreen)) {
         save_setting(l, "display", "fullscreen", fullscreen ? "true" : "false");
@@ -311,7 +376,7 @@ void settings_tab(Launcher &l) {
                           "Controllers always show it.");
     }
 
-    ImGui::SeparatorText("Mouse");
+    section("Mouse");
     float look = (float)std::atof(l.ini.get("input", "look_sensitivity", "3.0").c_str());
     ImGui::SliderFloat("Look sensitivity", &look, 0.2f, 15.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     if (ImGui::IsItemHovered()) {
@@ -338,7 +403,7 @@ void settings_tab(Launcher &l) {
         save_setting(l, "input", "invert_y", invert ? "true" : "false");
     }
 
-    ImGui::SeparatorText("Mouse in Dead Ops Arcade");
+    section("Mouse in Dead Ops Arcade");
     ImGui::TextDisabled("Dead Ops still steers the game's touch stick with the mouse.");
     int sensitivity = std::atoi(l.ini.get("input", "mouse_sensitivity", "12000").c_str());
     ImGui::SliderInt("Stick sensitivity", &sensitivity, 2000, 60000);
@@ -357,7 +422,7 @@ void settings_tab(Launcher &l) {
         }
     }
 
-    ImGui::SeparatorText("Controls (during a match)");
+    section("Controls (during a match)");
     ImGui::TextDisabled("Click Set, then press a key or mouse button. Separate several with commas.");
     if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
@@ -375,7 +440,7 @@ void settings_tab(Launcher &l) {
                           l.ini.get("keys", CLIENT_BINDINGS[i].action, CLIENT_BINDINGS[i].defaults).c_str());
             ImGui::SetNextItemWidth(-1);
             if (l.capturing == i) {
-                ImGui::TextColored(rgb(214, 170, 80), "Press a key or mouse button...");
+                ImGui::TextColored(brand(BRAND_RED), "Press a key or mouse button...");
             } else if (ImGui::InputText("##value", value, sizeof(value),
                                         ImGuiInputTextFlags_EnterReturnsTrue) ||
                        ImGui::IsItemDeactivatedAfterEdit()) {
@@ -400,7 +465,7 @@ void settings_tab(Launcher &l) {
         ImGui::EndTable();
     }
 
-    ImGui::SeparatorText("Troubleshooting");
+    section("Troubleshooting");
     bool status = l.ini.get("debug", "status", "false") == "true";
     if (ImGui::Checkbox("Log frame rate and emulator statistics", &status)) {
         save_setting(l, "debug", "status", status ? "true" : "false");
@@ -479,7 +544,7 @@ void save_mods(Launcher &l) {
 void mods_tab(Launcher &l) {
     ensure_ini(l);
     if (!l.ini_loaded) {
-        ImGui::TextColored(rgb(220, 120, 90), "Could not open client.ini in %s.", l.root.c_str());
+        ImGui::TextColored(ERROR_COLOUR, "Could not open client.ini in %s.", l.root.c_str());
         return;
     }
     if (!l.mods_scanned) {
@@ -564,9 +629,9 @@ void mods_tab(Launcher &l) {
         ImGui::TextDisabled("%s%s%s  folder: mods/%s", mod.id, mod.author[0] ? "  by " : "",
                             mod.author, mod.folder);
         if (!mod.has_manifest) {
-            ImGui::TextColored(rgb(230, 180, 80), "No mod.toml: named after its folder.");
+            ImGui::TextColored(WARN_COLOUR, "No mod.toml: named after its folder.");
         } else if (mod.game[0] && std::strcmp(mod.game, "1.0.11") != 0) {
-            ImGui::TextColored(rgb(230, 180, 80), "Made for game version %s; this client runs 1.0.11.",
+            ImGui::TextColored(WARN_COLOUR, "Made for game version %s; this client runs 1.0.11.",
                                mod.game);
         }
         if (mod.description[0]) {
@@ -584,7 +649,7 @@ void mods_tab(Launcher &l) {
             }
             list += ")";
         }
-        ImGui::TextColored(rgb(230, 180, 80), "%d file%s replaced by more than one mod: %s",
+        ImGui::TextColored(WARN_COLOUR, "%d file%s replaced by more than one mod: %s",
                            (int)l.mod_conflicts.size(), l.mod_conflicts.size() == 1 ? "" : "s",
                            list.c_str());
     }
@@ -619,9 +684,66 @@ bool capture_binding(Launcher &l, const SDL_Event &event) {
 
 // --- Play -----------------------------------------------------------------------------------
 
+// Maps that enabled mods add, as "mod id/map name" (the client.ini [mods] start_map value).
+std::vector<std::string> mod_maps(const Launcher &l) {
+    std::vector<std::string> maps;
+    for (const mod_info &mod : l.mods) {
+        for (int i = 0; mod.enabled && i < mod.map_count; ++i) {
+            maps.push_back(std::string(mod.id) + "/" + mod.maps[i]);
+        }
+    }
+    return maps;
+}
+
+std::string map_label(const Launcher &l, const std::string &entry) {
+    if (entry.empty()) {
+        return "Main menu";
+    }
+    size_t slash = entry.find('/');
+    std::string id = entry.substr(0, slash), map = entry.substr(slash + 1);
+    for (const mod_info &mod : l.mods) {
+        if (id == mod.id) {
+            return mod.map_count > 1 ? std::string(mod.name) + ": " + map : std::string(mod.name);
+        }
+    }
+    return map;
+}
+
+// The start_map setting when it still names a map of an enabled mod, else "" (the main menu).
+std::string chosen_map(const Launcher &l) {
+    std::string entry = l.ini.get("mods", "start_map");
+    std::vector<std::string> maps = mod_maps(l);
+    return std::find(maps.begin(), maps.end(), entry) != maps.end() ? entry : "";
+}
+
+void start_map_picker(Launcher &l, float width) {
+    std::string current = chosen_map(l);
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo("##start_map", map_label(l, current).c_str())) {
+        std::vector<std::string> entries = mod_maps(l);
+        entries.insert(entries.begin(), "");
+        for (const std::string &entry : entries) {
+            if (ImGui::Selectable(map_label(l, entry).c_str(), entry == current)) {
+                save_setting(l, "mods", "start_map", entry);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Where PLAY takes you: the main menu, or straight into a map from a mod.");
+    }
+}
+
 void start_game(Launcher &l, SDL_Window *window) {
     std::string saves = os::join(l.root, "saves");
     os::make_dir(saves);
+    std::string map = chosen_map(l);
+    if (!map.empty()) {
+        size_t slash = map.find('/');
+        // The map's mod starts it once the menu is up (boz.world reads this one-shot setting).
+        mods_set_setting(saves.c_str(), map.substr(0, slash).c_str(), "autostart_level",
+                         map.substr(slash + 1).c_str());
+    }
     std::map<std::string, std::string> env;
     env["HOME"] = saves;
 #if !defined(_WIN32)
@@ -664,6 +786,75 @@ void poll_game(Launcher &l, SDL_Window *window) {
 #endif
 }
 
+// Tab labels in the heading face, as the brand's condensed capitals.
+bool begin_tab(const char *label, bool select) {
+    ImGui::PushFont(g_brand.heading, 19.0f);
+    bool open = ImGui::BeginTabItem(label, nullptr, select ? ImGuiTabItemFlags_SetSelected : 0);
+    ImGui::PopFont();
+    return open;
+}
+
+void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
+    const float logo_height = 78.0f;
+    const float play_width = 200.0f, play_height = 54.0f, picker_width = 230.0f;
+    ImVec2 top = ImGui::GetCursorPos();
+    if (g_brand.logo) {
+        float logo_width = logo_height * (float)g_brand.logo_width / (float)g_brand.logo_height;
+        ImGui::Image(ImTextureRef((ImTextureID)(intptr_t)g_brand.logo), ImVec2(logo_width, logo_height));
+        ImGui::SameLine(0, 22);
+    }
+    ImGui::BeginGroup();
+    ImGui::SetCursorPosY(top.y + 16);
+    ImGui::PushFont(g_brand.heading, 24.0f);
+    ImGui::TextUnformatted("CLASSIC BLACK OPS ZOMBIES");
+    ImGui::PopFont();
+    ImGui::TextDisabled("The original mobile game, on PC   v%s", BOZ_VERSION);
+    ImGui::EndGroup();
+
+    float right = ImGui::GetWindowWidth() - play_width - ImGui::GetStyle().WindowPadding.x;
+    float play_y = top.y + (logo_height - play_height) * 0.5f;
+    if (!mod_maps(l).empty()) {
+        ImGui::SameLine(right - picker_width - 12);
+        ImGui::SetCursorPosY(play_y + (play_height - ImGui::GetFrameHeight()) * 0.5f);
+        start_map_picker(l, picker_width);
+    }
+    ImGui::SameLine(right);
+    ImGui::SetCursorPosY(play_y);
+    ImGui::BeginDisabled(!status.ready() || l.files->busy() || l.game_running);
+    ImGui::PushStyleColor(ImGuiCol_Button, brand(BRAND_RED));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, rgb(240, 52, 64));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, brand(BRAND_RED_DARK));
+    ImGui::PushStyleColor(ImGuiCol_Border, brand(BRAND_RED));
+    ImGui::PushFont(g_brand.heading, 30.0f);
+    if (ImGui::Button(l.game_running ? "RUNNING" : "PLAY", ImVec2(play_width, play_height))) {
+        start_game(l, window);
+    }
+    ImGui::PopFont();
+    ImGui::PopStyleColor(4);
+    ImGui::EndDisabled();
+    ImGui::SetCursorPosY(top.y + logo_height + 14);
+
+    // The red rule under the header, as under the logo's wordmark.
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(viewport->Pos.x, at.y),
+                                              ImVec2(viewport->Pos.x + viewport->Size.x, at.y + 2),
+                                              ImGui::GetColorU32(brand(BRAND_RED)));
+    ImGui::Dummy(ImVec2(0, 8));
+}
+
+void footer(Launcher &l) {
+    ImGui::Separator();
+    ImGui::TextDisabled("BOZ Redux %s  ·  Not affiliated with Activision. Use your own copy of the game.",
+                        BOZ_VERSION);
+    const char *label = "Open log";
+    float width = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
+    ImGui::SameLine(ImGui::GetWindowWidth() - width - ImGui::GetStyle().WindowPadding.x);
+    if (ImGui::SmallButton(label)) {
+        os::open_path(os::join(l.root, "boz-log.txt"));
+    }
+}
+
 void draw(Launcher &l, SDL_Window *window) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -673,47 +864,60 @@ void draw(Launcher &l, SDL_Window *window) {
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     GameStatus status = l.files->status();
-    ImGui::SetWindowFontScale(1.6f);
-    ImGui::TextColored(rgb(214, 170, 80), "BOZ Redux");
-    ImGui::SetWindowFontScale(1.0f);
-    ImGui::SameLine();
-    ImGui::TextDisabled("Call of Duty: Black Ops Zombies for desktop");
-
-    float play_width = 160;
-    ImGui::SameLine(ImGui::GetWindowWidth() - play_width - ImGui::GetStyle().WindowPadding.x);
-    ImGui::BeginDisabled(!status.ready() || l.files->busy() || l.game_running);
-    if (ImGui::Button(l.game_running ? "Running..." : "PLAY", ImVec2(play_width, 40))) {
-        start_game(l, window);
+    ensure_ini(l);
+    if (!l.mods_scanned) {
+        scan_mods(l);
     }
-    ImGui::EndDisabled();
+    header(l, window, status);
     if (!status.ready()) {
-        ImGui::TextColored(rgb(230, 190, 90), "Set up the game files below to play.");
+        ImGui::TextColored(WARN_COLOUR, "Set up the game files below to play.");
     }
     if (!l.game_note.empty()) {
-        ImGui::TextColored(rgb(220, 120, 90), "%s", l.game_note.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Open log")) {
-            os::open_path(os::join(l.root, "boz-log.txt"));
-        }
+        ImGui::TextColored(ERROR_COLOUR, "%s", l.game_note.c_str());
     }
-    ImGui::Separator();
 
+    float footer_height = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 2;
     if (ImGui::BeginTabBar("tabs")) {
-        if (ImGui::BeginTabItem("Game files")) {
-            game_files_tab(l, status);
+        struct {
+            const char *label;
+            int tab;
+        } tabs[] = {{"GAME FILES", 0}, {"SETTINGS", 1}, {"MODS", 2}};
+        // BOZ_LAUNCHER_TAB=1 or 2 opens Settings or Mods first (with the screenshot option).
+        static int first_tab = std::atoi(os::getenv_str("BOZ_LAUNCHER_TAB").c_str());
+        for (auto &tab : tabs) {
+            bool select = first_tab > 0 && tab.tab == first_tab;
+            if (!begin_tab(tab.label, select)) {
+                continue;
+            }
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 16));
+            ImGui::BeginChild("page", ImVec2(0, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+            if (tab.tab == 0) {
+                game_files_tab(l, status);
+            } else if (tab.tab == 1) {
+                settings_tab(l);
+            } else {
+                mods_tab(l);
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Settings")) {
-            settings_tab(l);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Mods")) {
-            mods_tab(l);
-            ImGui::EndTabItem();
-        }
+        first_tab = 0;
         ImGui::EndTabBar();
     }
+    footer(l);
     ImGui::End();
+}
+
+void save_screenshot(SDL_Renderer *renderer, const std::string &path) {
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(renderer, &w, &h);
+    SDL_Surface *shot = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (shot && SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, shot->pixels,
+                                     shot->pitch) == 0) {
+        SDL_SaveBMP(shot, path.c_str());
+    }
+    SDL_FreeSurface(shot);
 }
 
 #if !defined(_WIN32)
@@ -746,6 +950,10 @@ int main(int argc, char **argv) {
     }
 #if !defined(_WIN32)
     choose_video_driver();
+    // The window class the desktop shortcut names (StartupWMClass), so the taskbar shows the
+    // BOZ Redux icon; the game inherits it.
+    setenv("SDL_VIDEO_X11_WMCLASS", "boz-redux", 0);
+    setenv("SDL_VIDEO_WAYLAND_WMCLASS", "boz-redux", 0);
 #endif
 
     SDL_SetMainReady();
@@ -755,12 +963,14 @@ int main(int argc, char **argv) {
     }
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
     SDL_Window *window = SDL_CreateWindow(
-        "BOZ Redux", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 960, 680,
+        "BOZ Redux", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1080, 760,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return 1;
     }
+    SDL_SetWindowMinimumSize(window, 900, 620);
+    set_window_icon(window);
     SDL_Renderer *renderer =
         SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) {
@@ -775,13 +985,17 @@ int main(int argc, char **argv) {
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
     apply_style();
-    load_font();
+    load_fonts();
+    load_logo(renderer);
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
     GameFiles files(l.root, l.bin_dir);
     l.files = &files;
 
+    // BOZ_LAUNCHER_SCREENSHOT=file.bmp: save the fourth frame and quit (documentation, checks).
+    std::string screenshot = os::getenv_str("BOZ_LAUNCHER_SCREENSHOT");
+    int frames = 0;
     bool done = false;
     while (!done) {
         SDL_Event event;
@@ -814,12 +1028,19 @@ int main(int argc, char **argv) {
         ImGui::NewFrame();
         draw(l, window);
         ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 22, 22, 20, 255);
+        SDL_SetRenderDrawColor(renderer, (BRAND_BLACK >> 16) & 0xff, (BRAND_BLACK >> 8) & 0xff, BRAND_BLACK & 0xff, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        if (!screenshot.empty() && ++frames == 4) {
+            save_screenshot(renderer, screenshot);
+            done = true;
+        }
         SDL_RenderPresent(renderer);
     }
 
+    if (g_brand.logo) {
+        SDL_DestroyTexture(g_brand.logo);
+    }
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();

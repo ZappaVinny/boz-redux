@@ -62,6 +62,7 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_LAZY_GL=1` | Resolve GL functions when first called |
 | `BOZ_WINDOW_TEST=1` | Linux: try the experimental 64 MB data window |
 | `BOZ_SCREENSHOT_DIR`, `BOZ_SCREENSHOT_EVERY=N` | Write every Nth frame to that folder as PPM (debugging) |
+| `BOZ_LAUNCHER_SCREENSHOT=file.bmp`, `BOZ_LAUNCHER_TAB=0..2` | Launcher: save the fourth frame (of that tab) and quit; works offscreen (`SDL_VIDEODRIVER=offscreen`) |
 
 Most of these are also settings in `client.ini`, which the launcher edits.
 

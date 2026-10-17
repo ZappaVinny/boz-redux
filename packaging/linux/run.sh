@@ -10,6 +10,8 @@ if [ -z "${SDL_VIDEODRIVER:-}" ]; then
     export SDL_VIDEODRIVER=x11
   fi
 fi
+export SDL_VIDEO_X11_WMCLASS="${SDL_VIDEO_X11_WMCLASS:-boz-redux}"
+export SDL_VIDEO_WAYLAND_WMCLASS="${SDL_VIDEO_WAYLAND_WMCLASS:-boz-redux}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 export HOME="${BOZ_SAVES:-$here/saves}"
 mkdir -p "$HOME"
