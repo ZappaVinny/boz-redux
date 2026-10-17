@@ -17,6 +17,17 @@ const char *client_config_key_binding(const char *action);
 const char *client_config_mods_order(void);
 const char *client_config_mods_disabled(void);
 
+/* The [keys] actions in the order the input code numbers them: name in client.ini, the
+ * launcher's label, the default keys, and the comment written above it (or NULL). */
+struct client_binding {
+    const char *action;
+    const char *label;
+    const char *defaults;
+    const char *comment;
+};
+extern const struct client_binding CLIENT_BINDINGS[];
+extern const int CLIENT_BINDING_COUNT;
+
 /* Writes the commented default client.ini to path. */
 bool client_config_write_default(const char *path);
 

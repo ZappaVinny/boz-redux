@@ -27,34 +27,6 @@
 
 namespace {
 
-struct Binding {
-    const char *action;
-    const char *label;
-    const char *defaults;
-};
-
-// Must match BINDING_DEFAULTS in s3e_input.c.
-const Binding BINDINGS[] = {
-    {"move_forward", "Move forward", "W"},
-    {"move_back", "Move back", "S"},
-    {"move_left", "Move left", "A"},
-    {"move_right", "Move right", "D"},
-    {"shoot", "Shoot", "Mouse1"},
-    {"aim", "Aim", "Mouse3"},
-    {"reload", "Reload", "R"},
-    {"action", "Use", "E, F"},
-    {"sprint", "Sprint", "Left Shift"},
-    {"melee", "Knife", "V"},
-    {"grenade", "Grenade", "G"},
-    {"tactical", "Tactical", "Q"},
-    {"crouch", "Crouch", "C, Space"},
-    {"alt_fire", "Alternate fire", "X"},
-    {"switch_weapon", "Switch weapon", "1"},
-    {"pause", "Pause", "Escape"},
-    {"toggle_mode", "Free the mouse", "Tab"},
-    {"fullscreen", "Toggle fullscreen", "F11"},
-};
-const int BINDING_COUNT = (int)(sizeof(BINDINGS) / sizeof(BINDINGS[0]));
 
 struct Launcher {
     std::string root;
@@ -391,23 +363,23 @@ void settings_tab(Launcher &l) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
         ImGui::TableSetupColumn("Keys", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 150);
-        for (int i = 0; i < BINDING_COUNT; ++i) {
+        for (int i = 0; i < CLIENT_BINDING_COUNT; ++i) {
             ImGui::PushID(i);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(BINDINGS[i].label);
+            ImGui::TextUnformatted(CLIENT_BINDINGS[i].label);
             ImGui::TableNextColumn();
             char value[96];
             std::snprintf(value, sizeof(value), "%s",
-                          l.ini.get("keys", BINDINGS[i].action, BINDINGS[i].defaults).c_str());
+                          l.ini.get("keys", CLIENT_BINDINGS[i].action, CLIENT_BINDINGS[i].defaults).c_str());
             ImGui::SetNextItemWidth(-1);
             if (l.capturing == i) {
                 ImGui::TextColored(rgb(214, 170, 80), "Press a key or mouse button...");
             } else if (ImGui::InputText("##value", value, sizeof(value),
                                         ImGuiInputTextFlags_EnterReturnsTrue) ||
                        ImGui::IsItemDeactivatedAfterEdit()) {
-                save_setting(l, "keys", BINDINGS[i].action, value);
+                save_setting(l, "keys", CLIENT_BINDINGS[i].action, value);
             }
             ImGui::TableNextColumn();
             if (l.capturing == i) {
@@ -420,7 +392,7 @@ void settings_tab(Launcher &l) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Default")) {
-                    save_setting(l, "keys", BINDINGS[i].action, BINDINGS[i].defaults);
+                    save_setting(l, "keys", CLIENT_BINDINGS[i].action, CLIENT_BINDINGS[i].defaults);
                 }
             }
             ImGui::PopID();
@@ -639,7 +611,7 @@ bool capture_binding(Launcher &l, const SDL_Event &event) {
         return false;
     }
     if (!name.empty()) {
-        save_setting(l, "keys", BINDINGS[l.capturing].action, name);
+        save_setting(l, "keys", CLIENT_BINDINGS[l.capturing].action, name);
     }
     l.capturing = -1;
     return true;

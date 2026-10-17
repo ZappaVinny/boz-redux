@@ -543,18 +543,13 @@ static S3E_SOFTFP void host_glCopyTexSubImage2D(GLenum target, GLint level, GLin
     }
 }
 
-struct host_symbol {
-    const char *name;
-    void *fn;
-};
 
-static void *resolve_wrapped_host_proc(const char *symbol);
 
 static void *host_eglGetProcAddress(const char *procname) {
     if (!procname) {
         return NULL;
     }
-    void *wrapped = resolve_wrapped_host_proc(procname);
+    void *wrapped = s3e_gl_wrapped_proc(procname);
     if (wrapped) {
         return wrapped;
     }
@@ -777,168 +772,6 @@ static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
     return result;
 }
 
-#define HOST(name) {#name, (void *)(uintptr_t)&name}
-
-static const struct host_symbol HOST_SYMBOLS[] = {
-    HOST(s3eMallocBase),
-    HOST(s3eReallocBase),
-    HOST(s3eFreeBase),
-    HOST(s3eFileOpen),
-    HOST(s3eFileClose),
-    HOST(s3eFileRead),
-    HOST(s3eFileWrite),
-    HOST(s3eFileGetChar),
-    HOST(s3eFilePutChar),
-    HOST(s3eFileFlush),
-    HOST(s3eFileSeek),
-    HOST(s3eFileTell),
-    HOST(s3eFileGetSize),
-    HOST(s3eFileCheckExists),
-    HOST(s3eFileGetError),
-    HOST(s3eFileGetErrorString),
-    HOST(s3eFileOpenFromMemory),
-    HOST(s3eFileGetFileInt),
-    HOST(s3eFileMakeDirectory),
-    HOST(s3eFileDelete),
-    HOST(s3eFileRename),
-    HOST(s3eFileAddUserFileSys),
-    HOST(s3eFileListDirectory),
-    HOST(s3eFileListClose),
-    HOST(s3eCompressionDecomp),
-    HOST(s3eCompressionDecompInit),
-    HOST(s3eCompressionDecompRead),
-    HOST(s3eCompressionDecompFinal),
-    HOST(s3eTimerGetUST),
-    HOST(s3eTimerGetMs),
-    HOST(s3eTimerGetInt),
-    HOST(s3eTimerSetTimer),
-    HOST(s3eTimerCancelTimer),
-    HOST(s3eTimerGetUTC),
-    HOST(s3eTimerGetLocaltimeOffset),
-    HOST(s3eDeviceRegister),
-    HOST(s3eDeviceUnRegister),
-    HOST(s3eDeviceYield),
-    HOST(s3eDeviceYieldUntilEvent),
-    HOST(s3eDeviceCheckQuitRequest),
-    HOST(s3eDeviceCheckPauseRequest),
-    HOST(s3eDeviceGetInt),
-    HOST(s3eDeviceGetString),
-    HOST(s3eDeviceSetInt),
-    HOST(s3eDeviceBacklightOn),
-    HOST(s3eDeviceRequestQuit),
-    HOST(s3eDeviceAbort),
-    HOST(s3eDeviceExit),
-    HOST(s3eDebugOutputString),
-    HOST(s3eDebugPrint),
-    HOST(s3eDebugGetInt),
-    HOST(s3eDebugIsDebuggerPresent),
-    HOST(s3eDebugTraceLine),
-    HOST(s3eDebugAssertShow),
-    HOST(s3eDebugErrorShow),
-    HOST(s3eKeyboardRegister),
-    HOST(s3eKeyboardUnRegister),
-    HOST(s3eKeyboardUpdate),
-    HOST(s3eKeyboardGetState),
-    HOST(s3eKeyboardAnyKey),
-    HOST(s3eKeyboardGetInt),
-    HOST(s3eKeyboardSetInt),
-    HOST(s3eKeyboardGetDisplayName),
-    HOST(s3eKeyboardClearState),
-    HOST(s3ePointerRegister),
-    HOST(s3ePointerUnRegister),
-    HOST(s3ePointerUpdate),
-    HOST(s3ePointerGetInt),
-    HOST(s3ePointerSetInt),
-    HOST(s3ePointerGetState),
-    HOST(s3ePointerGetX),
-    HOST(s3ePointerGetY),
-    HOST(s3ePointerGetTouchState),
-    HOST(s3ePointerGetTouchX),
-    HOST(s3ePointerGetTouchY),
-    HOST(s3ePointerGetPressure),
-    HOST(s3ePointerGetTouchPressure),
-    HOST(s3ePointerGetError),
-    HOST(s3ePointerGetErrorString),
-    HOST(s3eAccelerometerStart),
-    HOST(s3eAccelerometerStop),
-    HOST(s3eAccelerometerGetX),
-    HOST(s3eAccelerometerGetY),
-    HOST(s3eAccelerometerGetZ),
-    HOST(s3eAccelerometerGetInt),
-    HOST(s3eVideoGetInt),
-    HOST(s3eVideoPlay),
-    HOST(s3eVideoStop),
-    HOST(s3eVideoResume),
-    HOST(s3eAudioIsPlaying),
-    HOST(s3eAudioSetInt),
-    HOST(s3eAudioGetInt),
-    HOST(s3eAudioPlay),
-    HOST(s3eAudioPlayFromBuffer),
-    HOST(s3eAudioStop),
-    HOST(s3eAudioPause),
-    HOST(s3eAudioResume),
-    HOST(s3eAudioRegister),
-    HOST(s3eSoundGetFreeChannel),
-    HOST(s3eSoundSetInt),
-    HOST(s3eSoundGetInt),
-    HOST(s3eSoundChannelRegister),
-    HOST(s3eSoundChannelUnRegister),
-    HOST(s3eSoundChannelPlay),
-    HOST(s3eSoundChannelStop),
-    HOST(s3eSoundChannelPause),
-    HOST(s3eSoundChannelResume),
-    HOST(s3eSoundChannelSetInt),
-    HOST(s3eSoundChannelGetInt),
-    HOST(s3eInetHtonl),
-    HOST(s3eInetNtohl),
-    HOST(s3eInetHtons),
-    HOST(s3eInetNtohs),
-    HOST(s3eInetAton),
-    HOST(s3eInetNtoa),
-    HOST(s3eInetToString),
-    HOST(s3eInetLookup),
-    HOST(s3eInetLookupCancel),
-    HOST(s3eSocketCreate),
-    HOST(s3eSocketClose),
-    HOST(s3eSocketBind),
-    HOST(s3eSocketListen),
-    HOST(s3eSocketAccept),
-    HOST(s3eSocketConnect),
-    HOST(s3eSocketSend),
-    HOST(s3eSocketSendTo),
-    HOST(s3eSocketRecv),
-    HOST(s3eSocketRecvFrom),
-    HOST(s3eSocketReadable),
-    HOST(s3eSocketWritable),
-    HOST(s3eSocketGetInt),
-    HOST(s3eSocketGetError),
-    HOST(s3eSocketGetString),
-    HOST(s3eSocketGetLocalName),
-    HOST(s3eSocketGetPeerName),
-    HOST(s3eMemoryGetInt),
-    HOST(s3eMemorySetInt),
-    HOST(s3eMemorySetUserMemMgr),
-    HOST(s3eMemoryGetUserMemMgr),
-    HOST(s3eMemoryHeapCreate),
-    HOST(s3eMemoryHeapDestroy),
-    HOST(s3eMemoryHeapAddress),
-    HOST(s3eMemoryGetError),
-    HOST(s3eMemoryGetErrorString),
-    HOST(s3eSurfaceRegister),
-    HOST(s3eSurfaceUnRegister),
-    HOST(s3eSurfaceGetInt),
-    HOST(s3eSurfacePtr),
-    HOST(s3eSurfaceSetup),
-    HOST(s3eSurfaceShow),
-    HOST(s3eGLRegister),
-    HOST(s3eGLUnRegister),
-    HOST(s3eGLGetInt),
-    HOST(s3eGLGetNativeWindow),
-    HOST(s3eConfigGetInt),
-    HOST(s3eConfigGetString),
-    HOST(s3eExtGetHash),
-};
-
 #define WRAPPED(name) {#name, (void *)(uintptr_t)&host_##name}
 
 static const struct host_symbol WRAPPED_SYMBOLS[] = {
@@ -986,38 +819,12 @@ static const struct host_symbol WRAPPED_SYMBOLS[] = {
     WRAPPED(eglSwapBuffers),
 };
 
-static void *resolve_wrapped_host_proc(const char *symbol) {
+/* The GL and EGL functions the runtime wraps (float arguments, framebuffer scaling, ...). */
+void *s3e_gl_wrapped_proc(const char *symbol) {
     for (size_t i = 0; i < sizeof(WRAPPED_SYMBOLS) / sizeof(WRAPPED_SYMBOLS[0]); ++i) {
         if (strcmp(symbol, WRAPPED_SYMBOLS[i].name) == 0) {
             return WRAPPED_SYMBOLS[i].fn;
         }
-    }
-    return NULL;
-}
-
-void *s3e_host_resolve(const char *symbol) {
-    void *wrapped = resolve_wrapped_host_proc(symbol);
-    if (wrapped) {
-        return wrapped;
-    }
-    if (strncmp(symbol, "egl", 3) == 0) {
-        void *addr = egl_backend_resolve(symbol);
-        if (!addr) {
-            addr = lookup_egl(symbol);
-        }
-        return addr ? addr : make_stub(symbol);
-    }
-    if (strncmp(symbol, "gl", 2) == 0) {
-        void *addr = getenv("BOZ_LAZY_GL") ? NULL : lookup_gl(symbol);
-        return addr ? addr : make_lazy_gl_stub(symbol);
-    }
-    for (size_t i = 0; i < sizeof(HOST_SYMBOLS) / sizeof(HOST_SYMBOLS[0]); ++i) {
-        if (strcmp(symbol, HOST_SYMBOLS[i].name) == 0) {
-            return HOST_SYMBOLS[i].fn;
-        }
-    }
-    if (strncmp(symbol, "s3e", 3) == 0) {
-        return make_stub(symbol);
     }
     return NULL;
 }

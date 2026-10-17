@@ -766,29 +766,6 @@ enum binding_id {
     BIND_MAX_KEYS = 6,
 };
 
-static const struct {
-    const char *action;
-    const char *defaults;
-} BINDING_DEFAULTS[BIND_COUNT] = {
-    [BIND_MOVE_FORWARD] = {"move_forward", "W"},
-    [BIND_MOVE_BACK] = {"move_back", "S"},
-    [BIND_MOVE_LEFT] = {"move_left", "A"},
-    [BIND_MOVE_RIGHT] = {"move_right", "D"},
-    [BIND_SHOOT] = {"shoot", "Mouse1"},
-    [BIND_AIM] = {"aim", "Mouse3"},
-    [BIND_RELOAD] = {"reload", "R"},
-    [BIND_ACTION] = {"action", "E, F"},
-    [BIND_SPRINT] = {"sprint", "Left Shift"},
-    [BIND_MELEE] = {"melee", "V"},
-    [BIND_GRENADE] = {"grenade", "G"},
-    [BIND_TACTICAL] = {"tactical", "Q"},
-    [BIND_CROUCH] = {"crouch", "C, Space"},
-    [BIND_ALT_FIRE] = {"alt_fire", "X"},
-    [BIND_SWITCH_WEAPON] = {"switch_weapon", "1"},
-    [BIND_PAUSE] = {"pause", "Escape"},
-    [BIND_TOGGLE_MODE] = {"toggle_mode", "Tab"},
-    [BIND_FULLSCREEN] = {"fullscreen", "F11"},
-};
 
 static struct {
     int scancodes[BIND_MAX_KEYS];
@@ -820,7 +797,7 @@ static void parse_binding(enum binding_id id, const char *text) {
         int scancode = g_sdl.GetScancodeFromName ? g_sdl.GetScancodeFromName(item) : 0;
         if (scancode <= 0) {
             fprintf(stderr, "[input] unknown key \"%s\" for %s\n", item,
-                    BINDING_DEFAULTS[id].action);
+                    CLIENT_BINDINGS[id].action);
         } else if (g_bindings[id].scancode_count < BIND_MAX_KEYS) {
             g_bindings[id].scancodes[g_bindings[id].scancode_count++] = scancode;
         }
@@ -833,8 +810,8 @@ static void load_bindings(void) {
     }
     g_bindings_loaded = 1;
     for (int id = 0; id < BIND_COUNT; ++id) {
-        const char *configured = client_config_key_binding(BINDING_DEFAULTS[id].action);
-        parse_binding((enum binding_id)id, configured ? configured : BINDING_DEFAULTS[id].defaults);
+        const char *configured = client_config_key_binding(CLIENT_BINDINGS[id].action);
+        parse_binding((enum binding_id)id, configured ? configured : CLIENT_BINDINGS[id].defaults);
     }
 }
 

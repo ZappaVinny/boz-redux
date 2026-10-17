@@ -50,6 +50,18 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_TRACE_CALLS=N` | Log the first N runtime calls |
 | `BOZ_TRACE_FILES=1` | Log every file the game opens |
 | `BOZ_SOFTWARE_CURSOR=1` | Draw the crosshair pointer in menus |
+| `BOZ_VSYNC=1\|0\|-1` | Vsync on, off, adaptive |
+| `BOZ_FPS=N` | Frame rate limit (0: none) |
+| `BOZ_RENDERER=mesa` | Windows: the bundled Mesa instead of ANGLE (with `GALLIUM_DRIVER`) |
+| `BOZ_PLAYER_NAME` | The name the game uses for you (`[player] name`) |
+| `BOZ_MULTIPLAYER_SERVER` | A server answering the game's online service (`[network] server`) |
+| `BOZ_VOICE_CHAT=1` | Voice chat on (`[network] voice_chat`) |
+| `BOZ_SWIPE_GAIN` | Dead Ops: swipe look speed |
+| `BOZ_TRACE_CODE=1` | Trace guest code execution (very slow) |
+| `BOZ_PROFILE=1` | Print profiling counters |
+| `BOZ_LAZY_GL=1` | Resolve GL functions when first called |
+| `BOZ_WINDOW_TEST=1` | Linux: try the experimental 64 MB data window |
+| `BOZ_SCREENSHOT_DIR`, `BOZ_SCREENSHOT_EVERY=N` | Write every Nth frame to that folder as PPM (debugging) |
 
 Most of these are also settings in `client.ini`, which the launcher edits.
 

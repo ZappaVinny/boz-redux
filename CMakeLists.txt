@@ -127,6 +127,7 @@ add_executable(codboz_s3e_loader
   src/s3e_memory.c
   src/device_id.c
   src/s3e_runtime.c
+  src/s3e_symbols.c
   src/s3e_timer.c
   src/s3e_socket.c
   src/mdns_wire.c

@@ -34,6 +34,7 @@ int main(void) {
     unsetenv("BOZ_FPS");
     unsetenv("BOZ_MOUSE_SENS");
     unsetenv("BOZ_TRACE_STATUS");
+    unsetenv("BOZ_PLAYER_NAME");
     client_config_load(root);
     assert(access(path, R_OK) == 0);
     expect_env("BOZ_WINDOWED", "0");
@@ -41,6 +42,10 @@ int main(void) {
     expect_env("BOZ_FPS", NULL);
     expect_env("BOZ_MOUSE_SENS", "12000");
     expect_env("BOZ_TRACE_STATUS", NULL);
+    expect_env("BOZ_PLAYER_NAME", "Player");
+    for (int i = 0; i < CLIENT_BINDING_COUNT; ++i) {   /* every binding is in the file */
+        assert(!strcmp(client_config_key_binding(CLIENT_BINDINGS[i].action), CLIENT_BINDINGS[i].defaults));
+    }
 
     /* File values apply; variables already set by the user win; comments and bad lines are
      * skipped. */

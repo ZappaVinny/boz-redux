@@ -381,6 +381,12 @@ void s3e_zero_conf_shutdown(void);
 void s3e_zero_conf_process_packet(const uint8_t *packet, size_t packet_size,
                                   const struct sockaddr_in *source);
 void *make_stub(const char *symbol);
+void *s3e_gl_wrapped_proc(const char *symbol);
+
+struct host_symbol {
+    const char *name;
+    void *fn;
+};
 void *make_lazy_gl_stub(const char *symbol);
 
 void *s3eMallocBase(uint32_t size, const char *file, int line);

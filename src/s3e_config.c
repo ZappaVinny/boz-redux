@@ -4,7 +4,6 @@
 static struct s3e_config_entry g_config_entries[S3E_CONFIG_MAX_ENTRIES];
 static size_t g_config_entry_count;
 static char g_multiplayer_server[128];
-static bool g_multiplayer_proxy;
 static bool g_voice_chat;
 static char g_player_name[14];
 
@@ -28,19 +27,6 @@ static void strip_quotes(char *value) {
     }
 }
 
-static void parse_flag(const char *value, bool *out) {
-    if (!value || !out || !value[0]) {
-        return;
-    }
-    char *end = NULL;
-    errno = 0;
-    long parsed = strtol(value, &end, 10);
-    if (errno != 0 || end == value || *end != 0) {
-        return;
-    }
-    *out = parsed != 0;
-}
-
 static bool valid_player_name(const char *value) {
     size_t length = strlen(value);
     if (length == 0 || length >= sizeof(g_player_name)) {
@@ -57,54 +43,14 @@ static bool valid_player_name(const char *value) {
     return true;
 }
 
-static void load_control_config(void) {
-    g_multiplayer_server[0] = 0;
-    g_multiplayer_proxy = false;
-    g_voice_chat = false;
-    snprintf(g_player_name, sizeof(g_player_name), "Player");
-
-    char path[1200];
-    snprintf(path, sizeof(path), "%s/config.txt", g_root);
-    FILE *file = fopen(path, "r");
-    if (!file) {
-        if (errno != ENOENT) {
-            fprintf(stderr, "[multiplayer] unable to read %s: %s\n", path, strerror(errno));
-        }
-        return;
-    }
-
-    char line[512];
-    while (fgets(line, sizeof(line), file)) {
-        line[strcspn(line, "\r\n")] = 0;
-        strip_comment(line);
-        char *clean = str_trim(line);
-        if (!clean[0]) {
-            continue;
-        }
-        char *equals = strchr(clean, '=');
-        if (!equals) {
-            continue;
-        }
-        *equals = 0;
-        char *key = str_trim(clean);
-        char *value = str_trim(equals + 1);
-        strip_quotes(value);
-
-        if (strcmp(key, "multiplayer_server") == 0) {
-            snprintf(g_multiplayer_server, sizeof(g_multiplayer_server), "%s", value);
-        } else if (strcmp(key, "multiplayer_proxy") == 0) {
-            parse_flag(value, &g_multiplayer_proxy);
-        } else if (strcmp(key, "voice_chat") == 0) {
-            parse_flag(value, &g_voice_chat);
-        } else if (strcmp(key, "player_name") == 0 && valid_player_name(value)) {
-            snprintf(g_player_name, sizeof(g_player_name), "%s", value);
-        }
-    }
-    fclose(file);
-
-    if (g_multiplayer_server[0] && g_multiplayer_proxy) {
-        fprintf(stderr, "[multiplayer] proxy mode is not supported\n");
-    }
+/* client.ini [player] name and [network] server / voice_chat (client_config.c sets these). */
+static void load_player_settings(void) {
+    const char *server = getenv("BOZ_MULTIPLAYER_SERVER");
+    const char *voice = getenv("BOZ_VOICE_CHAT");
+    const char *name = getenv("BOZ_PLAYER_NAME");
+    snprintf(g_multiplayer_server, sizeof(g_multiplayer_server), "%s", server ? server : "");
+    g_voice_chat = voice && strcmp(voice, "1") == 0;
+    snprintf(g_player_name, sizeof(g_player_name), "%s", name && valid_player_name(name) ? name : "Player");
 }
 
 const char *s3e_host_player_name(void) {
@@ -112,7 +58,7 @@ const char *s3e_host_player_name(void) {
 }
 
 static bool multiplayer_server_enabled(void) {
-    return g_multiplayer_server[0] != 0 && !g_multiplayer_proxy;
+    return g_multiplayer_server[0] != 0;
 }
 
 const char *s3e_multiplayer_resolve_hostname(const char *hostname) {
@@ -333,7 +279,7 @@ void s3e_host_set_config(const uint8_t *data, uint32_t size) {
         }
     }
 
-    load_control_config();
+    load_player_settings();
 
     config_set("GX", "NumTPages", "512");
     config_set("GX", "NumTPagesNoMipMap", "256");

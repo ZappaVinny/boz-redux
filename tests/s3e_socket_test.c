@@ -93,23 +93,12 @@ static int32_t dns_callback(void *system_data, void *user_data) {
     return 0;
 }
 
-static void write_multiplayer_config(void) {
-    char path[1200];
-    snprintf(path, sizeof(path), "%s/config.txt", g_root);
-    FILE *file = fopen(path, "w");
-    assert(file);
-    int result = fputs("multiplayer_server=127.0.0.1\nmultiplayer_proxy=0\n", file);
-    assert(result >= 0);
-    result = fclose(file);
-    assert(result == 0);
-    s3e_host_set_config(NULL, 0);
-}
-
-static void remove_multiplayer_config(void) {
-    char path[1200];
-    snprintf(path, sizeof(path), "%s/config.txt", g_root);
-    int result = unlink(path);
-    assert(result == 0);
+static void use_multiplayer_server(const char *server) {
+    if (server) {
+        setenv("BOZ_MULTIPLAYER_SERVER", server, 1);
+    } else {
+        unsetenv("BOZ_MULTIPLAYER_SERVER");
+    }
     s3e_host_set_config(NULL, 0);
 }
 
@@ -286,9 +275,9 @@ int main(void) {
     test_handle_limit();
     test_udp();
     test_tcp();
-    write_multiplayer_config();
+    use_multiplayer_server("127.0.0.1");
     test_dns_redirect_and_callback();
-    remove_multiplayer_config();
+    use_multiplayer_server(NULL);
     s3e_socket_shutdown();
 
     int result = rmdir(g_root);

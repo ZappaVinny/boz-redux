@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char DEFAULT_CONFIG[] =
+static const char DEFAULT_CONFIG_HEAD[] =
     "# BOZ Redux client settings. Environment variables (BOZ_*) override these.\n"
     "\n"
     "[display]\n"
@@ -47,32 +47,24 @@ static const char DEFAULT_CONFIG[] =
     "mouse_sensitivity = 12000\n"
     "look_mode = stick\n"
     "\n"
+    ;
+
+static const char KEYS_INTRO[] =
     "[keys]\n"
     "# Bindings during a match: comma-separated key names (as SDL names them, e.g. W, Left Shift,\n"
     "# Space, Escape, F) or mouse buttons Mouse1 (left), Mouse2 (middle), Mouse3 (right),\n"
-    "# Mouse4, Mouse5. Leave a value empty to unbind. Controllers are mapped automatically.\n"
-    "move_forward = W\n"
-    "move_back = S\n"
-    "move_left = A\n"
-    "move_right = D\n"
-    "shoot = Mouse1\n"
-    "aim = Mouse3\n"
-    "reload = R\n"
-    "# Use: buy, open doors, pick up, revive.\n"
-    "action = E, F\n"
-    "sprint = Left Shift\n"
-    "melee = V\n"
-    "grenade = G\n"
-    "tactical = Q\n"
-    "crouch = C, Space\n"
-    "alt_fire = X\n"
-    "switch_weapon = 1\n"
-    "pause = Escape\n"
-    "# The mouse is captured while a match runs and freed in menus and when paused. This key frees\n"
-    "# it during a match until pressed again.\n"
-    "toggle_mode = Tab\n"
-    "# Fullscreen toggle (Alt+Enter also works).\n"
-    "fullscreen = F11\n"
+    "# Mouse4, Mouse5. Leave a value empty to unbind. Controllers are mapped automatically.\n";
+
+static const char DEFAULT_CONFIG_TAIL[] =
+    "\n"
+    "[player]\n"
+    "# Your name in the game: letters, digits, space, - _ . (at most 13 characters).\n"
+    "name = Player\n"
+    "\n"
+    "[network]\n"
+    "# Online play: a server that answers for the game's online service (empty: offline).\n"
+    "server =\n"
+    "voice_chat = false\n"
     "\n"
     "[mods]\n"
     "# Set by the launcher's Mods tab. order: load order (when two mods replace the same file, the\n"
@@ -85,6 +77,30 @@ static const char DEFAULT_CONFIG[] =
     "status = false\n"
     "# Log every file the game opens and where it came from (finds the paths mods replace).\n"
     "log_files = false\n";
+
+const struct client_binding CLIENT_BINDINGS[] = {
+    {"move_forward", "Move forward", "W", NULL},
+    {"move_back", "Move back", "S", NULL},
+    {"move_left", "Move left", "A", NULL},
+    {"move_right", "Move right", "D", NULL},
+    {"shoot", "Shoot", "Mouse1", NULL},
+    {"aim", "Aim", "Mouse3", NULL},
+    {"reload", "Reload", "R", NULL},
+    {"action", "Use", "E, F", "Use: buy, open doors, pick up, revive."},
+    {"sprint", "Sprint", "Left Shift", NULL},
+    {"melee", "Knife", "V", NULL},
+    {"grenade", "Grenade", "G", NULL},
+    {"tactical", "Tactical", "Q", NULL},
+    {"crouch", "Crouch", "C, Space", NULL},
+    {"alt_fire", "Alternate fire", "X", NULL},
+    {"switch_weapon", "Switch weapon", "1", NULL},
+    {"pause", "Pause", "Escape", NULL},
+    {"toggle_mode", "Free the mouse", "Tab",
+     "The mouse is captured while a match runs and freed in menus and when paused. This key frees\n"
+     "# it during a match until pressed again."},
+    {"fullscreen", "Toggle fullscreen", "F11", "Fullscreen toggle (Alt+Enter also works)."},
+};
+const int CLIENT_BINDING_COUNT = (int)(sizeof(CLIENT_BINDINGS) / sizeof(CLIENT_BINDINGS[0]));
 
 static bool parse_bool(const char *value, bool *result) {
     if (!strcmp(value, "true") || !strcmp(value, "on") || !strcmp(value, "yes") ||
@@ -179,6 +195,24 @@ static bool apply(const char *section, const char *key, const char *value) {
         }
         if (!strcmp(key, "disabled")) {
             snprintf(g_mods_disabled, sizeof(g_mods_disabled), "%s", value);
+            return true;
+        }
+        return false;
+    }
+    if (!strcmp(section, "player")) {
+        if (!strcmp(key, "name")) {
+            set_default("BOZ_PLAYER_NAME", value);
+            return true;
+        }
+        return false;
+    }
+    if (!strcmp(section, "network")) {
+        if (!strcmp(key, "server")) {
+            set_default("BOZ_MULTIPLAYER_SERVER", value);
+            return true;
+        }
+        if (!strcmp(key, "voice_chat") && parse_bool(value, &flag)) {
+            set_default("BOZ_VOICE_CHAT", flag ? "1" : "0");
             return true;
         }
         return false;
@@ -301,7 +335,15 @@ bool client_config_write_default(const char *path) {
         fprintf(stderr, "[config] cannot create %s\n", path);
         return false;
     }
-    fputs(DEFAULT_CONFIG, file);
+    fputs(DEFAULT_CONFIG_HEAD, file);
+    fputs(KEYS_INTRO, file);
+    for (int i = 0; i < CLIENT_BINDING_COUNT; ++i) {
+        if (CLIENT_BINDINGS[i].comment) {
+            fprintf(file, "# %s\n", CLIENT_BINDINGS[i].comment);
+        }
+        fprintf(file, "%s = %s\n", CLIENT_BINDINGS[i].action, CLIENT_BINDINGS[i].defaults);
+    }
+    fputs(DEFAULT_CONFIG_TAIL, file);
     fclose(file);
     fprintf(stderr, "[config] wrote default settings to %s\n", path);
     return true;
