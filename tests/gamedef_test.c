@@ -1,4 +1,4 @@
-/* Reads the real game definition (../gamedef, the submodule) the way the client does. */
+/* Reads the real game definition (gamedef/, the submodule) the way the client does. */
 #include "gamedef.h"
 
 #include <assert.h>
@@ -7,8 +7,8 @@
 
 int main(void) {
     assert(!gamedef_find_symbol("Console_Execute"));
-    assert(gamedef_load("/nonexistent", ".."));
-    assert(gamedef_load("/nonexistent", ".."));  /* a second call keeps the loaded data */
+    assert(gamedef_load("/nonexistent", "."));
+    assert(gamedef_load("/nonexistent", "."));  /* a second call keeps the loaded data */
 
     const struct gamedef_symbol *execute = gamedef_find_symbol("Console_Execute");
     assert(execute && execute->function && execute->thumb && execute->offset == 0x0d9bfc);

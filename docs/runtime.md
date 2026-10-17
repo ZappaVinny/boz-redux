@@ -1,6 +1,6 @@
-# BOZ desktop runtime
+# The desktop runtime
 
-Runs the Android Marmalade build of *Call of Duty: Black Ops Zombies* (1.0.11) on x86 Linux and Windows. Forked from [cod-boz-port](https://github.com/Producdevity/cod-boz-port) at the commit in `UPSTREAM_COMMIT`. Upstream runs the game's ARM code natively on ARM handhelds; this fork runs it through an ARM CPU emulator.
+Runs the Android Marmalade build of *Call of Duty: Black Ops Zombies* (1.0.11) on x86 Linux and Windows. Forked from [cod-boz-port](https://github.com/Producdevity/cod-boz-port) at commit 3b444d6003a78f08694e965509477d13a742ebf1. Upstream runs the game's ARM code natively on ARM handhelds; this fork runs it through an ARM CPU emulator.
 
 ## Build
 
@@ -55,4 +55,4 @@ Most of these are also settings in `client.ini`, which the launcher edits.
 
 ## License
 
-MIT, see `LICENSE` (upstream copyright retained).
+MIT; the upstream notice is in `LICENSE-cod-boz-port`.

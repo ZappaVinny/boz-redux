@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-game="${1:-$(cd "$here/.." && pwd)}"
+game="${1:-$here}"
 shift || true
 bin="${BOZ_BIN:-$here/build/linux-x86/bin}"
 if [ -z "${SDL_VIDEODRIVER:-}" ]; then

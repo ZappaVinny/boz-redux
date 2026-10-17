@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-apk="${1:-$here/../original/com.activision.boz.apk}"
-packs="${2:-$here/../original/obb}"
-game="${3:-$(cd "$here/.." && pwd)}"
+apk="${1:-$here/original/com.activision.boz.apk}"
+packs="${2:-$here/original/obb}"
+game="${3:-$here}"
 extract="${BOZ_BIN:-$here/build/linux-x86/bin}/codboz_apk_extract"
 
 [ -x "$extract" ] || { echo "build first: cmake --preset linux-x86 && cmake --build --preset linux-x86" >&2; exit 1; }

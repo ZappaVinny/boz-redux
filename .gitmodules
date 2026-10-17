@@ -1,19 +1,19 @@
 [submodule "runtime/third_party/unicorn"]
-	path = runtime/third_party/unicorn
+	path = third_party/unicorn
 	url = https://github.com/unicorn-engine/unicorn
 	ignore = dirty
 [submodule "runtime/third_party/SDL2"]
-	path = runtime/third_party/SDL2
+	path = third_party/SDL2
 	url = https://github.com/libsdl-org/SDL
 [submodule "runtime/third_party/SDL2_mixer"]
-	path = runtime/third_party/SDL2_mixer
+	path = third_party/SDL2_mixer
 	url = https://github.com/libsdl-org/SDL_mixer
 [submodule "runtime/third_party/imgui"]
-	path = runtime/third_party/imgui
+	path = third_party/imgui
 	url = https://github.com/ocornut/imgui
 [submodule "gamedef"]
 	path = gamedef
 	url = https://github.com/ZappaVinny/boz-redux-gamedef.git
 [submodule "runtime/third_party/lua"]
-	path = runtime/third_party/lua
+	path = third_party/lua
 	url = https://github.com/lua/lua.git

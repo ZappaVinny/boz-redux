@@ -23,11 +23,11 @@ jobs:
           - name: Linux x86
             target: linux
             artifact: BOZ-Redux-linux-x86
-            path: runtime/build/linux-x86/package/BOZ-Redux-linux-x86.tar.gz
+            path: build/linux-x86/package/BOZ-Redux-linux-x86.tar.gz
           - name: Windows x86
             target: windows
             artifact: BOZ-Redux-windows-x86
-            path: runtime/build/windows-x86/package/BOZ-Redux-windows-x86.zip
+            path: build/windows-x86/package/BOZ-Redux-windows-x86.zip
     steps:
       - name: Install git
         run: pacman -Sy --noconfirm --needed git
@@ -39,11 +39,10 @@ jobs:
       - uses: actions/cache@v4
         if: matrix.target == 'windows'
         with:
-          path: runtime/build/downloads
-          key: windows-gl-${{ hashFiles('runtime/scripts/fetch-mesa-windows.sh', 'runtime/scripts/fetch-angle-windows.sh') }}
+          path: build/downloads
+          key: windows-gl-${{ hashFiles('scripts/fetch-mesa-windows.sh', 'scripts/fetch-angle-windows.sh') }}
 
       - name: Build, test and package
-        working-directory: runtime
         run: scripts/ci.sh ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4

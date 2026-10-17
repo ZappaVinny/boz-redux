@@ -1,9 +1,0 @@
--xc
--std=c11
--m32
--D_GNU_SOURCE
--Iinclude
--Ithird_party/lzma
--Ithird_party/unicorn/include
--Wall
--Wextra

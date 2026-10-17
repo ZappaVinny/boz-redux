@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI build inside an archlinux:base-devel container (the same toolchain as local development).
 # Usage: scripts/ci.sh linux|windows
-# Local run: docker run --rm -v "$PWD:/src" -w /src/runtime archlinux:base-devel scripts/ci.sh linux
+# Local run: docker run --rm -v "$PWD:/src" -w /src archlinux:base-devel scripts/ci.sh linux
 set -euo pipefail
 target="${1:?usage: ci.sh linux|windows}"
 here="$(cd "$(dirname "$0")/.." && pwd)"

@@ -18,9 +18,11 @@ This project is being done by a human guided Generative AI (LLM) system, with mi
 
 ### Mods
 
-The launcher's **Mods** tab lists everything in the `mods/` folder next to it. The first mods live in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): **Developer** (the game's hidden console, cheats, noclip) and **Redux** (a field of view setting in the pause menu). To install one, copy its folder from the SDK's `mods/` into `mods/` (each mod already contains the standard lib in `scripts/boz`).
+The launcher's **Mods** tab lists everything in the `mods/` folder next to it. The first mod lives in [boz-redux-sdk](https://github.com/ZappaVinny/boz-redux-sdk): **Developer** (the game's hidden console, cheats, noclip). To install it, copy its folder from the SDK's `mods/` into `mods/` (each mod already contains the standard lib in `scripts/boz`).
 
 ## Building from source
+
+How the runtime works, and every `BOZ_*` setting: [docs/runtime.md](docs/runtime.md).
 
 ### Requirements
 
@@ -35,7 +37,6 @@ sudo pacman -S --needed base-devel cmake lib32-glibc lib32-gcc-libs lib32-mesa l
 
 ```bash
 git submodule update --init --recursive
-cd runtime
 cmake --preset linux-x86                  # configure (32-bit)
 cmake --build --preset linux-x86-tests     # builds Unicorn, SDL2, the loader, extractor and tests
 ctest --preset linux-x86
@@ -53,7 +54,6 @@ Game data goes in `assets/` and your saves in `saves/`, both at the repo root an
 Needs `mingw-w64-gcc` (the POSIX-threads variant), `zip` and `bsdtar`:
 
 ```bash
-cd runtime
 cmake --preset windows-x86
 cmake --build --preset windows-x86
 scripts/package-windows.sh    # downloads ANGLE and Mesa for Windows and writes build/windows-x86/package/BOZ-Redux-windows-x86.zip
@@ -88,7 +88,7 @@ The runtime is a fork of [cod-boz-port](https://github.com/Producdevity/cod-boz-
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Release binaries include the Unicorn engine (GPLv2), so the loader binary as distributed is under the GPLv2; see `runtime/packaging/THIRD-PARTY.txt`. The forked runtime keeps its original MIT notice in [runtime/LICENSE](runtime/LICENSE). Game files belong to Activision and are not covered by this license or included in this repo.
+MIT, see [LICENSE](LICENSE). Release binaries include the Unicorn engine (GPLv2), so the loader binary as distributed is under the GPLv2; see `packaging/THIRD-PARTY.txt`. The forked runtime keeps its original MIT notice in [LICENSE-cod-boz-port](LICENSE-cod-boz-port). Game files belong to Activision and are not covered by this license or included in this repo.
 
 ## Contribution
 Anyone is allowed to contribute, just make a PR. The project is under MIT licences, so have fun!

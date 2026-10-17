@@ -13,6 +13,10 @@ setup-log.txt
 
 # Build output
 build/
+*.o
+*.d
+.tmp/
+.DS_Store
 
 # Local, personal or secret config
 CLAUDE.local.md

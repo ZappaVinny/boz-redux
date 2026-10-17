@@ -6,7 +6,7 @@ BOZ Redux brings the original *Call of Duty: Black Ops Zombies* mobile game (And
 
 - The original game code runs on desktop Linux and Windows through a built-in ARM emulator. The full game is playable with mouse and keyboard, in a resizable or fullscreen window.
 - Automated builds produce a Linux tarball and a Windows zip.
-- **Mods work:** replacement files, Lua code mods with hooks, settings in the game's own pause menu, and a standard library that makes common changes one line. The Redux mod adds a field of view setting to the pause menu.
+- **Mods work:** replacement files, Lua code mods with hooks, settings in the game's own pause menu, and a standard library that makes common changes one line.
 - Official repositories and releases contain no game files. SDK users may work with their own
   extracted files locally.
 
@@ -15,7 +15,6 @@ BOZ Redux brings the original *Call of Duty: Black Ops Zombies* mobile game (And
 | Layer | What it is | Examples |
 | --- | --- | --- |
 | **Client** | What every player needs to run the game well on a PC | Windows/Linux/macOS support, audio, performance, controls, launcher, mod loading |
-| **Redux mod** | A base mod loaded automatically, built with the same tools anyone can use | FOV slider, better mouse sensitivity, extra settings |
 | **Mods** | Anything the community makes | New textures, UI, weapons, gameplay changes, maps |
 
 Gameplay changes always live in mods, never hard-coded into the client.
@@ -51,24 +50,20 @@ Gameplay changes always live in mods, never hard-coded into the client.
 - Movement and actions sent straight to the game, and automatic menu and game modes (no Tab).
 - Hooks for mods to watch, block and send the player's actions (`boz.input`).
 
-### 6. Redux base mod
-- Field of view (done), aim toggle or hold, and more quality-of-life settings, all in the game's own pause menu.
-- The first real mod, and the reference example for mod authors.
-
-### 7. SDK projects and asset compilers
+### 6. SDK projects and asset compilers
 - Deterministic project builds produce complete installable mod folders and ZIPs.
 - Writable native textures, materials, models, entities, collision, sectors, portals and navigation.
 - A desktop SDK manages projects, validation, builds and installation.
 
-### 8. Existing-map editing
+### 7. Existing-map editing
 - A Blender add-on imports and exports map geometry, materials, entities, collision and navigation.
 - Debug views expose navmeshes, collision, spawn points, paths and barriers.
 
-### 9. Custom Zombies maps
+### 8. Custom Zombies maps
 - Generate complete native map groups and register them through reusable Lua APIs.
 - Keep each map's objectives, encounters and special rules in its own mod.
 
-### 10. Full content-creation suite
+### 9. Full content-creation suite
 - Models, skeletons, animations, weapons, effects, audio, localization, UI and lightmaps.
 - Stable project migrations, compatibility contracts and complete tutorials.
 - Client support for the suite:
@@ -76,7 +71,7 @@ Gameplay changes always live in mods, never hard-coded into the client.
   - let mods add `fixed` entries at startup, so two maps no longer conflict over `fixed.group.bin`;
   - after a crash, show the end of the log and the last Lua error.
 
-### 11. 64-bit client and macOS
+### 10. 64-bit client and macOS
 - Prototype after existing-map tools mature; begin the full rewrite after the custom-map MVP.
 - Preserve Lua, package, project and gamedef compatibility across the runtime change.
 
