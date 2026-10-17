@@ -69,8 +69,10 @@ static const char DEFAULT_CONFIG_TAIL[] =
     "[mods]\n"
     "# Set by the launcher's Mods tab. order: load order (when two mods replace the same file, the\n"
     "# later one wins); disabled: mods switched off. Mods not listed load last, switched on.\n"
+    "# start_map: a mod's map that PLAY starts (mod id/map name), empty for the main menu.\n"
     "order =\n"
     "disabled =\n"
+    "start_map =\n"
     "\n"
     "[debug]\n"
     "# Print emulator and frame rate statistics every two seconds.\n"
@@ -195,6 +197,9 @@ static bool apply(const char *section, const char *key, const char *value) {
         }
         if (!strcmp(key, "disabled")) {
             snprintf(g_mods_disabled, sizeof(g_mods_disabled), "%s", value);
+            return true;
+        }
+        if (!strcmp(key, "start_map")) {
             return true;
         }
         return false;

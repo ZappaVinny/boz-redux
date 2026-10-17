@@ -3,6 +3,7 @@
 #include "str_util.h"
 
 #include "client_config.h"
+#include "posix_compat.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -17,8 +18,21 @@ static bool is_dir(const char *path) {
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
-/* mod.toml: top-level `key = "string"` lines are read; tables, arrays and other keys are left for
- * later readers. */
+static void read_maps(struct mod_info *mod, const char *value) {
+    const char *open = strchr(value, '"');
+    while (open && mod->map_count < MOD_MAPS_MAX) {
+        const char *close = strchr(open + 1, '"');
+        if (!close) {
+            break;
+        }
+        snprintf(mod->maps[mod->map_count++], sizeof(mod->maps[0]), "%.*s", (int)(close - open - 1),
+                 open + 1);
+        open = strchr(close + 1, '"');
+    }
+}
+
+/* mod.toml: top-level `key = "string"` lines and the `maps` list are read; tables and other keys
+ * are left for later readers. */
 static void read_manifest(struct mod_info *mod) {
     char path[1200];
     snprintf(path, sizeof(path), "%s/mod.toml", mod->dir);
@@ -41,6 +55,10 @@ static void read_manifest(struct mod_info *mod) {
         *equals = '\0';
         char *key = str_trim(text);
         char *value = str_trim(equals + 1);
+        if (!strcmp(key, "maps") && *value == '[') {
+            read_maps(mod, value);
+            continue;
+        }
         if (*value != '"') {
             continue;
         }
@@ -69,6 +87,51 @@ static void read_manifest(struct mod_info *mod) {
         }
     }
     fclose(file);
+}
+
+bool mods_set_setting(const char *saves, const char *mod_id, const char *key, const char *value) {
+    char dir[1100], path[1300];
+    snprintf(dir, sizeof(dir), "%s/mods", saves);
+    mkdir(saves, 0755);
+    mkdir(dir, 0755);
+    snprintf(path, sizeof(path), "%s/%s.cfg", dir, mod_id);
+    char *old = NULL;
+    long old_size = 0;
+    FILE *in = fopen(path, "rb");
+    if (in) {
+        if (fseek(in, 0, SEEK_END) == 0 && (old_size = ftell(in)) > 0) {
+            old = malloc((size_t)old_size + 1);
+            rewind(in);
+            if (old && fread(old, 1, (size_t)old_size, in) == (size_t)old_size) {
+                old[old_size] = '\0';
+            } else {
+                free(old);
+                old = NULL;
+            }
+        }
+        fclose(in);
+    }
+    FILE *out = fopen(path, "wb");
+    if (!out) {
+        free(old);
+        return false;
+    }
+    size_t key_length = strlen(key);
+    for (char *line = old; line && *line;) {
+        char *end = strchr(line, '\n');
+        size_t length = end ? (size_t)(end - line + 1) : strlen(line);
+        bool same_key = !strncmp(line, key, key_length) && line[key_length] == '=';
+        if (!same_key && length > 1) {
+            fwrite(line, 1, length, out);
+            if (!end) {
+                fputc('\n', out);
+            }
+        }
+        line += length;
+    }
+    free(old);
+    fprintf(out, "%s=s:%s\n", key, value);
+    return fclose(out) == 0;
 }
 
 /* Position of id in a comma-separated list, or -1. */

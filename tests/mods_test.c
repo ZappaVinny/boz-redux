@@ -40,6 +40,7 @@ int main(void) {
                                           "name = \"Developer\"\n"
                                           "version = \"0.1.0\"\n"
                                           "game = \"1.0.11\"\n"
+                                          "maps = [\"arena\", \"lab_2\"]\n"
                                           "[settings]\n"
                                           "name = \"ignored\"\n");
     write_file("mods/developer/assets/data-etc/Weapons_Kino.group.bin", "developer");
@@ -55,6 +56,9 @@ int main(void) {
     assert(!strcmp(mods[1].id, "developer") && mods[1].has_manifest);
     assert(!strcmp(mods[1].name, "Developer") && !strcmp(mods[1].version, "0.1.0"));
     assert(!strcmp(mods[1].game, "1.0.11"));
+    assert(mods[1].map_count == 2 && !strcmp(mods[1].maps[0], "arena") &&
+           !strcmp(mods[1].maps[1], "lab_2"));
+    assert(mods[0].map_count == 0);
     assert(!strcmp(mods[2].id, "zeta") && mods[2].enabled);
 
     /* Listed ids come first in their order; unlisted ones follow; disabled ones are off. */
@@ -87,6 +91,20 @@ int main(void) {
     assert(ends_with(path, "mods/zeta/assets/sounds/shot.mp3"));
     assert(!mods_find_override("sounds/other.mp3", path, sizeof(path)));
     assert(!mods_find_override("", path, sizeof(path)));
+
+    /* Launcher autostart: one key replaced, the others kept. */
+    char saves[600], cfg[700], text[256] = "";
+    snprintf(saves, sizeof(saves), "%s/saves", g_root);
+    write_file("saves/mods/arena.cfg", "fov=n:90\nautostart_level=s:old\nbinds=s:F5");
+    assert(mods_set_setting(saves, "arena", "autostart_level", "arena"));
+    snprintf(cfg, sizeof(cfg), "%s/mods/arena.cfg", saves);
+    FILE *settings = fopen(cfg, "r");
+    assert(settings);
+    size_t read = fread(text, 1, sizeof(text) - 1, settings);
+    text[read] = '\0';
+    fclose(settings);
+    assert(!strcmp(text, "fov=n:90\nbinds=s:F5\nautostart_level=s:arena\n"));
+    assert(mods_set_setting(saves, "fresh", "autostart_level", "lab_2"));
 
     char command[600];
     snprintf(command, sizeof(command), "rm -rf %s", g_root);

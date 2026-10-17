@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-enum { MODS_MAX = 128 };
+enum { MODS_MAX = 128, MOD_MAPS_MAX = 8 };
 
 struct mod_info {
     char folder[128];       /* folder name under mods/ */
@@ -24,6 +24,8 @@ struct mod_info {
     char game[16];          /* game version the mod targets, e.g. 1.0.11 */
     char description[512];
     char dir[1024];         /* full path of the mod folder */
+    char maps[MOD_MAPS_MAX][64]; /* levels the mod adds (manifest `maps = ["name", ...]`) */
+    int map_count;
     bool has_manifest;
     bool enabled;
 };
@@ -32,6 +34,10 @@ struct mod_info {
  * order, then the rest by id. Ids named in disabled are switched off. Returns the count. */
 int mods_scan(const char *root, const char *order, const char *disabled, struct mod_info *mods,
               int max);
+
+/* Sets one string value in a mod's saved settings (<saves>/mods/<id>.cfg, the file the Lua
+ * `settings` module reads), keeping its other values. */
+bool mods_set_setting(const char *saves, const char *mod_id, const char *key, const char *value);
 
 /* Calls fn for each file under <mod dir>/assets with its path relative to assets/ ('/'-separated).
  * Returns the number of files. */
