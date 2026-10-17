@@ -106,9 +106,6 @@ static void raw_bind_framebuffer(GLenum target, GLuint framebuffer) {
 }
 
 static int scale_ready(void) {
-#if defined(__arm__)
-    return 0;
-#else
     if (g_scale_state) {
         return g_scale_state > 0;
     }
@@ -147,7 +144,6 @@ static int scale_ready(void) {
     fprintf(stderr, "[gl] rendering at %ux%u and scaling to the window\n", g_surface.width,
             g_surface.height);
     return 1;
-#endif
 }
 
 static int surface_offsets_apply(void) {
@@ -1012,13 +1008,8 @@ void *s3e_host_resolve(const char *symbol) {
         return addr ? addr : make_stub(symbol);
     }
     if (strncmp(symbol, "gl", 2) == 0) {
-#if defined(__arm__)
-        void *addr = lookup_gl(symbol);
-        return addr ? addr : make_stub(symbol);
-#else
         void *addr = getenv("BOZ_LAZY_GL") ? NULL : lookup_gl(symbol);
         return addr ? addr : make_lazy_gl_stub(symbol);
-#endif
     }
     for (size_t i = 0; i < sizeof(HOST_SYMBOLS) / sizeof(HOST_SYMBOLS[0]); ++i) {
         if (strcmp(symbol, HOST_SYMBOLS[i].name) == 0) {

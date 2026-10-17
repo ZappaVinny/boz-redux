@@ -1,5 +1,7 @@
 #include "s3e_host_internal.h"
+#include "str_util.h"
 
+#include "game_patches.h"
 #include "mod_runtime.h"
 #include "mods.h"
 
@@ -27,11 +29,6 @@ static int try_asset_path(char *out, size_t out_size, const char *prefix, const 
     char path[1200];
     snprintf(path, sizeof(path), "%s/%s/%s", g_root, prefix, name);
     return use_existing_path(out, out_size, path);
-}
-
-static const char *base_name(const char *name) {
-    const char *slash = strrchr(name ? name : "", '/');
-    return slash ? slash + 1 : (name ? name : "");
 }
 
 static int flat_group_name(const char *name, char *out, size_t out_size) {
@@ -62,17 +59,6 @@ static uint16_t read_le16(const uint8_t *data) {
 static uint32_t read_le32(const uint8_t *data) {
     return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) |
            ((uint32_t)data[3] << 24);
-}
-
-static void lower_copy(char *out, size_t out_size, const char *in) {
-    size_t i = 0;
-    if (!out_size) {
-        return;
-    }
-    for (; in && in[i] && i + 1 < out_size; ++i) {
-        out[i] = (char)tolower((unsigned char)in[i]);
-    }
-    out[i] = 0;
 }
 
 static int read_c_string(FILE *file, char *out, size_t out_size) {
@@ -165,8 +151,8 @@ static int dtrz_load_index(void) {
         struct dtrz_entry *entry = &g_dtrz.entries[i];
         entry->offset = read_le32(record);
         entry->size = read_le32(record + 4);
-        lower_copy(entry->lower_name, sizeof(entry->lower_name), entry->name);
-        lower_copy(entry->lower_base, sizeof(entry->lower_base), base_name(entry->name));
+        str_lower(entry->lower_name, sizeof(entry->lower_name), entry->name);
+        str_lower(entry->lower_base, sizeof(entry->lower_base), str_base_name(entry->name));
     }
     g_dtrz.count = file_count;
     fclose(file);
@@ -174,14 +160,14 @@ static int dtrz_load_index(void) {
 }
 
 static int dtrz_archive_redirect_path(const char *name, char *out, size_t out_size) {
-    const char *requested = base_name(name ? name : "");
+    const char *requested = str_base_name(name ? name : "");
     if (strcasecmp(requested, "blackops_gles1.dz") != 0) {
         return 0;
     }
     if (!dtrz_load_index() || !g_dtrz.path[0]) {
         return 0;
     }
-    const char *selected = base_name(g_dtrz.path);
+    const char *selected = str_base_name(g_dtrz.path);
     if (strcasecmp(selected, requested) == 0 || !path_exists(g_dtrz.path)) {
         return 0;
     }
@@ -194,8 +180,8 @@ static const struct dtrz_entry *dtrz_find_entry(const char *name) {
         return NULL;
     }
     char lower_name[DTRZ_NAME_MAX];
-    lower_copy(lower_name, sizeof(lower_name), name ? name : "");
-    const char *lower_base = base_name(lower_name);
+    str_lower(lower_name, sizeof(lower_name), name ? name : "");
+    const char *lower_base = str_base_name(lower_name);
     for (size_t i = 0; i < g_dtrz.count; ++i) {
         const struct dtrz_entry *entry = &g_dtrz.entries[i];
         if (strcmp(entry->lower_name, lower_name) == 0 ||
@@ -212,7 +198,7 @@ static int dtrz_entry_exists(const char *name) {
 
 static int dtrz_prefer_entry(const char *name) {
     char lower[256];
-    lower_copy(lower, sizeof(lower), name ? name : "");
+    str_lower(lower, sizeof(lower), name ? name : "");
     return strncmp(lower, "data-etc/", 9) == 0 || strncmp(lower, "data-dxt/", 9) == 0 ||
            strncmp(lower, "data-atitc/", 11) == 0;
 }
@@ -268,7 +254,6 @@ static FILE *open_dtrz_entry(const char *name, char *opened_path, size_t opened_
         return NULL;
     }
     fclose(archive);
-    codboz_hide_virtual_stick_artwork(entry->name, buffer, entry->size);
     FILE *file = plat_memfile(buffer, alloc_size);
     if (!file) {
         free(buffer);
@@ -304,7 +289,7 @@ static int resolve_read_path(const char *name, char *out, size_t out_size) {
          try_asset_path(out, out_size, "assets", flat_name))) {
         return 1;
     }
-    const char *leaf = base_name(safe_name);
+    const char *leaf = str_base_name(safe_name);
     if (leaf != safe_name && (try_asset_path(out, out_size, "assets/data-gles1", leaf) ||
                               try_asset_path(out, out_size, "assets/data-sw", leaf) ||
                               try_asset_path(out, out_size, "assets", leaf))) {
@@ -414,31 +399,41 @@ static long file_size_for_seek(FILE *file) {
     return size;
 }
 
-/* assets.patch: hand a mod's Lua the whole file and serve what it returns from memory. */
-static FILE *patch_file(const char *name, FILE *file) {
+/* Files the client fixes up (the HUD's touch sticks) or a mod's assets.patch changes are read
+ * whole and served from memory: the client's fix first, then the mods'. */
+static FILE *serve_patched(const char *name, FILE *file) {
+    bool sticks = hud_sticks_apply_to(name);
+    bool modded = lua_runtime_has_asset_patch(name);
+    if (!sticks && !modded) {
+        return file;
+    }
     long size = file_size_for_seek(file);
-    void *data = size > 0 ? malloc((size_t)size) : NULL;
+    uint8_t *data = size > 0 ? malloc((size_t)size) : NULL;
     if (!data || fseek(file, 0, SEEK_SET) != 0 || fread(data, 1, (size_t)size, file) != (size_t)size) {
         free(data);
         fseek(file, 0, SEEK_SET);
         return file;
     }
-    void *patched = NULL;
-    size_t patched_size = 0;
-    bool changed = lua_runtime_patch_asset(name, data, (size_t)size, &patched, &patched_size);
-    free(data);
-    if (!changed) {
-        fseek(file, 0, SEEK_SET);
-        return file;
+    size_t data_size = (size_t)size;
+    bool changed = sticks && hud_sticks_hide(data, data_size);
+    if (modded) {
+        void *patched = NULL;
+        size_t patched_size = 0;
+        if (lua_runtime_patch_asset(name, data, data_size, &patched, &patched_size)) {
+            free(data);
+            data = patched;
+            data_size = patched_size;
+            changed = true;
+        }
     }
-    FILE *memory = plat_memfile(patched, patched_size);
+    FILE *memory = changed ? plat_memfile(data, data_size) : NULL;
     if (!memory) {
-        free(patched);
+        free(data);
         fseek(file, 0, SEEK_SET);
         return file;
     }
     s3eFileClose(file);
-    track_memory_file(memory, patched);
+    track_memory_file(memory, data);
     return memory;
 }
 
@@ -498,7 +493,7 @@ void *s3eFileOpen(const char *name, const char *mode) {
     if (!file && is_archive_read_mode(safe_mode)) {
         file = open_dtrz_entry(safe_name, opened_path, sizeof(opened_path));
     }
-    if (!file && is_read_mode(safe_mode) && strcmp(base_name(safe_name), "console.bin") == 0) {
+    if (!file && is_read_mode(safe_mode) && strcmp(str_base_name(safe_name), "console.bin") == 0) {
         trace_open(safe_name, safe_mode, "(empty)");
 #if defined(_WIN32)
         file = fopen("NUL", "rb");
@@ -507,8 +502,8 @@ void *s3eFileOpen(const char *name, const char *mode) {
 #endif
         return file;
     }
-    if (file && is_read_mode(safe_mode) && lua_runtime_has_asset_patch(safe_name)) {
-        file = patch_file(safe_name, file);
+    if (file && is_read_mode(safe_mode)) {
+        file = serve_patched(safe_name, file);
     }
     trace_open(safe_name, safe_mode, file ? (opened_path[0] ? opened_path : "(pack)") : NULL);
     return file;

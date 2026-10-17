@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "game_patches.h"
 #include "s3e_image.h"
 
 #include <assert.h>
@@ -130,10 +131,10 @@ static void test_player_name_patch(void) {
     uint32_t name_address = 0x12345678;
 
     memory[format_offset] = 'X';
-    assert(!codboz_override_player_name(&loaded, name_address));
+    assert(!player_name_install(&loaded, name_address));
     memory[format_offset] = 'P';
 
-    assert(codboz_override_player_name(&loaded, name_address));
+    assert(player_name_install(&loaded, name_address));
     uint32_t patched;
     memcpy(&patched, memory + reference_offset, sizeof(patched));
     assert(patched == name_address - ((uint32_t)(uintptr_t)memory + reference_pc_offset));

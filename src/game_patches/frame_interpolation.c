@@ -1,4 +1,5 @@
-#include "codboz_frame_interpolation.h"
+#include "game_patches.h"
+#include "mod_runtime.h"
 #include "s3e_host_internal.h"
 
 #include <math.h>
@@ -6,14 +7,10 @@
 #include <stdint.h>
 #include <string.h>
 
+/* The director (the game's main loop) calls two callbacks from slots: one for each fixed step and
+ * one to interpolate between steps, which the shipped game leaves empty. The fixed one is wrapped
+ * to capture the transforms, the empty one replaced to blend them (TransformSet_ApplyFactor). */
 enum {
-    ACTIVE_SET_POINTER_OFFSET = 0x45f2b0,
-    DIRECTOR_FIXED_SLOT_OFFSET = 0x3e6490,
-    DIRECTOR_INTERPOLATE_SLOT_OFFSET = 0x3e6494,
-    DIRECTOR_FIXED_CALLBACK_OFFSET = 0x0ba98d,
-    DIRECTOR_INTERPOLATE_CALLBACK_OFFSET = 0x0ba7db,
-    CAPTURE_TRANSFORMS_OFFSET = 0x0e8787,
-    APPLY_FACTOR_OFFSET = 0x0e87c9,
     INTERPOLATION_CHANNEL = 1,
     FIXED_FACTOR_ONE = 4096,
 };
@@ -29,15 +26,8 @@ static director_callback_fn g_original_fixed_callback;
 static capture_transforms_fn g_capture_transforms;
 static apply_factor_fn g_apply_factor;
 
-static bool image_range_valid(const struct s3e_loaded_image *loaded, size_t offset, size_t size) {
-    return loaded && loaded->base && offset <= loaded->map_size &&
-           size <= loaded->map_size - offset;
-}
-
-static bool image_matches(const struct s3e_loaded_image *loaded, size_t offset,
-                          const uint8_t *expected, size_t size) {
-    return image_range_valid(loaded, offset, size) &&
-           memcmp(loaded->base + offset, expected, size) == 0;
+static bool code_matches(uint32_t address, const uint8_t *expected, size_t size) {
+    return address && memcmp((const void *)(uintptr_t)(address & ~1u), expected, size) == 0;
 }
 
 static uint32_t read32(const void *address) {
@@ -95,7 +85,7 @@ static S3E_SOFTFP uint32_t director_interpolate_callback(void *director, uint32_
     return (uint32_t)(uintptr_t)director;
 }
 
-bool codboz_install_frame_interpolation(struct s3e_loaded_image *loaded) {
+bool frame_interpolation_install(void) {
     static const uint8_t fixed_signature[] = {
         0x02, 0x29, 0x2d, 0xe9, 0xf0, 0x41, 0x80, 0x46,
         0x0f, 0x46, 0x16, 0x46, 0xdd, 0xe9, 0x06, 0x45,
@@ -110,36 +100,28 @@ bool codboz_install_frame_interpolation(struct s3e_loaded_image *loaded) {
         0xab, 0x68, 0x9c, 0x42, 0x07, 0xd2, 0x6b, 0x68,
     };
 
-    if (!image_range_valid(loaded, ACTIVE_SET_POINTER_OFFSET, sizeof(uint32_t)) ||
-        !image_range_valid(loaded, DIRECTOR_FIXED_SLOT_OFFSET, 2 * sizeof(uint32_t)) ||
-        !image_matches(loaded, DIRECTOR_FIXED_CALLBACK_OFFSET & ~1u, fixed_signature,
-                       sizeof(fixed_signature)) ||
-        !image_matches(loaded, DIRECTOR_INTERPOLATE_CALLBACK_OFFSET & ~1u, interpolate_signature,
-                       sizeof(interpolate_signature)) ||
-        !image_matches(loaded, CAPTURE_TRANSFORMS_OFFSET & ~1u, capture_signature,
-                       sizeof(capture_signature)) ||
-        !image_matches(loaded, APPLY_FACTOR_OFFSET & ~1u, apply_signature,
-                       sizeof(apply_signature))) {
+    uint32_t active_set = game_symbol_address("g_activeTransformSet");
+    uint32_t fixed_slot = game_symbol_address("g_directorFixedCallback");
+    uint32_t interpolate_slot = game_symbol_address("g_directorInterpolateCallback");
+    uint32_t fixed = game_symbol_address("Director_FixedStepCallback");
+    uint32_t interpolate = game_symbol_address("Director_InterpolateCallback");
+    uint32_t capture = game_symbol_address("TransformSet_Capture");
+    uint32_t apply = game_symbol_address("TransformSet_ApplyFactor");
+    if (!active_set || !fixed_slot || !interpolate_slot ||
+        !code_matches(fixed, fixed_signature, sizeof(fixed_signature)) ||
+        !code_matches(interpolate, interpolate_signature, sizeof(interpolate_signature)) ||
+        !code_matches(capture, capture_signature, sizeof(capture_signature)) ||
+        !code_matches(apply, apply_signature, sizeof(apply_signature)) ||
+        read32((void *)(uintptr_t)fixed_slot) != fixed ||
+        read32((void *)(uintptr_t)interpolate_slot) != interpolate) {
         return false;
     }
 
-    uintptr_t image_base = (uintptr_t)loaded->base;
-    uintptr_t fixed_hook = (uintptr_t)director_fixed_callback;
-    uintptr_t interpolate_hook = (uintptr_t)director_interpolate_callback;
-    if (image_base > UINT32_MAX || fixed_hook > UINT32_MAX || interpolate_hook > UINT32_MAX ||
-        read32(loaded->base + DIRECTOR_FIXED_SLOT_OFFSET) !=
-            (uint32_t)image_base + DIRECTOR_FIXED_CALLBACK_OFFSET ||
-        read32(loaded->base + DIRECTOR_INTERPOLATE_SLOT_OFFSET) !=
-            (uint32_t)image_base + DIRECTOR_INTERPOLATE_CALLBACK_OFFSET) {
-        return false;
-    }
-
-    g_active_set_pointer = loaded->base + ACTIVE_SET_POINTER_OFFSET;
-    g_original_fixed_callback = (director_callback_fn)(image_base + DIRECTOR_FIXED_CALLBACK_OFFSET);
-    g_capture_transforms = (capture_transforms_fn)(image_base + CAPTURE_TRANSFORMS_OFFSET);
-    g_apply_factor = (apply_factor_fn)(image_base + APPLY_FACTOR_OFFSET);
-
-    write32(loaded->base + DIRECTOR_FIXED_SLOT_OFFSET, (uint32_t)fixed_hook);
-    write32(loaded->base + DIRECTOR_INTERPOLATE_SLOT_OFFSET, (uint32_t)interpolate_hook);
+    g_active_set_pointer = (uint8_t *)(uintptr_t)active_set;
+    g_original_fixed_callback = (director_callback_fn)(uintptr_t)fixed;
+    g_capture_transforms = (capture_transforms_fn)(uintptr_t)capture;
+    g_apply_factor = (apply_factor_fn)(uintptr_t)apply;
+    write32((void *)(uintptr_t)fixed_slot, (uint32_t)(uintptr_t)director_fixed_callback);
+    write32((void *)(uintptr_t)interpolate_slot, (uint32_t)(uintptr_t)director_interpolate_callback);
     return true;
 }

@@ -23,7 +23,8 @@ uint32_t game_symbol_address(const char *name);
 
 /* --- Lua runtime (lua_runtime.c) ----------------------------------------------------------- */
 
-/* Loads gamedef and runs the enabled mods' scripts/main.lua (once). True if any mod script runs. */
+/* Runs the enabled mods' scripts/main.lua (once; gamedef is loaded by then). True if any mod
+ * script runs. */
 bool lua_runtime_start(void);
 /* Runs the "frame" event and saves changed mod settings. */
 void lua_runtime_frame(double dt);

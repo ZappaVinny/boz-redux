@@ -1,5 +1,6 @@
 /* Mod discovery and the asset override index. See mods.h. */
 #include "mods.h"
+#include "str_util.h"
 
 #include "client_config.h"
 
@@ -16,25 +17,6 @@ static bool is_dir(const char *path) {
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
 }
 
-static void lower_copy(char *out, size_t out_size, const char *in) {
-    size_t i = 0;
-    for (; in[i] && i + 1 < out_size; ++i) {
-        out[i] = in[i] == '\\' ? '/' : (char)tolower((unsigned char)in[i]);
-    }
-    out[i] = '\0';
-}
-
-static char *trim(char *text) {
-    while (isspace((unsigned char)*text)) {
-        ++text;
-    }
-    char *end = text + strlen(text);
-    while (end > text && isspace((unsigned char)end[-1])) {
-        *--end = '\0';
-    }
-    return text;
-}
-
 /* mod.toml: top-level `key = "string"` lines are read; tables, arrays and other keys are left for
  * later readers. */
 static void read_manifest(struct mod_info *mod) {
@@ -48,7 +30,7 @@ static void read_manifest(struct mod_info *mod) {
     char line[1024];
     bool top_level = true;
     while (fgets(line, sizeof(line), file)) {
-        char *text = trim(line);
+        char *text = str_trim(line);
         if (*text == '[') {
             top_level = false;
         }
@@ -57,8 +39,8 @@ static void read_manifest(struct mod_info *mod) {
             continue;
         }
         *equals = '\0';
-        char *key = trim(text);
-        char *value = trim(equals + 1);
+        char *key = str_trim(text);
+        char *value = str_trim(equals + 1);
         if (*value != '"') {
             continue;
         }
@@ -99,7 +81,7 @@ static int list_index(const char *list, const char *id) {
         char entry[128];
         snprintf(entry, sizeof(entry), "%.*s", (int)(length < sizeof(entry) ? length : sizeof(entry) - 1),
                  item);
-        char *name = trim(entry);
+        char *name = str_trim(entry);
         if (*name) {
             if (!strcasecmp(name, id)) {
                 return index;
@@ -243,7 +225,7 @@ static void add_override(const char *relative, const char *full, void *user) {
         g_override_capacity = capacity;
     }
     char lower[600];
-    lower_copy(lower, sizeof(lower), relative);
+    str_lower_path(lower, sizeof(lower), relative);
     struct override *entry = &g_overrides[g_override_count];
     entry->lower_path = duplicate(lower);
     entry->full = duplicate(full);
@@ -292,7 +274,7 @@ bool mods_find_override(const char *name, char *out, size_t out_size) {
         return false;
     }
     char lower[600];
-    lower_copy(lower, sizeof(lower), name[0] == '.' && name[1] == '/' ? name + 2 : name);
+    str_lower_path(lower, sizeof(lower), name[0] == '.' && name[1] == '/' ? name + 2 : name);
     const struct override *entry = find(lower, false);
     if (!entry) {
         const char *slash = strrchr(lower, '/');

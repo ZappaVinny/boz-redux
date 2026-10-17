@@ -2,6 +2,7 @@
  * reader handles the subset they use: [[table]] headers and `key = value` lines with strings,
  * integers (decimal or 0x) and booleans. */
 #include "gamedef.h"
+#include "str_util.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -30,17 +31,6 @@ static void *grow(void *array, int *capacity, int count, size_t item) {
         *capacity = next;
     }
     return grown;
-}
-
-static char *trim(char *text) {
-    while (isspace((unsigned char)*text)) {
-        ++text;
-    }
-    char *end = text + strlen(text);
-    while (end > text && isspace((unsigned char)end[-1])) {
-        *--end = '\0';
-    }
-    return text;
 }
 
 /* A quoted string value, unescaped in place; NULL when the value is not a string. */
@@ -83,7 +73,7 @@ static bool read_toml(const char *path, entry_fn fn) {
     char table[64] = "";
     bool first = false;
     while (fgets(line, sizeof(line), file)) {
-        char *text = trim(line);
+        char *text = str_trim(line);
         if (!*text || *text == '#') {
             continue;
         }
@@ -93,7 +83,7 @@ static bool read_toml(const char *path, entry_fn fn) {
             char *close = strchr(start, ']');
             if (close) {
                 *close = '\0';
-                snprintf(table, sizeof(table), "%s", trim(start));
+                snprintf(table, sizeof(table), "%s", str_trim(start));
                 first = true;
             }
             continue;
@@ -103,13 +93,13 @@ static bool read_toml(const char *path, entry_fn fn) {
             continue;
         }
         *equals = '\0';
-        char *key = trim(text);
-        char *value = trim(equals + 1);
+        char *key = str_trim(text);
+        char *value = str_trim(equals + 1);
         if (*value != '"') {
             char *comment = strchr(value, '#');
             if (comment) {
                 *comment = '\0';
-                value = trim(value);
+                value = str_trim(value);
             }
         }
         fn(table, key, value, first);

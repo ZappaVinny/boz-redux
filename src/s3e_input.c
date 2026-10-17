@@ -735,29 +735,10 @@ static void input_update_game_touchpads(void) {
 
 enum {
     SDL_QUIT_EVENT = 0x100,
-    SC_A = 4,
-    SC_C = 6,
-    SC_D = 7,
-    SC_E = 8,
-    SC_F = 9,
-    SC_G = 10,
-    SC_Q = 20,
-    SC_R = 21,
-    SC_S = 22,
-    SC_V = 25,
-    SC_W = 26,
-    SC_X = 27,
-    SC_1 = 30,
-    SC_ESCAPE = 41,
-    SC_TAB = 43,
     SC_RETURN = 40,
-    SC_F11 = 68,
     SC_LALT = 226,
     SC_RALT = 230,
-    SC_SPACE = 44,
-    SC_LSHIFT = 225,
     MOUSE_LEFT = 1u << 0,
-    MOUSE_RIGHT = 1u << 2,
 };
 
 /* Desktop bindings: [keys] in client.ini, each a comma-separated list of SDL key names or
@@ -853,9 +834,6 @@ static void load_bindings(void) {
     g_bindings_loaded = 1;
     for (int id = 0; id < BIND_COUNT; ++id) {
         const char *configured = client_config_key_binding(BINDING_DEFAULTS[id].action);
-        if (id == BIND_ACTION && configured && !strcmp(configured, "E, F, Left Shift")) {
-            configured = NULL; /* the old default, from before sprint had its own key */
-        }
         parse_binding((enum binding_id)id, configured ? configured : BINDING_DEFAULTS[id].defaults);
     }
 }

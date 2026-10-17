@@ -1,7 +1,7 @@
-/* Workarounds for known crashes in BOZ 1.0.11, ported from the native ARM SIGSEGV handler in
- * main.c to the emulator's fault hook. Each one matches the exact faulting instruction (image
- * offset) and register state, then repairs the registers the same way the native handler does. */
-#include "codboz_crash_recovery.h"
+/* Workarounds for known crashes in BOZ 1.0.11 in the emulator's fault hook. Each one matches the
+ * exact faulting instruction (an image offset inside a function, so not a gamedef name) and its
+ * register state, then repairs the registers so the game carries on. */
+#include "game_patches.h"
 
 #include "arm_emu.h"
 
@@ -115,7 +115,7 @@ static bool recover(struct arm_emu_fault *f) {
     return false;
 }
 
-void codboz_install_crash_recovery(uint32_t image_base) {
+void crash_recovery_install(uint32_t image_base) {
     g_base = image_base;
     arm_emu_set_fault_handler(recover);
 }

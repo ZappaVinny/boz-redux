@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "str_util.h"
 
 static struct s3e_config_entry g_config_entries[S3E_CONFIG_MAX_ENTRIES];
 static size_t g_config_entry_count;
@@ -6,17 +7,6 @@ static char g_multiplayer_server[128];
 static bool g_multiplayer_proxy;
 static bool g_voice_chat;
 static char g_player_name[14];
-
-static char *trim(char *text) {
-    while (*text && isspace((unsigned char)*text)) {
-        text++;
-    }
-    char *end = text + strlen(text);
-    while (end > text && isspace((unsigned char)end[-1])) {
-        *--end = 0;
-    }
-    return text;
-}
 
 static void strip_comment(char *line) {
     int in_quote = 0;
@@ -87,7 +77,7 @@ static void load_control_config(void) {
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\r\n")] = 0;
         strip_comment(line);
-        char *clean = trim(line);
+        char *clean = str_trim(line);
         if (!clean[0]) {
             continue;
         }
@@ -96,8 +86,8 @@ static void load_control_config(void) {
             continue;
         }
         *equals = 0;
-        char *key = trim(clean);
-        char *value = trim(equals + 1);
+        char *key = str_trim(clean);
+        char *value = str_trim(equals + 1);
         strip_quotes(value);
 
         if (strcmp(key, "multiplayer_server") == 0) {
@@ -209,7 +199,7 @@ static int config_id_matches(const char *value) {
 static int config_condition_matches(const char *condition) {
     char copy[256];
     snprintf(copy, sizeof(copy), "%s", condition ? condition : "");
-    char *expr = trim(copy);
+    char *expr = str_trim(copy);
     if (!expr[0]) {
         return 1;
     }
@@ -218,7 +208,7 @@ static int config_condition_matches(const char *condition) {
     }
     if (strncasecmp(expr, "ID=", 3) == 0 || strncasecmp(expr, "CLASS=", 6) == 0) {
         char *equals = strchr(expr, '=');
-        return equals && config_id_matches(trim(equals + 1));
+        return equals && config_id_matches(str_trim(equals + 1));
     }
     if (expr[0] == '[') {
         char *section_end = strchr(expr, ']');
@@ -228,9 +218,9 @@ static int config_condition_matches(const char *condition) {
         }
         *section_end = 0;
         *equals = 0;
-        char *section = trim(expr + 1);
-        char *key = trim(section_end + 1);
-        char *value = trim(equals + 2);
+        char *section = str_trim(expr + 1);
+        char *key = str_trim(section_end + 1);
+        char *value = str_trim(equals + 2);
         strip_quotes(value);
         const char *current = config_get(section, key);
         return current && strcasecmp(current, value) == 0;
@@ -244,7 +234,7 @@ static int parse_config_int_value(const char *value, int depth, int32_t *out) {
     }
     char copy[256];
     snprintf(copy, sizeof(copy), "%s", value);
-    char *text = trim(copy);
+    char *text = str_trim(copy);
     if (!text[0]) {
         return 0;
     }
@@ -254,15 +244,15 @@ static int parse_config_int_value(const char *value, int depth, int32_t *out) {
             return 0;
         }
         *section_end = 0;
-        char *section = trim(text + 1);
-        char *key = trim(section_end + 1);
+        char *section = str_trim(text + 1);
+        char *key = str_trim(section_end + 1);
         char *op = strpbrk(key, "+-");
         char operator= 0;
         int32_t adjustment = 0;
         if (op) {
             operator= * op;
             *op = 0;
-            char *adj = trim(op + 1);
+            char *adj = str_trim(op + 1);
             char *end = NULL;
             long parsed = strtol(adj, &end, 0);
             if (end == adj) {
@@ -271,7 +261,7 @@ static int parse_config_int_value(const char *value, int depth, int32_t *out) {
             adjustment = (int32_t)parsed;
         }
         int32_t base = 0;
-        if (!parse_config_int_value(config_get(section, trim(key)), depth + 1, &base)) {
+        if (!parse_config_int_value(config_get(section, str_trim(key)), depth + 1, &base)) {
             return 0;
         }
         if (operator== '+') {
@@ -311,7 +301,7 @@ void s3e_host_set_config(const uint8_t *data, uint32_t size) {
                  line = strtok_r(NULL, "\n", &save)) {
                 line[strcspn(line, "\r")] = 0;
                 strip_comment(line);
-                char *clean = trim(line);
+                char *clean = str_trim(line);
                 if (!clean[0]) {
                     continue;
                 }
@@ -323,7 +313,7 @@ void s3e_host_set_config(const uint8_t *data, uint32_t size) {
                 }
                 if (clean[0] == '[' && clean[len - 1] == ']') {
                     clean[len - 1] = 0;
-                    snprintf(section, sizeof(section), "%s", trim(clean + 1));
+                    snprintf(section, sizeof(section), "%s", str_trim(clean + 1));
                     continue;
                 }
                 if (!active) {
@@ -334,8 +324,8 @@ void s3e_host_set_config(const uint8_t *data, uint32_t size) {
                     continue;
                 }
                 *equals = 0;
-                char *key = trim(clean);
-                char *value = trim(equals + 1);
+                char *key = str_trim(clean);
+                char *value = str_trim(equals + 1);
                 strip_quotes(value);
                 config_set(section, key, value);
             }

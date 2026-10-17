@@ -96,13 +96,17 @@ else()
   set(BOZ_ZEROCONF_PLATFORM src/zeroconf_platform_posix.c)
 endif()
 
+add_library(boz_common STATIC src/str_util.c)
+target_link_libraries(boz_common PUBLIC boz_project)
+
 add_executable(codboz_s3e_loader
   ${BOZ_PLATFORM_SOURCES}
   src/arm_emu.c
-  src/codboz_crash_recovery.c
   src/client_config.c
-  src/codboz_assets.c
-  src/codboz_frame_interpolation.c
+  src/game_patches/crash_recovery.c
+  src/game_patches/frame_interpolation.c
+  src/game_patches/hud_sticks.c
+  src/game_patches/player_name.c
   src/main.c
   src/mods.c
   src/gamedef.c
@@ -135,7 +139,7 @@ else()
   set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
   set(BOZ_SYSTEM_LINK_OPTIONS)
 endif()
-target_link_libraries(codboz_s3e_loader PRIVATE boz_project unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
+target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
 target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
 if(NOT WIN32)
   target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
@@ -161,7 +165,7 @@ add_executable(boz-redux
   src/mods.c)
 target_include_directories(boz-redux PRIVATE include)
 target_compile_options(boz-redux PRIVATE ${BOZ_WARNINGS})
-target_link_libraries(boz-redux PRIVATE imgui)
+target_link_libraries(boz-redux PRIVATE imgui boz_common)
 if(WIN32)
   target_link_libraries(boz-redux PRIVATE comdlg32 shell32 ole32)
   target_link_options(boz-redux PRIVATE -static -static-libgcc -static-libstdc++)
@@ -181,7 +185,7 @@ enable_testing()
 function(boz_test name)
   cmake_parse_arguments(T "" "" "SOURCES;DEFINES;INCLUDES" ${ARGN})
   add_executable(${name} tests/${name}.c ${T_SOURCES} tests/test_support.c)
-  target_link_libraries(${name} PRIVATE boz_project pthread)
+  target_link_libraries(${name} PRIVATE boz_project boz_common pthread)
   target_compile_definitions(${name} PRIVATE ${T_DEFINES})
   target_compile_options(${name} PRIVATE -UNDEBUG)
   target_include_directories(${name} PRIVATE ${T_INCLUDES})
@@ -190,8 +194,9 @@ function(boz_test name)
 endfunction()
 
 boz_test(s3e_socket_test SOURCES src/s3e_socket.c src/s3e_config.c)
-boz_test(s3e_config_test SOURCES src/s3e_config.c src/codboz_assets.c)
+boz_test(s3e_config_test SOURCES src/s3e_config.c src/game_patches/player_name.c)
 boz_test(mdns_wire_test SOURCES src/mdns_wire.c)
+boz_test(hud_sticks_test SOURCES src/game_patches/hud_sticks.c)
 boz_test(s3e_zeroconf_test SOURCES tests/zeroconf_platform_fake.c src/s3e_zeroconf.c src/mdns_wire.c
          INCLUDES tests)
 boz_test(s3e_timer_test SOURCES src/s3e_timer.c)
@@ -219,7 +224,7 @@ set_target_properties(arm_emu_test PROPERTIES ENABLE_EXPORTS ON
 add_test(NAME arm_emu_test COMMAND arm_emu_test)
 
 add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(lua_hooks_test PRIVATE boz_project unicorn lua ${CMAKE_DL_LIBS} pthread m)
+target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common unicorn lua ${CMAKE_DL_LIBS} pthread m)
 target_compile_options(lua_hooks_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(lua_hooks_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)

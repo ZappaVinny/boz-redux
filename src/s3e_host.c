@@ -1,8 +1,6 @@
 #include "s3e_host_internal.h"
 #include <stdarg.h>
-#if !defined(__arm__)
 #include "arm_emu.h"
-#endif
 
 char g_root[1024];
 void *g_egl;
@@ -38,13 +36,7 @@ uint32_t s3e_guest_call(const void *fn, int argc, ...) {
         a[i] = va_arg(ap, uint32_t);
     }
     va_end(ap);
-#if defined(__arm__)
-    typedef uint32_t(S3E_SOFTFP * guest6_fn)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
-                                             uint32_t);
-    return ((guest6_fn)(uintptr_t)fn)(a[0], a[1], a[2], a[3], a[4], a[5]);
-#else
     return (uint32_t)arm_emu_call(S3E_GUEST_ARG(fn), argc, a);
-#endif
 }
 
 uint64_t monotonic_us(void) {

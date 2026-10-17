@@ -260,9 +260,6 @@ static bool hook(uint32_t address, arm_emu_code_hook fn) {
 }
 
 bool native_input_init(void) {
-#if defined(__arm__)
-    return false;
-#else
     static bool started;
     if (started) {
         return g_available;
@@ -301,7 +298,6 @@ bool native_input_init(void) {
     fprintf(stderr, "[input] native controls on (sensitivity %.2f, aim %.2f%s)\n", g_sensitivity,
             g_aim_sensitivity, g_invert_y ? ", inverted" : "");
     return true;
-#endif
 }
 
 bool native_input_available(void) {

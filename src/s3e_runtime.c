@@ -1,8 +1,6 @@
 #include "s3e_host_internal.h"
 
-#if !defined(__arm__)
 #include "arm_emu.h"
-#endif
 
 static int g_device_quit_requested;
 
@@ -423,11 +421,9 @@ void *make_stub(const char *symbol) {
     if (!g_stub_code) {
         g_stub_code_size = 16384;
         g_stub_code = plat_alloc(NULL, g_stub_code_size, true);
-#if !defined(__arm__)
         if (g_stub_code) {
             arm_emu_register_code((uint32_t)(uintptr_t)g_stub_code, (uint32_t)g_stub_code_size);
         }
-#endif
         if (!g_stub_code) {
             return (void *)(uintptr_t)&s3eStub;
         }
@@ -447,8 +443,6 @@ void *make_stub(const char *symbol) {
     __builtin___clear_cache((char *)code, (char *)(code + 5));
     return code;
 }
-
-#if !defined(__arm__)
 
 enum { LAZY_GL_STUB_WORDS = 5, LAZY_GL_MAX = 512 };
 
@@ -507,7 +501,6 @@ void *make_lazy_gl_stub(const char *symbol) {
     g_lazy_gl[index].stub = code;
     return code;
 }
-#endif
 
 int32_t s3eRegisterNoop(uint32_t id, void *callback, void *user_data) {
     (void)id;

@@ -2,6 +2,7 @@
  * environment variable the rest of the client reads, so a variable set by the user still wins
  * over the file. A commented default file is written on first run. */
 #include "client_config.h"
+#include "str_util.h"
 
 #include "posix_compat.h"
 
@@ -84,17 +85,6 @@ static const char DEFAULT_CONFIG[] =
     "status = false\n"
     "# Log every file the game opens and where it came from (finds the paths mods replace).\n"
     "log_files = false\n";
-
-static char *trim(char *text) {
-    while (isspace((unsigned char)*text)) {
-        ++text;
-    }
-    char *end = text + strlen(text);
-    while (end > text && isspace((unsigned char)end[-1])) {
-        *--end = '\0';
-    }
-    return text;
-}
 
 static bool parse_bool(const char *value, bool *result) {
     if (!strcmp(value, "true") || !strcmp(value, "on") || !strcmp(value, "yes") ||
@@ -333,7 +323,7 @@ void client_config_load(const char *root) {
     int number = 0;
     while (fgets(line, sizeof(line), file)) {
         ++number;
-        char *text = trim(line);
+        char *text = str_trim(line);
         if (!*text || *text == '#' || *text == ';') {
             continue;
         }
@@ -341,7 +331,7 @@ void client_config_load(const char *root) {
             char *close = strchr(text, ']');
             if (close) {
                 *close = '\0';
-                snprintf(section, sizeof(section), "%s", trim(text + 1));
+                snprintf(section, sizeof(section), "%s", str_trim(text + 1));
                 continue;
             }
         }
@@ -351,12 +341,12 @@ void client_config_load(const char *root) {
             continue;
         }
         *equals = '\0';
-        char *key = trim(text);
-        char *value = trim(equals + 1);
+        char *key = str_trim(text);
+        char *value = str_trim(equals + 1);
         char *comment = strpbrk(value, "#;");
         if (comment) {
             *comment = '\0';
-            value = trim(value);
+            value = str_trim(value);
         }
         if (!apply(section, key, value)) {
             fprintf(stderr, "[config] %s:%d: ignoring [%s] %s = %s\n", path, number, section, key,

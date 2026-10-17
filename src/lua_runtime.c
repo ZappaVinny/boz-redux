@@ -2,6 +2,7 @@
  * scripts/main.lua runs in its own environment (globals are per mod, the API is shared). The API
  * is documented in the SDK's docs/lua-api.md. */
 #include "mod_runtime.h"
+#include "str_util.h"
 #include "native_input.h"
 
 #include "gamedef.h"
@@ -583,22 +584,8 @@ static const luaL_Reg settings_api[] = {{"get", api_settings_get}, {"set", api_s
 static const char ASSET_PATCHES_KEY[] = "boz.asset_patches";
 static int g_asset_patch_count;
 
-static const char *file_name_of(const char *path) {
-    const char *slash = strrchr(path, '/');
-    const char *backslash = strrchr(path, '\\');
-    if (backslash && (!slash || backslash > slash)) {
-        slash = backslash;
-    }
-    return slash ? slash + 1 : path;
-}
-
 static void lower_name(const char *path, char *out, size_t out_size) {
-    const char *name = file_name_of(path);
-    size_t i = 0;
-    for (; name[i] && i + 1 < out_size; ++i) {
-        out[i] = (char)tolower((unsigned char)name[i]);
-    }
-    out[i] = '\0';
+    str_lower(out, out_size, str_base_name(path));
 }
 
 static int api_assets_patch(lua_State *state) {
@@ -830,7 +817,6 @@ static void open_api(void) {
                                      {NULL, NULL}};
     static const luaL_Reg gamedef[] = {{"cvars", api_gamedef_cvars},
                                        {"commands", api_gamedef_commands},
-                                       {"symbol", api_game_symbol},
                                        {NULL, NULL}};
     static const luaL_Reg game[] = {{"symbol", api_game_symbol}, {"base", api_game_base},
                                     {"read", api_game_read},     {"write", api_game_write},
@@ -901,20 +887,6 @@ bool lua_runtime_start(void) {
         return g_active;
     }
     g_started = true;
-    char exe[1024] = "";
-    if (plat_lib_path((const void *)(uintptr_t)&lua_runtime_frame, exe, sizeof(exe))) {
-        char *slash = strrchr(exe, '/');
-#if defined(_WIN32)
-        char *backslash = strrchr(exe, '\\');
-        if (!slash || (backslash && backslash > slash)) {
-            slash = backslash;
-        }
-#endif
-        if (slash) {
-            *slash = '\0';
-        }
-    }
-    gamedef_load(g_root, exe[0] ? exe : NULL);
     int count = mods_enabled_count();
     bool any_script = false;
     for (int i = 0; i < count; ++i) {
