@@ -113,6 +113,8 @@ add_executable(codboz_s3e_loader
   src/game_image.c
   src/lua_runtime.c
   src/lua_hooks.c
+  src/lua_settings.c
+  src/lua_assets.c
   src/native_input.c
   src/overlay.cpp
   src/s3e_config.c
@@ -204,7 +206,7 @@ boz_test(s3e_timer_test SOURCES src/s3e_timer.c)
 boz_test(client_config_test SOURCES src/client_config.c)
 boz_test(mods_test SOURCES src/mods.c src/client_config.c)
 boz_test(gamedef_test SOURCES src/gamedef.c)
-boz_test(lua_runtime_test SOURCES src/lua_runtime.c src/mods.c src/client_config.c src/gamedef.c
+boz_test(lua_runtime_test SOURCES src/lua_runtime.c src/lua_settings.c src/lua_assets.c src/mods.c src/client_config.c src/gamedef.c
          src/game_image.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(lua_runtime_test PRIVATE lua ${CMAKE_DL_LIBS})
 boz_test(s3e_memory_test SOURCES src/s3e_memory.c)

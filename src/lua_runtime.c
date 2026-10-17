@@ -2,7 +2,6 @@
  * scripts/main.lua runs in its own environment (globals are per mod, the API is shared). The API
  * is documented in the SDK's docs/lua-api.md. */
 #include "mod_runtime.h"
-#include "str_util.h"
 #include "native_input.h"
 
 #include "gamedef.h"
@@ -21,7 +20,6 @@ enum {
     MAX_CALL_ARGS = 6,
     STRING_SLOTS = 4,
     STRING_SLOT_BYTES = 1024,
-    SETTING_LINE_BYTES = 4096,
 };
 
 static lua_State *L;
@@ -29,13 +27,13 @@ static bool g_started, g_active;
 static pthread_t g_lua_thread;
 static int g_current_mod = -1;  /* mod whose code is running, for log lines and registrations */
 
-static const char *mod_id(int index) {
+const char *lua_runtime_mod_id(int index) {
     const struct mod_info *mod = mods_enabled_at(index);
     return mod ? mod->id : "?";
 }
 
 static void log_line(int mod, const char *text) {
-    fprintf(stderr, "[lua] %s: %s\n", mod_id(mod), text);
+    fprintf(stderr, "[lua] %s: %s\n", lua_runtime_mod_id(mod), text);
 }
 
 /* --- Calling Lua safely ------------------------------------------------------------------------ */
@@ -73,12 +71,12 @@ static bool protected_call(int mod, int nargs, int nresults) {
 static const char EVENTS_KEY[] = "boz.events";
 static const char BINDS_KEY[] = "boz.binds";
 
-static void push_registry_table(const char *key) {
-    if (lua_getfield(L, LUA_REGISTRYINDEX, key) != LUA_TTABLE) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        lua_pushvalue(L, -1);
-        lua_setfield(L, LUA_REGISTRYINDEX, key);
+void lua_runtime_registry_table(lua_State *state, const char *key) {
+    if (lua_getfield(state, LUA_REGISTRYINDEX, key) != LUA_TTABLE) {
+        lua_pop(state, 1);
+        lua_newtable(state);
+        lua_pushvalue(state, -1);
+        lua_setfield(state, LUA_REGISTRYINDEX, key);
     }
 }
 
@@ -93,7 +91,7 @@ static void push_handler(lua_State *state, int fn_index) {
 static int api_events_on(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
-    push_registry_table(EVENTS_KEY);
+    lua_runtime_registry_table(L, EVENTS_KEY);
     if (lua_getfield(state, -1, name) != LUA_TTABLE) {
         lua_pop(state, 1);
         lua_newtable(state);
@@ -108,7 +106,7 @@ static int api_events_on(lua_State *state) {
 static int api_events_off(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
-    push_registry_table(EVENTS_KEY);
+    lua_runtime_registry_table(L, EVENTS_KEY);
     if (lua_getfield(state, -1, name) != LUA_TTABLE) {
         return 0;
     }
@@ -163,7 +161,7 @@ static bool dispatch_event(const char *name, void (*push_args)(void *), void *us
     }
     int top = lua_gettop(L);
     bool used = false;
-    push_registry_table(EVENTS_KEY);
+    lua_runtime_registry_table(L, EVENTS_KEY);
     if (lua_getfield(L, -1, name) == LUA_TTABLE) {
         /* Copy the list so handlers may register or remove handlers while it runs. */
         int count = (int)lua_rawlen(L, -1);
@@ -184,7 +182,7 @@ static bool dispatch_event(const char *name, void (*push_args)(void *), void *us
 
 static int api_input_bind(lua_State *state) {
     const char *key = luaL_checkstring(state, 1);
-    push_registry_table(BINDS_KEY);
+    lua_runtime_registry_table(L, BINDS_KEY);
     if (lua_isnoneornil(state, 2)) {
         lua_pushnil(state);
     } else {
@@ -425,263 +423,6 @@ static int api_game_free(lua_State *state) {
     return 0;
 }
 
-/* --- Settings: per-mod values kept in <saves>/mods/<id>.cfg ------------------------------------ */
-
-/* Registry: SETTINGS[mod index] = {values = {...}, dirty = bool}. File lines: key=s:text, key=n:12.5
- * or key=b:true. */
-static const char SETTINGS_KEY[] = "boz.settings";
-
-static void settings_path(int mod, char *out, size_t out_size) {
-    const char *home = getenv("HOME");
-    snprintf(out, out_size, "%s/mods/%s.cfg", home && home[0] ? home : g_root, mod_id(mod));
-}
-
-static void push_mod_settings(lua_State *state, int mod) {
-    push_registry_table(SETTINGS_KEY);
-    if (lua_rawgeti(state, -1, mod + 1) == LUA_TTABLE) {
-        lua_remove(state, -2);
-        return;
-    }
-    lua_pop(state, 1);
-    lua_createtable(state, 0, 2);
-    lua_newtable(state);
-    char path[1400];
-    settings_path(mod, path, sizeof(path));
-    FILE *file = fopen(path, "r");
-    if (file) {
-        char line[SETTING_LINE_BYTES];
-        while (fgets(line, sizeof(line), file)) {
-            line[strcspn(line, "\r\n")] = '\0';
-            char *equals = strchr(line, '=');
-            if (!equals || equals[1] == '\0' || equals[2] != ':') {
-                continue;
-            }
-            *equals = '\0';
-            char type = equals[1];
-            const char *text = equals + 3;
-            if (type == 'n') {
-                lua_pushnumber(state, strtod(text, NULL));
-            } else if (type == 'b') {
-                lua_pushboolean(state, strcmp(text, "true") == 0);
-            } else {
-                lua_pushstring(state, text);
-            }
-            lua_setfield(state, -2, line);
-        }
-        fclose(file);
-    }
-    lua_setfield(state, -2, "values");
-    lua_pushvalue(state, -1);
-    lua_rawseti(state, -3, mod + 1);
-    lua_remove(state, -2);
-}
-
-static int check_settings_mod(lua_State *state) {
-    if (g_current_mod < 0) {
-        return luaL_error(state, "settings can only be used by a mod's code");
-    }
-    return g_current_mod;
-}
-
-static int api_settings_get(lua_State *state) {
-    int mod = check_settings_mod(state);
-    const char *key = luaL_checkstring(state, 1);
-    lua_settop(state, 2);  /* index 2 is the default (nil when not given) */
-    push_mod_settings(state, mod);
-    lua_getfield(state, -1, "values");
-    if (lua_getfield(state, -1, key) == LUA_TNIL) {
-        lua_pop(state, 1);
-        lua_pushvalue(state, 2);
-    }
-    return 1;
-}
-
-static int api_settings_set(lua_State *state) {
-    int mod = check_settings_mod(state);
-    const char *key = luaL_checkstring(state, 1);
-    for (const char *c = key; *c; ++c) {
-        if (*c == '=' || *c == '\n' || *c == '\r') {
-            return luaL_error(state, "settings keys cannot contain '=' or line breaks");
-        }
-    }
-    int type = lua_type(state, 2);
-    if (type != LUA_TNIL && type != LUA_TSTRING && type != LUA_TNUMBER && type != LUA_TBOOLEAN) {
-        return luaL_error(state, "settings values are strings, numbers, booleans or nil");
-    }
-    push_mod_settings(state, mod);
-    lua_getfield(state, -1, "values");
-    lua_pushvalue(state, 2);
-    lua_setfield(state, -2, key);
-    lua_pop(state, 1);
-    lua_pushboolean(state, 1);
-    lua_setfield(state, -2, "dirty");
-    return 0;
-}
-
-static void write_settings(lua_State *state, int mod, int table) {
-    char path[1400], dir[1400];
-    settings_path(mod, path, sizeof(path));
-    snprintf(dir, sizeof(dir), "%s", path);
-    char *slash = strrchr(dir, '/');
-    if (slash) {
-        *slash = '\0';
-        mkdir(dir, 0755);
-    }
-    FILE *file = fopen(path, "w");
-    if (!file) {
-        log_line(mod, "cannot save settings");
-        return;
-    }
-    lua_getfield(state, table, "values");
-    lua_pushnil(state);
-    while (lua_next(state, -2)) {
-        if (lua_type(state, -2) == LUA_TSTRING) {
-            const char *key = lua_tostring(state, -2);
-            switch (lua_type(state, -1)) {
-            case LUA_TNUMBER:
-                fprintf(file, "%s=n:%.17g\n", key, lua_tonumber(state, -1));
-                break;
-            case LUA_TBOOLEAN:
-                fprintf(file, "%s=b:%s\n", key, lua_toboolean(state, -1) ? "true" : "false");
-                break;
-            case LUA_TSTRING:
-                fprintf(file, "%s=s:%s\n", key, lua_tostring(state, -1));
-                break;
-            default:
-                break;
-            }
-        }
-        lua_pop(state, 1);
-    }
-    lua_pop(state, 1);
-    fclose(file);
-}
-
-/* Saves changed settings once per frame. */
-static void settings_flush(void) {
-    int top = lua_gettop(L);
-    push_registry_table(SETTINGS_KEY);
-    lua_pushnil(L);
-    while (lua_next(L, -2)) {
-        lua_getfield(L, -1, "dirty");
-        bool dirty = lua_toboolean(L, -1);
-        lua_pop(L, 1);
-        if (dirty) {
-            lua_pushboolean(L, 0);
-            lua_setfield(L, -2, "dirty");
-            write_settings(L, (int)lua_tointeger(L, -2) - 1, lua_gettop(L));
-        }
-        lua_pop(L, 1);
-    }
-    lua_settop(L, top);
-}
-
-static const luaL_Reg settings_api[] = {{"get", api_settings_get}, {"set", api_settings_set}, {NULL, NULL}};
-
-/* --- assets.patch: transform game files as the game loads them -------------------------------- */
-
-/* Registry: ASSET_PATCHES = { {name = lower-case file name, fn, mod}, ... } */
-static const char ASSET_PATCHES_KEY[] = "boz.asset_patches";
-static int g_asset_patch_count;
-
-static void lower_name(const char *path, char *out, size_t out_size) {
-    str_lower(out, out_size, str_base_name(path));
-}
-
-static int api_assets_patch(lua_State *state) {
-    char name[256];
-    lower_name(luaL_checkstring(state, 1), name, sizeof(name));
-    luaL_checktype(state, 2, LUA_TFUNCTION);
-    push_registry_table(ASSET_PATCHES_KEY);
-    lua_createtable(state, 0, 3);
-    lua_pushstring(state, name);
-    lua_setfield(state, -2, "name");
-    lua_pushvalue(state, 2);
-    lua_setfield(state, -2, "fn");
-    lua_pushinteger(state, g_current_mod);
-    lua_setfield(state, -2, "mod");
-    lua_rawseti(state, -2, (lua_Integer)lua_rawlen(state, -2) + 1);
-    g_asset_patch_count++;
-    return 0;
-}
-
-bool lua_runtime_has_asset_patch(const char *path) {
-    if (!L || !g_asset_patch_count || !path || !pthread_equal(pthread_self(), g_lua_thread)) {
-        return false;
-    }
-    char name[256];
-    lower_name(path, name, sizeof(name));
-    int top = lua_gettop(L);
-    push_registry_table(ASSET_PATCHES_KEY);
-    bool found = false;
-    int count = (int)lua_rawlen(L, -1);
-    for (int i = 1; i <= count && !found; ++i) {
-        lua_rawgeti(L, -1, i);
-        lua_getfield(L, -1, "name");
-        found = strcmp(lua_tostring(L, -1), name) == 0;
-        lua_pop(L, 2);
-    }
-    lua_settop(L, top);
-    return found;
-}
-
-bool lua_runtime_patch_asset(const char *path, const void *data, size_t size, void **out,
-                             size_t *out_size) {
-    if (!lua_runtime_has_asset_patch(path)) {
-        return false;
-    }
-    char name[256];
-    lower_name(path, name, sizeof(name));
-    int top = lua_gettop(L);
-    lua_pushlstring(L, (const char *)data, size);
-    int current = lua_gettop(L);
-    push_registry_table(ASSET_PATCHES_KEY);
-    int patches = lua_gettop(L);
-    int count = (int)lua_rawlen(L, patches);
-    bool changed = false;
-    for (int i = 1; i <= count; ++i) {
-        lua_rawgeti(L, patches, i);
-        lua_getfield(L, -1, "name");
-        bool match = strcmp(lua_tostring(L, -1), name) == 0;
-        lua_pop(L, 1);
-        if (!match) {
-            lua_pop(L, 1);
-            continue;
-        }
-        lua_getfield(L, -1, "mod");
-        int mod = (int)lua_tointeger(L, -1);
-        lua_pop(L, 1);
-        lua_getfield(L, -1, "fn");
-        lua_pushvalue(L, current);
-        if (protected_call(mod, 1, 1) && lua_type(L, -1) == LUA_TSTRING) {
-            lua_replace(L, current);
-            changed = true;
-        } else {
-            if (lua_type(L, -1) != LUA_TNIL) {
-                log_line(mod, "assets.patch: the patch function must return the file's bytes as a string");
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-    }
-    if (changed) {
-        size_t length = 0;
-        const char *bytes = lua_tolstring(L, current, &length);
-        *out = malloc(length ? length : 1);
-        if (*out) {
-            memcpy(*out, bytes, length);
-            *out_size = length;
-            fprintf(stderr, "[lua] assets.patch: %s (%zu -> %zu bytes)\n", name, size, length);
-        } else {
-            changed = false;
-        }
-    }
-    lua_settop(L, top);
-    return changed;
-}
-
-static const luaL_Reg assets_api[] = {{"patch", api_assets_patch}, {NULL, NULL}};
-
 /* --- Logging and per-mod environments ---------------------------------------------------------- */
 
 static int api_log(lua_State *state) {
@@ -825,8 +566,8 @@ static void open_api(void) {
     add_functions("events", events);
     add_functions("input", input);
     add_functions("gamedef", gamedef);
-    add_functions("settings", settings_api);
-    add_functions("assets", assets_api);
+    lua_settings_open(L);
+    lua_assets_open(L);
     add_functions("game", game);
     overlay_open_lua(L);
     lua_hooks_open(L);
@@ -924,7 +665,7 @@ void lua_runtime_frame(double dt) {
         return;
     }
     dispatch_event("frame", push_frame_args, &dt, 1);
-    settings_flush();
+    lua_settings_flush(L);
 }
 
 struct key_args {
@@ -950,7 +691,7 @@ bool lua_runtime_key(const char *name, bool down, bool repeat) {
     bool used = false;
     if (down && !repeat) {
         int top = lua_gettop(L);
-        push_registry_table(BINDS_KEY);
+        lua_runtime_registry_table(L, BINDS_KEY);
         if (lua_getfield(L, -1, name) == LUA_TTABLE) {
             call_handler(push_nothing, NULL, 0);
             used = true;
@@ -976,6 +717,14 @@ static void push_action_args(void *user) {
 bool lua_runtime_action(const char *name, bool down) {
     struct action_args args = {name, down};
     return dispatch_event("action", push_action_args, &args, 2);
+}
+
+lua_State *lua_runtime_state(void) {
+    return L;
+}
+
+bool lua_runtime_on_lua_thread(void) {
+    return L && pthread_equal(pthread_self(), g_lua_thread);
 }
 
 int lua_runtime_current_mod(void) {
