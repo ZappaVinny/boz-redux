@@ -1,8 +1,10 @@
 #include "os.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -24,6 +26,13 @@
 #endif
 
 namespace os {
+
+static std::string g_spawn_error;
+
+std::string spawn_error() {
+    return g_spawn_error;
+}
+
 
 std::string getenv_str(const char *name) {
     const char *value = std::getenv(name);
@@ -157,12 +166,22 @@ bool spawn(Process &process, const std::string &program, const std::vector<std::
     BOOL ok = CreateProcessA(nullptr, mutable_command.data(), nullptr, nullptr, TRUE,
                              CREATE_NO_WINDOW, nullptr,
                              working_dir.empty() ? nullptr : working_dir.c_str(), &startup, &info);
+    DWORD error = ok ? 0 : GetLastError();
     if (log != INVALID_HANDLE_VALUE) {
         CloseHandle(log);
     }
     if (!ok) {
+        char text[256] = "";
+        FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, error,
+                       0, text, sizeof(text), nullptr);
+        g_spawn_error = text;
+        while (!g_spawn_error.empty() && std::strchr("\r\n ", g_spawn_error.back())) {
+            g_spawn_error.pop_back();
+        }
+        g_spawn_error += " (error " + std::to_string(error) + ")";
         return false;
     }
+    g_spawn_error.clear();
     CloseHandle(info.hThread);
     process.handle = (intptr_t)info.hProcess;
     process.finished = false;
@@ -248,8 +267,10 @@ bool spawn(Process &process, const std::string &program, const std::vector<std::
            const std::string &working_dir) {
     pid_t pid = fork();
     if (pid < 0) {
+        g_spawn_error = std::strerror(errno);
         return false;
     }
+    g_spawn_error.clear();
     if (pid == 0) {
         for (const auto &entry : env) {
             setenv(entry.first.c_str(), entry.second.c_str(), 1);

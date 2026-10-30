@@ -113,7 +113,7 @@ void GameFiles::job_install(std::string apk_path) {
     std::string extractor = os::join(bin_dir_, os::executable_name("codboz_apk_extract"));
     if (!os::spawn(process, extractor, {"extract", apk_path, assets_}, {},
                    os::join(root_, "setup-log.txt"), "")) {
-        set_message("Could not start the APK extractor (" + extractor + ").");
+        set_message("Could not start the APK extractor (" + extractor + "): " + os::spawn_error());
         return;
     }
     int code = os::wait(process);

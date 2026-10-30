@@ -29,6 +29,8 @@ struct Process {
 bool spawn(Process &process, const std::string &program, const std::vector<std::string> &args,
            const std::map<std::string, std::string> &env, const std::string &log_path,
            const std::string &working_dir);
+// Why the last spawn failed, in the system's words ("" when it did not).
+std::string spawn_error();
 // Blocks until the process exits; returns its exit code.
 int wait(Process &process);
 

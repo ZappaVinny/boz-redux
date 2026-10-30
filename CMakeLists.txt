@@ -110,12 +110,14 @@ add_custom_command(
 add_library(boz_branding STATIC src/branding/brand_image.c ${CMAKE_BINARY_DIR}/generated/branding_data.c)
 target_include_directories(boz_branding PUBLIC include PRIVATE third_party/stb)
 
-# boz_windows_resources(target "Description"): the icon and version information.
+# boz_windows_resources(target "Description"): the icon, version information and a manifest
+# that runs the program as the user (avoid "install"/"setup" in descriptions all the same).
 function(boz_windows_resources target description)
   if(NOT WIN32)
     return()
   endif()
   set(BOZ_RC_ICON "${CMAKE_SOURCE_DIR}/branding/boz-redux.ico")
+  set(BOZ_RC_MANIFEST "${CMAKE_SOURCE_DIR}/packaging/windows/app.manifest")
   set(BOZ_RC_NAME "${target}")
   set(BOZ_RC_DESCRIPTION "${description}")
   string(REPLACE "." "," BOZ_RC_VERSION_COMMAS "${BOZ_VERSION}")
@@ -228,7 +230,7 @@ add_dependencies(boz-redux codboz_s3e_loader codboz_apk_extract)
 
 add_executable(codboz_apk_extract tools/apk_extract/codboz_apk_extract.c third_party/lzma/LzmaDec.c)
 target_link_libraries(codboz_apk_extract PRIVATE boz_project)
-boz_windows_resources(codboz_apk_extract "BOZ Redux game file installer")
+boz_windows_resources(codboz_apk_extract "BOZ Redux APK extractor")
 
 enable_testing()
 

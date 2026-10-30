@@ -755,7 +755,7 @@ void start_game(Launcher &l, SDL_Window *window) {
     std::string image = os::join(os::join(l.root, "assets"), "boz.s3e.unpacked");
     if (!os::spawn(l.game, loader, {"--root", l.root, "--run", image}, env,
                    os::join(l.root, "boz-log.txt"), l.root)) {
-        l.game_note = "Could not start " + loader + ".";
+        l.game_note = "Could not start " + loader + ": " + os::spawn_error();
         return;
     }
     l.game_running = true;
