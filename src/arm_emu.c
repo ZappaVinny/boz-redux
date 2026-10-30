@@ -84,9 +84,38 @@ static uc_engine *_Atomic g_main_uc;
 extern size_t uc_debug_full_flushes;
 extern size_t uc_debug_notdirty_writes;
 extern size_t uc_debug_tlb_fills;
+extern size_t uc_debug_tb_flushes;
+static bool g_perf_stats;
+static _Atomic unsigned long g_hook_calls;
+static _Atomic uint64_t g_hook_us;
+static _Atomic uint64_t g_host_us;
+static __thread bool t_in_host;
+static __thread uint64_t t_nested_guest_us;
+
+static uint64_t now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+}
+
+/* Pages already confirmed as host code. Every host call checks its target, and the platform
+ * lookup is slow (glibc's dladdr scans symbol tables, Windows takes the loader lock): this cache
+ * made host calls about a third of the game thread's time cheaper. Loaded modules stay loaded,
+ * so entries never go stale. */
+enum { HOST_PAGE_SLOTS = 1024 };
+static _Atomic uint32_t g_host_pages[HOST_PAGE_SLOTS];
 
 static bool host_code_address(uint32_t address) {
-    return plat_address_in_module((const void *)(uintptr_t)address);
+    uint32_t page = (address >> 12) + 1; /* + 1: page 0 never matches an empty slot */
+    _Atomic uint32_t *slot = &g_host_pages[page % HOST_PAGE_SLOTS];
+    if (*slot == page) {
+        return true;
+    }
+    if (!plat_address_in_module((const void *)(uintptr_t)address)) {
+        return false;
+    }
+    *slot = page;
+    return true;
 }
 
 static uint32_t g_image_start;
@@ -325,11 +354,53 @@ static bool on_unmapped(uc_engine *uc, uc_mem_type type, uint64_t address, int s
     return false;
 }
 
+/* A flush while a code hook runs (a handler adding or removing hooks) waits until the outermost
+ * hook returns: the current translated block is still executing, and nested guest calls from the
+ * handler could translate new code over it. The PC is then rewritten to leave the block at once. */
+static __thread int t_hook_depth;
+static __thread bool t_flush_pending;
+
+/* Hook changes on this thread's CPU are also coalesced: a mod adding twenty hooks in one
+ * callback costs one flush (when the host call returns, or before the next guest call), not
+ * twenty, which froze the first frames of a modded match. */
+static void flush_translations(uc_engine *uc) {
+    if (t_emu && uc == t_emu->uc) {
+        t_flush_pending = true;
+    } else {
+        uc_ctl_flush_tb(uc);
+    }
+}
+
+static void flush_pending_translations(uc_engine *uc) {
+    if (t_flush_pending && t_hook_depth == 0) {
+        t_flush_pending = false;
+        uc_ctl_flush_tb(uc);
+    }
+}
+
+/* The profiler's guest PC sample: the game thread's last synced PC (the start of the running
+ * block, or the guest call site during a host call). */
+static pthread_t g_main_thread;
+
+static uint32_t profile_guest_pc(void) {
+    uc_engine *uc = g_main_uc;
+    uint32_t pc = 0;
+    if (uc && pthread_equal(pthread_self(), g_main_thread)) {
+        uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+    }
+    return pc;
+}
+
 static void on_interrupt(uc_engine *uc, uint32_t intno, void *user_data) {
     (void)user_data;
-    uint32_t pc, cpsr;
-    uc_reg_read(uc, UC_ARM_REG_PC, &pc);
-    uc_reg_read(uc, UC_ARM_REG_CPSR, &cpsr);
+    /* One batch read per host call: the trap runs thousands of times a frame. */
+    static const int ids[9] = {UC_ARM_REG_PC, UC_ARM_REG_CPSR, UC_ARM_REG_R12, UC_ARM_REG_R0,
+                               UC_ARM_REG_R1, UC_ARM_REG_R2,   UC_ARM_REG_R3,  UC_ARM_REG_SP,
+                               UC_ARM_REG_LR};
+    uint32_t a[HOST_ARG_WORDS];
+    uint32_t pc, cpsr, sp, lr;
+    void *values[9] = {&pc, &cpsr, &t_call_scratch, &a[0], &a[1], &a[2], &a[3], &sp, &lr};
+    uc_reg_read_batch(uc, ids, values, 9);
     uint32_t target = (cpsr & (1u << 5)) ? ((pc - 2u) | 1u) : pc - 4u;
     if (intno != 2 || !host_code_address(target)) {
         report_fault(uc, "unexpected interrupt", target);
@@ -337,15 +408,6 @@ static void on_interrupt(uc_engine *uc, uint32_t intno, void *user_data) {
         return;
     }
 
-    uint32_t a[HOST_ARG_WORDS];
-    uint32_t sp, lr;
-    uc_reg_read(uc, UC_ARM_REG_R12, &t_call_scratch);
-    uc_reg_read(uc, UC_ARM_REG_R0, &a[0]);
-    uc_reg_read(uc, UC_ARM_REG_R1, &a[1]);
-    uc_reg_read(uc, UC_ARM_REG_R2, &a[2]);
-    uc_reg_read(uc, UC_ARM_REG_R3, &a[3]);
-    uc_reg_read(uc, UC_ARM_REG_SP, &sp);
-    uc_reg_read(uc, UC_ARM_REG_LR, &lr);
     const uint32_t *stack = (const uint32_t *)(uintptr_t)sp;
     for (int i = 4; i < (int)HOST_ARG_WORDS; ++i) {
         a[i] = stack[i - 4];
@@ -353,17 +415,34 @@ static void on_interrupt(uc_engine *uc, uint32_t intno, void *user_data) {
 
     bool traced = trace_call(target);
     if (g_main_uc == NULL) {
+        g_main_thread = pthread_self();
         g_main_uc = uc;
+        const char *profile = getenv("BOZ_PROFILE");
+        if (profile && !strcmp(profile, "all")) {
+            plat_profile_guest_pc = profile_guest_pc;
+        }
     }
-    uint64_t result = call_host16(target, a);
+    uint64_t result;
+    if (g_perf_stats && !t_in_host && uc == g_main_uc) {
+        uint64_t started = now_us(), nested = t_nested_guest_us;
+        t_in_host = true;
+        result = call_host16(target, a);
+        t_in_host = false;
+        g_host_us += now_us() - started - (t_nested_guest_us - nested);
+    } else {
+        result = call_host16(target, a);
+    }
     if (traced) {
         trace_result(target, a, lr, result);
     }
 
+    flush_pending_translations(uc);
     uint32_t lo = (uint32_t)result;
     uint32_t hi = (uint32_t)(result >> 32);
-    uc_reg_write(uc, UC_ARM_REG_R0, &lo);
-    uc_reg_write(uc, UC_ARM_REG_R1, &hi);
+    static const int result_ids[2] = {UC_ARM_REG_R0, UC_ARM_REG_R1};
+    void *const results[2] = {&lo, &hi};
+    uc_reg_write_batch(uc, result_ids, results, 2);
+    /* PC on its own: only the single write tells Unicorn not to sync the PC over it on exit. */
     uc_reg_write(uc, UC_ARM_REG_PC, &lr);
 }
 
@@ -418,6 +497,7 @@ bool arm_emu_init(void) {
     const char *trace = getenv("BOZ_TRACE_CALLS");
     g_trace_limit = trace ? strtol(trace, NULL, 10) : 0;
     g_trace_code = getenv("BOZ_TRACE_CODE") != NULL;
+    g_perf_stats = getenv("BOZ_PERF_STATS") != NULL;
     if (getenv("BOZ_TRACE_STATUS")) {
         pthread_t thread;
         pthread_create(&thread, NULL, status_thread, NULL);
@@ -499,11 +579,19 @@ uint64_t arm_emu_call(uint32_t fn, int argc, const uint32_t *argv) {
     uint32_t lr = t_emu->sentinel;
     uc_reg_write(uc, UC_ARM_REG_LR, &lr);
 
+    flush_pending_translations(uc);
     t_emu->depth++;
+    bool nested = t_in_host;
+    uint64_t started = nested ? now_us() : 0;
+    t_in_host = false;
     uint64_t start = fn;
     uc_err err;
     while ((err = uc_emu_start(uc, start, t_emu->sentinel, 0, 0)) != UC_ERR_OK &&
            recover_fault(uc, err, &start)) {
+    }
+    if (nested) {
+        t_in_host = true;
+        t_nested_guest_us += now_us() - started;
     }
     t_emu->depth--;
     if (err != UC_ERR_OK) {
@@ -549,36 +637,37 @@ static struct code_hook {
     bool used;
 } g_code_hooks[MAX_CODE_HOOKS];
 
-/* A flush while a code hook runs (a handler adding or removing hooks) waits until the outermost
- * hook returns: the current translated block is still executing, and nested guest calls from the
- * handler could translate new code over it. The PC is then rewritten to leave the block at once. */
-static __thread int t_hook_depth;
-static __thread bool t_flush_pending;
-
-static void flush_translations(uc_engine *uc) {
-    if (t_hook_depth > 0) {
-        t_flush_pending = true;
-    } else {
-        uc_ctl_flush_tb(uc);
-    }
-}
-
 static void on_code_hook(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
     (void)address;
     (void)size;
     struct code_hook *hook = user_data;
     struct arm_emu_regs regs;
     uint32_t cpsr = 0;
+    static const int ids[17] = {
+        UC_ARM_REG_R0,  UC_ARM_REG_R1,  UC_ARM_REG_R2, UC_ARM_REG_R3,  UC_ARM_REG_R4,
+        UC_ARM_REG_R5,  UC_ARM_REG_R6,  UC_ARM_REG_R7, UC_ARM_REG_R8,  UC_ARM_REG_R9,
+        UC_ARM_REG_R10, UC_ARM_REG_R11, UC_ARM_REG_R12, UC_ARM_REG_SP, UC_ARM_REG_LR,
+        UC_ARM_REG_PC,  UC_ARM_REG_CPSR};
+    void *values[17];
     for (int i = 0; i < 16; ++i) {
-        uc_reg_read(uc, k_gpr_ids[i], &regs.r[i]);
+        values[i] = &regs.r[i];
     }
-    uc_reg_read(uc, UC_ARM_REG_CPSR, &cpsr);
+    values[16] = &cpsr;
+    uc_reg_read_batch(uc, ids, values, 17);
     regs.thumb = (cpsr & (1u << 5)) != 0;
     regs.r[15] &= ~1u;
     struct arm_emu_regs before = regs;
+    bool timed = g_perf_stats && t_hook_depth == 0;
+    uint64_t started = timed ? now_us() : 0;
     t_hook_depth++;
     hook->fn(&regs, hook->user);
     t_hook_depth--;
+    if (g_perf_stats) {
+        ++g_hook_calls;
+        if (timed) {
+            g_hook_us += now_us() - started;
+        }
+    }
     bool flush = t_hook_depth == 0 && t_flush_pending;
     if (flush) {
         t_flush_pending = false;
@@ -628,6 +717,14 @@ void arm_emu_hook_remove(int id) {
     uc_hook_del(hook->uc, hook->handle);
     flush_translations(hook->uc);
     hook->used = false;
+}
+
+void arm_emu_perf_read(struct arm_emu_perf *out) {
+    out->host_calls = g_host_calls;
+    out->host_us = g_host_us;
+    out->hook_calls = g_hook_calls;
+    out->hook_us = g_hook_us;
+    out->jit_flushes = uc_debug_tb_flushes;
 }
 
 uint32_t arm_emu_trap_address(void) {

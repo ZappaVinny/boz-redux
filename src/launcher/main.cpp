@@ -25,6 +25,7 @@
 
 #if !defined(_WIN32)
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -941,14 +942,26 @@ void save_screenshot(SDL_Renderer *renderer, const std::string &path) {
 }
 
 #if !defined(_WIN32)
-// Prefer native Wayland when the 32-bit keyboard library SDL needs for it is installed.
+bool has_library(const char *name) {
+    void *handle = dlopen(name, RTLD_LAZY);
+    if (handle) {
+        dlclose(handle);
+    }
+    return handle != nullptr;
+}
+
+// Prefer native Wayland when the 32-bit keyboard library SDL needs for it is installed. NVIDIA's
+// driver has no 32-bit Wayland EGL platform on most distributions, so EGL falls back to Mesa's
+// software renderer there; X11 (XWayland) reaches the GPU through GLX instead.
 void choose_video_driver() {
     if (!os::getenv_str("SDL_VIDEODRIVER").empty() || os::getenv_str("WAYLAND_DISPLAY").empty()) {
         return;
     }
-    void *xkb = dlopen("libxkbcommon.so.0", RTLD_LAZY);
-    if (xkb) {
-        dlclose(xkb);
+    bool nvidia = access("/proc/driver/nvidia/version", F_OK) == 0;
+    if (nvidia && !has_library("libnvidia-egl-wayland.so.1")) {
+        return;
+    }
+    if (has_library("libxkbcommon.so.0")) {
         setenv("SDL_VIDEODRIVER", "wayland", 0);
     }
 }

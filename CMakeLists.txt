@@ -40,6 +40,14 @@ set(UNICORN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(UNICORN_INSTALL OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/unicorn EXCLUDE_FROM_ALL)
+# Linux: Unicorn and the loader without position-independent code. On 32-bit x86, PIC costs a
+# get_pc_thunk call in every function, and the JIT calls Unicorn's helpers constantly: the game
+# ran 15-20% faster without it (scripts/bench.sh). Windows code is not PIC to begin with.
+if(NOT WIN32)
+  foreach(target unicorn unicorn-common arm-softmmu)
+    target_compile_options(${target} PRIVATE -fno-pic -fno-pie)
+  endforeach()
+endif()
 
 set(SDL_SHARED ON CACHE BOOL "" FORCE)
 set(SDL_STATIC OFF CACHE BOOL "" FORCE)
@@ -193,6 +201,10 @@ if(NOT WIN32)
   target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
 endif()
 target_compile_options(codboz_s3e_loader PRIVATE -falign-functions=16)
+if(NOT WIN32)
+  target_compile_options(codboz_s3e_loader PRIVATE -fno-pie)
+  target_link_options(codboz_s3e_loader PRIVATE -no-pie)
+endif()
 set_target_properties(codboz_s3e_loader PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH "$ORIGIN")
 add_dependencies(codboz_s3e_loader SDL2 SDL2_mixer)
 
@@ -273,6 +285,9 @@ boz_test(s3e_input_test SOURCES src/s3e_input.c src/client_config.c
 
 add_executable(arm_emu_test tests/arm_emu_test.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(arm_emu_test PRIVATE boz_project unicorn ${BOZ_SYSTEM_LIBS})
+if(NOT WIN32)
+  target_link_options(arm_emu_test PRIVATE -no-pie)  # Unicorn is built without PIC
+endif()
 target_link_options(arm_emu_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
 target_compile_options(arm_emu_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(arm_emu_test PROPERTIES ENABLE_EXPORTS ON
@@ -281,6 +296,9 @@ add_test(NAME arm_emu_test COMMAND arm_emu_test)
 
 add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common unicorn lua ${BOZ_SYSTEM_LIBS})
+if(NOT WIN32)
+  target_link_options(lua_hooks_test PRIVATE -no-pie)  # Unicorn is built without PIC
+endif()
 target_link_options(lua_hooks_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
 target_compile_options(lua_hooks_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(lua_hooks_test PROPERTIES ENABLE_EXPORTS ON

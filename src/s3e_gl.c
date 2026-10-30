@@ -1,6 +1,7 @@
 #include "s3e_host_internal.h"
 #include "platform/platform.h"
 
+#include "arm_emu.h"
 #include "mod_runtime.h"
 
 #define GL_WRAP_FLOAT1(name, t1)                                                                   \
@@ -261,6 +262,70 @@ static void report_frame_stats(uint64_t now) {
     }
 }
 
+/* BOZ_PERF_STATS ([performance] stats): every two seconds, frame times (average, 99th
+ * percentile, worst) and per-frame emulator counters: host calls and hook calls with the time
+ * spent in them, and full JIT cache flushes. scripts/bench.sh reads these lines. */
+enum { PERF_WINDOW_FRAMES = 4096 };
+
+static int compare_u32(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+static void report_perf_stats(uint64_t now) {
+    static int enabled = -1;
+    static uint64_t start_us, window_start_us, last_frame_us;
+    static uint32_t frame_us[PERF_WINDOW_FRAMES];
+    static uint32_t frames;
+    static struct arm_emu_perf last;
+    if (enabled < 0) {
+        enabled = getenv("BOZ_PERF_STATS") != NULL;
+        start_us = now;
+        const unsigned char *(GL_APIENTRY *get_string)(unsigned int) =
+            enabled ? lookup_gl("glGetString") : NULL;
+        if (get_string) {
+            const unsigned char *renderer = get_string(0x1F01 /* GL_RENDERER */);
+            fprintf(stderr, "[perf] renderer %s\n", renderer ? (const char *)renderer : "?");
+        }
+    }
+    if (!enabled) {
+        return;
+    }
+    if (last_frame_us && frames < PERF_WINDOW_FRAMES) {
+        frame_us[frames++] = (uint32_t)(now - last_frame_us);
+    }
+    last_frame_us = now;
+    if (!window_start_us) {
+        window_start_us = now;
+        arm_emu_perf_read(&last);
+        return;
+    }
+    if (now - window_start_us < 2000000u || !frames) {
+        return;
+    }
+    struct arm_emu_perf perf;
+    arm_emu_perf_read(&perf);
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < frames; ++i) {
+        total += frame_us[i];
+    }
+    qsort(frame_us, frames, sizeof(frame_us[0]), compare_u32);
+    double n = frames;
+    fprintf(stderr,
+            "[perf] t=%.0f frames %u avg %.2f ms p99 %.2f worst %.2f | host calls %.0f/frame "
+            "%.2f ms/frame hooks %.0f/frame %.2f ms/frame | jit flushes %lu\n",
+            (now - start_us) / 1e6, frames, total / n / 1000.0,
+            frame_us[(uint32_t)((frames - 1) * 0.99)] / 1000.0, frame_us[frames - 1] / 1000.0,
+            (perf.host_calls - last.host_calls) / n,
+            (double)(perf.host_us - last.host_us) / n / 1000.0,
+            (perf.hook_calls - last.hook_calls) / n,
+            (double)(perf.hook_us - last.hook_us) / n / 1000.0,
+            perf.jit_flushes - last.jit_flushes);
+    last = perf;
+    window_start_us = now;
+    frames = 0;
+}
+
 /* With vsync the swap already waits for the display. Otherwise sleep to the display's refresh
  * rate (or BOZ_FPS; BOZ_FPS=0 means no limit). */
 static void pace_frame(void) {
@@ -268,6 +333,7 @@ static void pace_frame(void) {
     static int fps_limit = -2;
     uint64_t now = monotonic_us();
     report_frame_stats(now);
+    report_perf_stats(now);
 
     if (fps_limit == -2) {
         const char *setting = getenv("BOZ_FPS");

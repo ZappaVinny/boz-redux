@@ -74,6 +74,10 @@ static const char DEFAULT_CONFIG_TAIL[] =
     "disabled =\n"
     "start_map =\n"
     "\n"
+    "[performance]\n"
+    "# Print frame times and emulator counters every two seconds (scripts/bench.sh reads them).\n"
+    "stats = false\n"
+    "\n"
     "[debug]\n"
     "# Print emulator and frame rate statistics every two seconds.\n"
     "status = false\n"
@@ -314,6 +318,13 @@ static bool apply(const char *section, const char *key, const char *value) {
         if (!strcmp(key, "look_radius") && (is_number(value) || !*value)) {
             if (*value) {
                 set_default("BOZ_LOOK_RADIUS", value);
+            }
+            return true;
+        }
+    } else if (!strcmp(section, "performance")) {
+        if (!strcmp(key, "stats") && parse_bool(value, &flag)) {
+            if (flag) {
+                set_default("BOZ_PERF_STATS", "1");
             }
             return true;
         }

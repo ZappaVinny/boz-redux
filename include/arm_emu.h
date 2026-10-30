@@ -43,4 +43,15 @@ void arm_emu_hook_remove(int id);
  * hook it (arm_emu_hook_add) and move on from the hook, e.g. as a return trap. */
 uint32_t arm_emu_trap_address(void);
 
+/* Running totals for the performance statistics line (BOZ_PERF_STATS). Hook time is only
+ * measured while the statistics are on. */
+struct arm_emu_perf {
+    unsigned long host_calls;
+    uint64_t host_us; /* main game thread, without guest callbacks made from host code */
+    unsigned long hook_calls;
+    uint64_t hook_us;
+    unsigned long jit_flushes;
+};
+void arm_emu_perf_read(struct arm_emu_perf *out);
+
 #endif

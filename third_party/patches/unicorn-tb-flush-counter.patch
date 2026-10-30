@@ -1,0 +1,20 @@
+--- a/qemu/accel/tcg/translate-all.c	2026-10-30 00:03:07.197867018 -0500
++++ b/qemu/accel/tcg/translate-all.c	2026-10-30 00:03:07.204600252 -0500
+@@ -1343,6 +1343,9 @@
+ }
+ #endif
+ 
++/* Full translation cache flushes, for the client's performance statistics. */
++size_t uc_debug_tb_flushes;
++
+ /* flush all the translation blocks */
+ static void do_tb_flush(CPUState *cpu, run_on_cpu_data tb_flush_count)
+ {
+@@ -1378,6 +1381,7 @@
+     /* XXX: flush processor icache at this point if cache flush is
+        expensive */
+     cpu->uc->tcg_ctx->tb_ctx.tb_flush_count = cpu->uc->tcg_ctx->tb_ctx.tb_flush_count + 1;
++    uc_debug_tb_flushes++;
+ 
+ done:
+     mmap_unlock();

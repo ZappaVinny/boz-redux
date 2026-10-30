@@ -44,6 +44,20 @@ static bool recover_null_load(struct arm_emu_fault *fault) {
     return true;
 }
 
+static uint32_t g_store_target;
+static uint32_t g_store_pc;
+
+/* Repairs "str r1, [r0]" with r0 = 0. The fault must stop at the store itself: the next
+ * instruction (which overwrites r0) must not have run yet. */
+static bool recover_null_store(struct arm_emu_fault *fault) {
+    if (!fault->write || fault->address != 0 || fault->r[0] != 0 || fault->r[15] != g_store_pc) {
+        return false;
+    }
+    fault->r[0] = (uint32_t)(uintptr_t)&g_store_target;
+    g_recoveries++;
+    return true;
+}
+
 static uint32_t host_reenter(uint32_t x) {
     uint32_t arg = x * 2;
     return (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[0], 1, &arg);
@@ -144,6 +158,18 @@ int main(void) {
     expect("fault handler repairs a null load",
            (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[24], 1, args), 0x5eed);
     expect("fault handler ran once", (uint64_t)g_recoveries, 1);
+
+    /* 28: str r1, [r0]; add r0, r1, #1; bx lr */
+    uint32_t store[] = {0xe5801000u, 0xe2810001u, 0xe12fff1eu};
+    memcpy(&g_code[28], store, sizeof(store));
+    g_store_pc = (uint32_t)(uintptr_t)&g_code[28];
+    arm_emu_set_fault_handler(recover_null_store);
+    args[0] = 0;
+    args[1] = 0x77;
+    expect("fault handler repairs a null store at the store",
+           (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[28], 2, args), 0x78);
+    expect("repaired store wrote its value", g_store_target, 0x77);
+    expect("fault handlers ran twice in all", (uint64_t)g_recoveries, 2);
     arm_emu_set_fault_handler(NULL);
 
     /* Hooks on code that already ran (cached translation) must still fire. */

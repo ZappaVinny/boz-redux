@@ -1,0 +1,116 @@
+--- a/qemu/accel/tcg/cputlb.c	2026-10-30 01:29:14.052693780 -0500
++++ b/qemu/accel/tcg/cputlb.c	2026-10-30 01:29:14.064124908 -0500
+@@ -2258,6 +2258,10 @@
+             uc->invalid_error = UC_ERR_WRITE_UNMAPPED;
+             // printf("***** Invalid memory write at " TARGET_FMT_lx "\n", addr);
+             cpu_exit(uc->cpu);
++            /* Leave at the faulting store (no exit check follows it any more). */
++            if (uc->nested_level > 0 && !uc->cpu->stopped) {
++                cpu_loop_exit_restore(uc->cpu, retaddr);
++            }
+             return;
+         } else {
+             uc->invalid_error = UC_ERR_OK;
+@@ -2277,6 +2281,10 @@
+             if (mr == NULL) {
+                 uc->invalid_error = UC_ERR_MAP;
+                 cpu_exit(uc->cpu);
++                /* Leave at the faulting store (no exit check follows it any more). */
++                if (uc->nested_level > 0 && !uc->cpu->stopped) {
++                    cpu_loop_exit_restore(uc->cpu, retaddr);
++                }
+                 return;
+             }
+         }
+@@ -2323,6 +2331,10 @@
+             uc->invalid_error = UC_ERR_WRITE_PROT;
+             // printf("***** Invalid memory write (ro) at " TARGET_FMT_lx "\n", addr);
+             cpu_exit(uc->cpu);
++            /* Leave at the faulting store (no exit check follows it any more). */
++            if (uc->nested_level > 0 && !uc->cpu->stopped) {
++                cpu_loop_exit_restore(uc->cpu, retaddr);
++            }
+             return;
+         }
+     }
+@@ -2333,6 +2345,10 @@
+             uc->invalid_addr = paddr;
+             uc->invalid_error = UC_ERR_NOMEM;
+             cpu_exit(uc->cpu);
++            /* Leave at the faulting store (no exit check follows it any more). */
++            if (uc->nested_level > 0 && !uc->cpu->stopped) {
++                cpu_loop_exit_restore(uc->cpu, retaddr);
++            }
+             return;
+         }
+         /* refill tlb after CoW */
+--- a/qemu/tcg/tcg-op.c	2026-10-30 01:29:14.053400582 -0500
++++ b/qemu/tcg/tcg-op.c	2026-10-30 01:29:14.063906830 -0500
+@@ -2872,6 +2872,13 @@
+     tcg_temp_free_ptr(tcg_ctx, puc);
+ }
+ 
++/* BOZ Redux: no exit check after each guest load and store. The load and store helpers leave
++   the translated block themselves, at the faulting instruction, when an access fails
++   (cpu_loop_exit_restore), so the check only cost a helper call per memory access. */
++static inline void check_exit_after_memory(TCGContext *tcg_ctx)
++{
++}
++
+ static void tcg_gen_req_mo(TCGContext *tcg_ctx, TCGBar type)
+ {
+ #ifdef TCG_GUEST_DEFAULT_MO
+@@ -2917,7 +2924,7 @@
+         }
+     }
+ 
+-    check_exit_request(tcg_ctx);
++    check_exit_after_memory(tcg_ctx);
+ }
+ 
+ void tcg_gen_qemu_st_i32(TCGContext *tcg_ctx, TCGv_i32 val, TCGv addr, TCGArg idx, MemOp memop)
+@@ -2952,7 +2959,7 @@
+         tcg_temp_free_i32(tcg_ctx, swap);
+     }
+ 
+-    check_exit_request(tcg_ctx);
++    check_exit_after_memory(tcg_ctx);
+ }
+ 
+ void tcg_gen_qemu_ld_i64(TCGContext *tcg_ctx, TCGv_i64 val, TCGv addr, TCGArg idx, MemOp memop)
+@@ -2967,7 +2974,7 @@
+         } else {
+             tcg_gen_movi_i32(tcg_ctx, TCGV_HIGH(tcg_ctx, val), 0);
+         }
+-        check_exit_request(tcg_ctx);
++        check_exit_after_memory(tcg_ctx);
+         return;
+     }
+ #endif
+@@ -3009,7 +3016,7 @@
+             g_assert_not_reached();
+         }
+     }
+-    check_exit_request(tcg_ctx);
++    check_exit_after_memory(tcg_ctx);
+ }
+ 
+ void tcg_gen_qemu_st_i64(TCGContext *tcg_ctx, TCGv_i64 val, TCGv addr, TCGArg idx, MemOp memop)
+@@ -3019,7 +3026,7 @@
+ #if TCG_TARGET_REG_BITS == 32
+     if ((memop & MO_SIZE) < MO_64) {
+         tcg_gen_qemu_st_i32(tcg_ctx, TCGV_LOW(tcg_ctx, val), addr, idx, memop);
+-        check_exit_request(tcg_ctx);
++        check_exit_after_memory(tcg_ctx);
+         return;
+     }
+ #endif
+@@ -3055,7 +3062,7 @@
+     if (swap) {
+         tcg_temp_free_i64(tcg_ctx, swap);
+     }
+-    check_exit_request(tcg_ctx);
++    check_exit_after_memory(tcg_ctx);
+ }
+ 
+ static void tcg_gen_ext_i32(TCGContext *tcg_ctx, TCGv_i32 ret, TCGv_i32 val, MemOp opc)

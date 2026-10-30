@@ -58,13 +58,26 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_VOICE_CHAT=1` | Voice chat on (`[network] voice_chat`) |
 | `BOZ_SWIPE_GAIN` | Dead Ops: swipe look speed |
 | `BOZ_TRACE_CODE=1` | Trace guest code execution (very slow) |
-| `BOZ_PROFILE=1` | Print profiling counters |
+| `BOZ_PERF_STATS=1` | Performance line every 2 s: frame times (average, 99th percentile, worst), host calls, hook calls and time, JIT cache flushes per frame (`[performance] stats`) |
+| `BOZ_PROFILE=1` | Linux: sample where the CPU time goes (top 25 every 5 s); `=all` prints every sample (`module+offset`) and the guest PC, for offline symbolising |
 | `BOZ_LAZY_GL=1` | Resolve GL functions when first called |
 | `BOZ_WINDOW_TEST=1` | Linux: try the experimental 64 MB data window |
 | `BOZ_SCREENSHOT_DIR`, `BOZ_SCREENSHOT_EVERY=N` | Write every Nth frame to that folder as PPM (debugging) |
 | `BOZ_LAUNCHER_SCREENSHOT=file.bmp`, `BOZ_LAUNCHER_TAB=0..2` | Launcher: save the fourth frame (of that tab) and quit; works offscreen (`SDL_VIDEODRIVER=offscreen`) |
 
 Most of these are also settings in `client.ini`, which the launcher edits.
+
+## Measuring performance
+
+`scripts/bench.sh kino|apothicon [seconds] [runs]` starts the game without a window or sound in a throwaway game root (links to this checkout's assets, gamedef and mods; copies of saves and `client.ini`), autostarts the level with unlimited health, and prints one summary line per run from the `BOZ_PERF_STATS` lines: load time, average and 99th percentile frame time, host calls and hooks per frame, JIT flushes, emulator faults. `BOZ_BIN=<dir>` measures another build; compare builds by alternating runs, because single runs vary by about 5%. `BENCH_PROBE=<file.lua>` appends a Lua probe to a copy of the Developer mod (for example to log rounds and kills).
+
+What made the client fast (2026-10-30, see the commit history for numbers):
+
+- `host_code_address` caches confirmed host-code pages: the platform lookup (glibc `dladdr`, Windows `GetModuleHandleEx`) ran on every host call and took a third of the game thread.
+- Linux builds Unicorn and the loader without PIC (`-fno-pic`, `-no-pie`): 32-bit PIC adds a `get_pc_thunk` to every helper the JIT calls.
+- `third_party/patches/unicorn-notdirty-nonexec-regions.patch`: stores to executable regions take the fast path once the page holds no translated code (the game's data shares the image mapping with its code).
+- `third_party/patches/unicorn-precise-store-faults.patch`: failed stores leave the translated block at the store, so the exit check after every guest load and store is gone.
+- Hook changes made in one host call share one JIT flush; the trap reads and writes registers in batches.
 
 ## License
 

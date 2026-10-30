@@ -389,10 +389,125 @@ static int sdl_owns_display(void) {
            (video_driver && strcmp(video_driver, "kmsdrm") == 0);
 }
 
+#if !defined(_WIN32)
+/* NVIDIA has no 32-bit EGL for X11 or Wayland windows on most distributions (glvnd falls back to
+ * Mesa, which renders in software or crashes on XWayland), but its 32-bit GLX works. SDL only
+ * uses GLX for OpenGL ES 2 and newer, so on X11 with NVIDIA's driver the context is created here
+ * through GLX_EXT_create_context_es_profile, like the WGL path on Windows. */
+static int linux_use_glx_es(void) {
+    static int decided = -1;
+    if (decided < 0) {
+        const char *driver =
+            g_sdl.api.GetCurrentVideoDriver ? g_sdl.api.GetCurrentVideoDriver() : NULL;
+        decided = driver && !strcmp(driver, "x11") && access("/proc/driver/nvidia/version", F_OK) == 0;
+    }
+    return decided;
+}
+
+enum {
+    GLX_SCREEN = 0x800C,
+    GLX_FBCONFIG_ID = 0x8013,
+    GLX_CONTEXT_MAJOR_VERSION_ARB = 0x2091,
+    GLX_CONTEXT_MINOR_VERSION_ARB = 0x2092,
+    GLX_CONTEXT_PROFILE_MASK_ARB = 0x9126,
+    GLX_CONTEXT_ES_PROFILE_BIT_EXT = 0x0004,
+};
+
+static int ignore_x_error(void *display, void *event) {
+    (void)display;
+    (void)event;
+    return 0;
+}
+
+/* SDL's desktop GLX context gives the window its visual; the ES context is created on the same
+ * FBConfig. SDL's GLX make-current, swap and delete take any GLXContext. A failed GLX request
+ * raises an X error, which Xlib's default handler turns into an exit, hence the handler. */
+static void *create_glx_es_context(void) {
+    if (g_sdl.context_major < 1 || g_sdl.context_major > 3) {
+        return NULL;
+    }
+    void *x11 = plat_lib_open("libX11.so.6");
+    void *(*set_handler)(void *) = x11 ? plat_lib_symbol(x11, "XSetErrorHandler") : NULL;
+    int (*x_sync)(void *, int) = x11 ? plat_lib_symbol(x11, "XSync") : NULL;
+    int (*x_free)(void *) = x11 ? plat_lib_symbol(x11, "XFree") : NULL;
+    void *(*current_display)(void) = g_sdl.api.GL_GetProcAddress("glXGetCurrentDisplay");
+    void *(*current_context)(void) = g_sdl.api.GL_GetProcAddress("glXGetCurrentContext");
+    int (*query_context)(void *, void *, int, int *) = g_sdl.api.GL_GetProcAddress("glXQueryContext");
+    void **(*choose_config)(void *, int, const int *, int *) =
+        g_sdl.api.GL_GetProcAddress("glXChooseFBConfig");
+    void *(*create_attribs)(void *, void *, void *, int, const int *) =
+        g_sdl.api.GL_GetProcAddress("glXCreateContextAttribsARB");
+    if (!set_handler || !x_sync || !x_free || !current_display || !current_context ||
+        !query_context || !choose_config || !create_attribs) {
+        fprintf(stderr, "[egl] GLX OpenGL ES context: missing GLX or Xlib functions\n");
+        if (x11) {
+            plat_lib_close(x11);
+        }
+        return NULL;
+    }
+
+    void *bootstrap = g_sdl.api.GL_CreateContext(g_sdl.window);
+    if (!bootstrap) {
+        fprintf(stderr, "[egl] GLX bootstrap context failed: %s\n", sdl_error());
+        plat_lib_close(x11);
+        return NULL;
+    }
+    void *display = current_display();
+    int config_id = 0;
+    int screen = 0;
+    query_context(display, current_context(), GLX_FBCONFIG_ID, &config_id);
+    query_context(display, current_context(), GLX_SCREEN, &screen);
+    const int config_attributes[] = {GLX_FBCONFIG_ID, config_id, 0};
+    int count = 0;
+    void **configs = choose_config(display, screen, config_attributes, &count);
+    int minor = g_sdl.context_major == 1 ? 1 : 0;
+    const int attributes[] = {GLX_CONTEXT_MAJOR_VERSION_ARB, g_sdl.context_major,
+                              GLX_CONTEXT_MINOR_VERSION_ARB, minor,
+                              GLX_CONTEXT_PROFILE_MASK_ARB,  GLX_CONTEXT_ES_PROFILE_BIT_EXT,
+                              0};
+    void *context = NULL;
+    if (configs && count > 0) {
+        x_sync(display, 0);
+        void *previous = set_handler((void *)ignore_x_error);
+        context = create_attribs(display, configs[0], NULL, 1, attributes);
+        x_sync(display, 0);
+        set_handler(previous);
+    }
+    if (configs) {
+        x_free(configs);
+    }
+    g_sdl.api.GL_MakeCurrent(g_sdl.window, NULL);
+    g_sdl.api.GL_DeleteContext(bootstrap);
+    plat_lib_close(x11);
+    if (!context) {
+        fprintf(stderr, "[egl] GLX OpenGL ES %d.%d context failed (fbconfig 0x%x)\n",
+                g_sdl.context_major, minor, config_id);
+        return NULL;
+    }
+    if (g_sdl.api.GL_MakeCurrent(g_sdl.window, context) == 0) {
+        const char *(GL_APIENTRY *get_string)(unsigned int) =
+            g_sdl.api.GL_GetProcAddress("glGetString");
+        const char *version = get_string ? get_string(0x1F02) : NULL;
+        const char *renderer = get_string ? get_string(0x1F01) : NULL;
+        fprintf(stderr, "[egl] GLX context: %s on %s\n", version ? version : "?",
+                renderer ? renderer : "?");
+        g_sdl.api.GL_MakeCurrent(g_sdl.window, NULL);
+    }
+    return context;
+}
+#endif
+
 static void apply_window_attributes(void) {
 #if defined(_WIN32)
     if (win_use_mesa()) {
         /* SDL only offers WGL for desktop profiles; see create_wgl_es_context(). */
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 0);
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+        g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    } else
+#else
+    if (linux_use_glx_es()) {
+        /* A desktop profile keeps SDL on GLX; see create_glx_es_context(). */
         g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 0);
         g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
         g_sdl.api.GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
@@ -515,7 +630,8 @@ static int ensure_context(void) {
     g_sdl.context = win_use_mesa() ? create_wgl_es_context()
                                    : g_sdl.api.GL_CreateContext(g_sdl.window);
 #else
-    g_sdl.context = g_sdl.api.GL_CreateContext(g_sdl.window);
+    g_sdl.context = linux_use_glx_es() ? create_glx_es_context()
+                                       : g_sdl.api.GL_CreateContext(g_sdl.window);
 #endif
     if (!g_sdl.context) {
         fprintf(stderr, "[egl] SDL OpenGL ES %d context creation failed: %s\n", g_sdl.context_major,

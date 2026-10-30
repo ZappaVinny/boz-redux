@@ -292,6 +292,8 @@ bool plat_lib_path(const void *address, char *out, size_t out_size) {
     return length > 0 && length < out_size;
 }
 
+uint32_t (*plat_profile_guest_pc)(void);
+
 bool plat_address_in_module(const void *address) {
     return module_at(address) != NULL;
 }

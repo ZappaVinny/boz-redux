@@ -24,6 +24,8 @@ enum { PROFILE_SLOTS = 4096, PROFILE_TOP = 25 };
 static volatile uintptr_t g_profile_address[PROFILE_SLOTS];
 static volatile unsigned g_profile_count[PROFILE_SLOTS];
 static volatile unsigned g_profile_samples;
+static volatile uint32_t g_guest_address[PROFILE_SLOTS];
+static volatile unsigned g_guest_count[PROFILE_SLOTS];
 
 static void profile_signal(int sig, siginfo_t *info, void *context) {
     (void)sig;
@@ -39,6 +41,17 @@ static void profile_signal(int sig, siginfo_t *info, void *context) {
         }
     }
     g_profile_samples++;
+    uint32_t guest = plat_profile_guest_pc ? plat_profile_guest_pc() & ~(uint32_t)0x3f : 0;
+    if (guest) {
+        unsigned slot = (unsigned)((guest >> 6) * 2654435761u) % PROFILE_SLOTS;
+        for (unsigned probe = 0; probe < 64; ++probe, slot = (slot + 1) % PROFILE_SLOTS) {
+            if (g_guest_address[slot] == guest || g_guest_address[slot] == 0) {
+                g_guest_address[slot] = guest;
+                g_guest_count[slot]++;
+                break;
+            }
+        }
+    }
 }
 
 static void *profile_report_thread(void *unused) {
@@ -47,6 +60,32 @@ static void *profile_report_thread(void *unused) {
         sleep(5);
         unsigned samples = g_profile_samples;
         fprintf(stderr, "[profile] %u samples\n", samples);
+        /* BOZ_PROFILE=all: every sampled address as module+offset, for offline symbolising. */
+        if (!strcmp(getenv("BOZ_PROFILE"), "all")) {
+            for (unsigned i = 0; i < PROFILE_SLOTS; ++i) {
+                if (!g_profile_count[i]) {
+                    continue;
+                }
+                Dl_info dl;
+                uintptr_t address = g_profile_address[i];
+                if (dladdr((void *)address, &dl) && dl.dli_fname) {
+                    fprintf(stderr, "[profile-all] %u %s+0x%lx\n", g_profile_count[i],
+                            dl.dli_fname, (unsigned long)(address - (uintptr_t)dl.dli_fbase));
+                } else {
+                    fprintf(stderr, "[profile-all] %u anonymous+0x%lx\n", g_profile_count[i],
+                            (unsigned long)address);
+                }
+                g_profile_count[i] = 0;
+            }
+            for (unsigned i = 0; i < PROFILE_SLOTS; ++i) {
+                if (g_guest_count[i]) {
+                    fprintf(stderr, "[profile-guest] %u 0x%08x\n", g_guest_count[i],
+                            g_guest_address[i]);
+                    g_guest_count[i] = 0;
+                    g_guest_address[i] = 0;
+                }
+            }
+        }
         for (unsigned rank = 0; rank < PROFILE_TOP; ++rank) {
             unsigned best = 0, best_slot = 0;
             for (unsigned i = 0; i < PROFILE_SLOTS; ++i) {
@@ -78,6 +117,8 @@ static void *profile_report_thread(void *unused) {
     return NULL;
 }
 #endif
+
+uint32_t (*plat_profile_guest_pc)(void);
 
 void plat_reinstall_crash_handler(void) {}
 

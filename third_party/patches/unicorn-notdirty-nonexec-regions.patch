@@ -1,16 +1,50 @@
 diff --git i/qemu/accel/tcg/cputlb.c w/qemu/accel/tcg/cputlb.c
-index 3d0bebd3..2465428f 100644
+index 178b023..c1e94b8 100644
 --- i/qemu/accel/tcg/cputlb.c
 +++ w/qemu/accel/tcg/cputlb.c
-@@ -1208,8 +1208,10 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
+@@ -1219,8 +1219,13 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
      // - have memory hooks installed
      // - or doing snapshot
      // , then never clean the tlb
 +    /* The ARM MMU-off path grants PAGE_EXEC everywhere, so addr_code is always set; use the
-+       region's Unicorn permissions to decide whether this page can hold translated code. */
++       region's Unicorn permissions to decide whether this page can hold translated code.
++       An executable page without translated code (game data next to code, a code page whose
++       blocks were all invalidated) can take fast writes too: tb_gen_code clears the dirty bit
++       again when it translates code there. */
      if (!(!mr || (tlbe->addr_write != -1 && mr->priority < cpu->uc->snapshot_level)) &&
 -            !(tlbe->addr_code != -1) &&
-+            !(mr->perms & UC_PROT_EXEC) &&
++            (!(mr->perms & UC_PROT_EXEC) || !uc_page_has_code(cpu->uc, ram_addr)) &&
              !uc_mem_hook_installed(cpu->uc, tlbe->paddr | (mem_vaddr & ~TARGET_PAGE_MASK))) {
          tlb_set_dirty(cpu, mem_vaddr);
      }
+diff --git i/qemu/accel/tcg/translate-all.c w/qemu/accel/tcg/translate-all.c
+index 71b6b2b..922c80f 100644
+--- i/qemu/accel/tcg/translate-all.c
++++ w/qemu/accel/tcg/translate-all.c
+@@ -421,6 +421,13 @@ static inline PageDesc *page_find(struct uc_struct *uc, tb_page_addr_t index)
+     return page_find_alloc(uc, index, 0);
+ }
+ 
++/* Whether the page at addr holds translated code (notdirty_write in cputlb.c). */
++bool uc_page_has_code(struct uc_struct *uc, tb_page_addr_t addr)
++{
++    PageDesc *p = page_find(uc, addr >> TARGET_PAGE_BITS);
++    return p && p->first_tb;
++}
++
+ static void page_lock_pair(struct uc_struct *uc, PageDesc **ret_p1, tb_page_addr_t phys1,
+                            PageDesc **ret_p2, tb_page_addr_t phys2, int alloc);
+ 
+diff --git i/qemu/include/exec/exec-all.h w/qemu/include/exec/exec-all.h
+index 68c6567..2bc2fc7 100644
+--- i/qemu/include/exec/exec-all.h
++++ w/qemu/include/exec/exec-all.h
+@@ -32,6 +32,8 @@
+    addresses in userspace mode.  Define tb_page_addr_t to be an appropriate
+    type.  */
+ typedef ram_addr_t tb_page_addr_t;
++/* Whether the page at addr holds translated code (translate-all.c). */
++bool uc_page_has_code(struct uc_struct *uc, tb_page_addr_t addr);
+ #define TB_PAGE_ADDR_FMT RAM_ADDR_FMT
+ 
+ #include "qemu/log.h"

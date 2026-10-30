@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 bool plat_init(void);
+/* BOZ_PROFILE=all (Linux): also sample the guest PC through this callback (0 = not sampled). */
+extern uint32_t (*plat_profile_guest_pc)(void);
 /* Windows: installs the crash logger again (other libraries may replace it); no-op elsewhere. */
 void plat_reinstall_crash_handler(void);
 void plat_sleep_us(uint64_t microseconds);
