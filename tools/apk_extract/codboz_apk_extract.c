@@ -139,18 +139,30 @@ static void seek_abs(FILE *file, uint64_t offset) {
 }
 
 static void mkdir_one(const char *path) {
-    if (mkdir(path, 0775) != 0 && errno != EEXIST) {
+    // Windows reports a drive root such as "C:" as access denied, not as existing.
+    struct stat info;
+    if (mkdir(path, 0775) != 0 && errno != EEXIST &&
+        !(stat(path, &info) == 0 && S_ISDIR(info.st_mode))) {
         fatal_errno(path);
     }
+}
+
+static bool is_separator(char c) {
+#if defined(_WIN32)
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
 }
 
 static void mkdirs_for_file(const char *path) {
     char *copy = xstrndup(path, strlen(path));
     for (char *p = copy + 1; *p; ++p) {
-        if (*p == '/') {
+        if (is_separator(*p)) {
+            char separator = *p;
             *p = 0;
             mkdir_one(copy);
-            *p = '/';
+            *p = separator;
         }
     }
     free(copy);
