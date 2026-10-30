@@ -139,10 +139,7 @@ static void seek_abs(FILE *file, uint64_t offset) {
 }
 
 static void mkdir_one(const char *path) {
-    // Windows reports a drive root such as "C:" as access denied, not as existing.
-    struct stat info;
-    if (mkdir(path, 0775) != 0 && errno != EEXIST &&
-        !(stat(path, &info) == 0 && S_ISDIR(info.st_mode))) {
+    if (mkdir(path, 0775) != 0 && errno != EEXIST) {
         fatal_errno(path);
     }
 }
@@ -157,7 +154,14 @@ static bool is_separator(char c) {
 
 static void mkdirs_for_file(const char *path) {
     char *copy = xstrndup(path, strlen(path));
-    for (char *p = copy + 1; *p; ++p) {
+    char *start = copy;
+#if defined(_WIN32)
+    // A drive ("C:") can't be made: start at the first folder after it.
+    if (start[0] && start[1] == ':') {
+        start += 2;
+    }
+#endif
+    for (char *p = start + 1; *p; ++p) {
         if (is_separator(*p)) {
             char separator = *p;
             *p = 0;
