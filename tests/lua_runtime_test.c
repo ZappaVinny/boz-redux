@@ -1,6 +1,8 @@
 /* Runs a real mod script through the Lua runtime: settings (defaults, types, saving), events and
  * key bindings. */
 #include "client_config.h"
+#include "test_support.h"
+#include "posix_compat.h"
 #include "mod_runtime.h"
 #include "mods.h"
 
@@ -43,8 +45,8 @@ static char *read_file(const char *path) {
 }
 
 int main(void) {
-    char root[] = "/tmp/lua_runtime_test.XXXXXX";
-    assert(mkdtemp(root));
+    char root[1024];
+    assert(test_temp_dir(root, sizeof(root), "lua_runtime_test"));
     snprintf(g_root, sizeof(g_root), "%s", root);
     setenv("HOME", root, 1);
     char path[512];
@@ -101,9 +103,7 @@ int main(void) {
     assert(strstr(saved, "frames=n:3"));
     assert(strstr(saved, "f5=b:true"));
 
-    char command[600];
-    snprintf(command, sizeof(command), "rm -rf %s", root);
-    assert(system(command) == 0);
+    test_remove_tree(root);
     puts("lua_runtime_test: ok");
     return 0;
 }

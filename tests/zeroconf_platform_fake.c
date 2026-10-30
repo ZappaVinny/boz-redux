@@ -2,7 +2,7 @@
 
 #include "zeroconf_platform_fake.h"
 
-#include <arpa/inet.h>
+#include "socket_compat.h"
 #include <errno.h>
 #include <string.h>
 

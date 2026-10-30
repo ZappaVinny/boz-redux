@@ -263,10 +263,18 @@ static void test_localtime_offset_tracks_dst(void) {
     uint64_t after_autumn_transition_ms = UINT64_C(1729990800) * 1000u;
     assert(s3eTimerGetLocaltimeOffset(&winter_utc_ms) == 60 * 60 * 1000);
     assert(s3eTimerGetLocaltimeOffset(&summer_utc_ms) == 2 * 60 * 60 * 1000);
+#if !defined(_WIN32)
+    /* Windows' C library ignores the TZ rule's switch dates (it uses the US ones). */
     assert(s3eTimerGetLocaltimeOffset(&before_spring_transition_ms) == 60 * 60 * 1000);
     assert(s3eTimerGetLocaltimeOffset(&after_spring_transition_ms) == 2 * 60 * 60 * 1000);
     assert(s3eTimerGetLocaltimeOffset(&before_autumn_transition_ms) == 2 * 60 * 60 * 1000);
     assert(s3eTimerGetLocaltimeOffset(&after_autumn_transition_ms) == 60 * 60 * 1000);
+#else
+    (void)before_spring_transition_ms;
+    (void)after_spring_transition_ms;
+    (void)before_autumn_transition_ms;
+    (void)after_autumn_transition_ms;
+#endif
 
     if (saved_timezone) {
         result = setenv("TZ", saved_timezone, 1);

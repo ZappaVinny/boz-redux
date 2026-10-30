@@ -650,6 +650,12 @@ int32_t s3eSocketConnect(void *socket_handle_value, const struct s3e_inet_addres
         return S3E_RESULT_SUCCESS;
     }
     int error = socket_errno();
+#if defined(_WIN32)
+    /* Winsock reports a pending non-blocking connect as WSAEWOULDBLOCK. */
+    if (error == EWOULDBLOCK) {
+        error = EINPROGRESS;
+    }
+#endif
     if (error == EINPROGRESS || error == EALREADY) {
         slot->connect_pending = 1;
         slot->connect_callback = callback;

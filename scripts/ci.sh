@@ -27,6 +27,8 @@ case "$target" in
     cd "$here"
     cmake --preset windows-x86
     cmake --build --preset windows-x86 -j"$(nproc)"
+    # The unit tests too; CI runs them on Windows (scripts/test-windows.sh).
+    cmake --build build/windows-x86 -j"$(nproc)"
     scripts/package-windows.sh
     ;;
   *)

@@ -50,14 +50,49 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
 
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'windows'
+        with:
+          name: windows-tests
+          path: build/windows-x86/tests/*_test.exe
+          retention-days: 1
+
+  # The Windows build on real Windows: unit tests, then the extractor and the launcher start.
+  windows-test:
+    name: Windows tests
+    needs: build
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get the gamedef
+        run: git submodule update --init gamedef
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: BOZ-Redux-windows-x86
+          path: build/windows-x86/package
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-tests
+          path: build/windows-x86/tests
+
+      - name: Test
+        run: scripts/test-windows.sh
+
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, windows-test]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: BOZ-Redux-*
           path: artifacts
           merge-multiple: true
 

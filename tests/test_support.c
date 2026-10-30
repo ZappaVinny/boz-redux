@@ -2,7 +2,45 @@
 #include "mod_runtime.h"
 #include "native_input.h"
 
+#include "test_support.h"
+
+#include <dirent.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+char *test_temp_dir(char *out, size_t size, const char *name) {
+    const char *base = getenv("TEMP");
+    base = base ? base : getenv("TMP");
+    base = base ? base : getenv("TMPDIR");
+    snprintf(out, size, "%s/%s.XXXXXX", base ? base : "/tmp", name);
+    return mkdtemp(out);
+}
+
+void test_remove_tree(const char *path) {
+    DIR *dir = opendir(path);
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) {
+                continue;
+            }
+            char child[1200];
+            snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+            struct stat info;
+            if (stat(child, &info) == 0 && S_ISDIR(info.st_mode)) {
+                test_remove_tree(child);
+            } else {
+                remove(child);
+            }
+        }
+        closedir(dir);
+    }
+    rmdir(path);
+}
 
 uint32_t s3e_guest_call(const void *fn, int argc, ...) {
     uint32_t a[6] = {0};

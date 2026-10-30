@@ -3,13 +3,13 @@
 #include "arm_emu.h"
 #include "lua_runtime_internal.h"
 #include "mod_runtime.h"
+#include "platform/platform.h"
 
 #include "lauxlib.h"
 #include "lualib.h"
 
 #include <stdio.h>
 #include <string.h>
-#include <sys/mman.h>
 
 static lua_State *L;
 static uint32_t *g_code;
@@ -64,7 +64,7 @@ int main(void) {
     if (!arm_emu_init()) {
         return 1;
     }
-    g_code = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    g_code = plat_alloc(NULL, 4096, false);
     uint32_t code[] = {
         0xe2800001u, 0xe12fff1eu, /* 0: AddOne: r0 + 1 */
         0xe0800001u, 0xe12fff1eu, /* 2: r0 + r1 */

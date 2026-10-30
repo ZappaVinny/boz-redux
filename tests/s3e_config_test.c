@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "test_support.h"
 #include "game_patches.h"
 #include "s3e_image.h"
 
@@ -107,8 +108,8 @@ static void test_player_name_patch(void) {
 }
 
 int main(void) {
-    char template[] = "/tmp/codboz-config.XXXXXX";
-    char *directory = mkdtemp(template);
+    char template[1024];
+    char *directory = test_temp_dir(template, sizeof(template), "codboz-config");
     assert(directory);
     snprintf(g_root, sizeof(g_root), "%s", directory);
 

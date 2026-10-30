@@ -1,9 +1,9 @@
 #include "arm_emu.h"
+#include "platform/platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 
 static uint32_t *g_code;
 static int g_failures;
@@ -90,7 +90,7 @@ int main(void) {
     if (!arm_emu_init()) {
         return 1;
     }
-    g_code = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    g_code = plat_alloc(NULL, 4096, false);
     uint32_t c[] = {
         /* 0: r0 + 1 */
         0xe2800001u, 0xe12fff1eu,

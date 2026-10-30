@@ -1,4 +1,6 @@
 #include "client_config.h"
+#include "test_support.h"
+#include "posix_compat.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -23,8 +25,8 @@ static void expect_env(const char *name, const char *value) {
 }
 
 int main(void) {
-    char root[] = "/tmp/client_config_test.XXXXXX";
-    assert(mkdtemp(root));
+    char root[1024];
+    assert(test_temp_dir(root, sizeof(root), "client_config_test"));
     char path[256];
     snprintf(path, sizeof(path), "%s/client.ini", root);
 

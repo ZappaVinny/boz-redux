@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "test_support.h"
 
 #include <assert.h>
 #include <sys/stat.h>
@@ -17,7 +18,7 @@ static void write_known_id(const char *path) {
     for (size_t i = 0; i < sizeof(bytes); ++i) {
         bytes[i] = (uint8_t)i;
     }
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0600);
     assert(fd >= 0);
     ssize_t written = write(fd, bytes, sizeof(bytes));
     assert(written == (ssize_t)sizeof(bytes));
@@ -26,8 +27,8 @@ static void write_known_id(const char *path) {
 }
 
 int main(void) {
-    char template[] = "/tmp/codboz-device-id.XXXXXX";
-    char *directory = mkdtemp(template);
+    char template[1024];
+    char *directory = test_temp_dir(template, sizeof(template), "codboz-device-id");
     assert(directory);
     snprintf(g_root, sizeof(g_root), "%s", directory);
 

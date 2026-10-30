@@ -1,4 +1,6 @@
 #include "client_config.h"
+#include "test_support.h"
+#include "posix_compat.h"
 #include "mods.h"
 
 #include <assert.h>
@@ -7,7 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-static char g_root[] = "/tmp/mods_test.XXXXXX";
+static char g_root[1024];
 
 static void write_file(const char *relative, const char *text) {
     char path[512];
@@ -29,7 +31,7 @@ static bool ends_with(const char *text, const char *suffix) {
 }
 
 int main(void) {
-    assert(mkdtemp(g_root));
+    assert(test_temp_dir(g_root, sizeof(g_root), "mods_test"));
     struct mod_info mods[8];
 
     /* No mods folder: nothing to load. */
@@ -106,9 +108,7 @@ int main(void) {
     assert(!strcmp(text, "fov=n:90\nbinds=s:F5\nautostart_level=s:arena\n"));
     assert(mods_set_setting(saves, "fresh", "autostart_level", "lab_2"));
 
-    char command[600];
-    snprintf(command, sizeof(command), "rm -rf %s", g_root);
-    assert(system(command) == 0);
+    test_remove_tree(g_root);
     puts("mods_test: ok");
     return 0;
 }

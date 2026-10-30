@@ -1,6 +1,7 @@
 /* The HUD's touch stick art: found by its resource record anywhere in the group, alpha cleared
  * only in the sticks' rectangles, and left alone with touchpad controls. */
 #include "game_patches.h"
+#include "posix_compat.h"
 
 #include <assert.h>
 #include <stdio.h>

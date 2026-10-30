@@ -237,7 +237,8 @@ enable_testing()
 function(boz_test name)
   cmake_parse_arguments(T "" "" "SOURCES;DEFINES;INCLUDES" ${ARGN})
   add_executable(${name} tests/${name}.c ${T_SOURCES} tests/test_support.c)
-  target_link_libraries(${name} PRIVATE boz_project boz_common pthread)
+  target_link_libraries(${name} PRIVATE boz_project boz_common ${BOZ_SYSTEM_LIBS})
+  target_link_options(${name} PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
   target_compile_definitions(${name} PRIVATE ${T_DEFINES})
   target_compile_options(${name} PRIVATE -UNDEBUG)
   target_include_directories(${name} PRIVATE ${T_INCLUDES})
@@ -271,14 +272,16 @@ boz_test(s3e_input_test SOURCES src/s3e_input.c src/client_config.c
                  plat_lib_symbol=s3e_input_test_dlsym plat_lib_close=s3e_input_test_dlclose)
 
 add_executable(arm_emu_test tests/arm_emu_test.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(arm_emu_test PRIVATE boz_project unicorn ${CMAKE_DL_LIBS} pthread m)
+target_link_libraries(arm_emu_test PRIVATE boz_project unicorn ${BOZ_SYSTEM_LIBS})
+target_link_options(arm_emu_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
 target_compile_options(arm_emu_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(arm_emu_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 add_test(NAME arm_emu_test COMMAND arm_emu_test)
 
 add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common unicorn lua ${CMAKE_DL_LIBS} pthread m)
+target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common unicorn lua ${BOZ_SYSTEM_LIBS})
+target_link_options(lua_hooks_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
 target_compile_options(lua_hooks_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(lua_hooks_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)

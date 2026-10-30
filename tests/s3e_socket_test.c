@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "test_support.h"
 
 #include <assert.h>
 
@@ -266,8 +267,12 @@ static void test_dns_redirect_and_callback(void) {
 }
 
 int main(void) {
-    char template[] = "/tmp/codboz-socket.XXXXXX";
-    char *directory = mkdtemp(template);
+#if defined(_WIN32)
+    WSADATA winsock;   /* the loader does this in plat_init */
+    assert(WSAStartup(MAKEWORD(2, 2), &winsock) == 0);
+#endif
+    char template[1024];
+    char *directory = test_temp_dir(template, sizeof(template), "codboz-socket");
     assert(directory);
     snprintf(g_root, sizeof(g_root), "%s", directory);
 
