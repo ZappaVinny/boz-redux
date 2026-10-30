@@ -796,24 +796,44 @@ bool begin_tab(const char *label, bool select) {
 
 void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
     const float logo_height = 78.0f;
-    const float play_width = 200.0f, play_height = 54.0f, picker_width = 230.0f;
+    const float play_width = 200.0f, play_height = 54.0f, gap = 20.0f;
+    const char *title = "CLASSIC BLACK OPS ZOMBIES";
+    char subtitle[96];
+    std::snprintf(subtitle, sizeof(subtitle), "The original mobile game, on PC   v%s", BOZ_VERSION);
     ImVec2 top = ImGui::GetCursorPos();
     if (g_brand.logo) {
         float logo_width = logo_height * (float)g_brand.logo_width / (float)g_brand.logo_height;
         ImGui::Image(ImTextureRef((ImTextureID)(intptr_t)g_brand.logo), ImVec2(logo_width, logo_height));
         ImGui::SameLine(0, 22);
     }
-    ImGui::BeginGroup();
-    ImGui::SetCursorPosY(top.y + 16);
-    ImGui::PushFont(g_brand.heading, 24.0f);
-    ImGui::TextUnformatted("CLASSIC BLACK OPS ZOMBIES");
-    ImGui::PopFont();
-    ImGui::TextDisabled("The original mobile game, on PC   v%s", BOZ_VERSION);
-    ImGui::EndGroup();
 
+    // On a narrow window the map picker gets narrower first, then the title gives way.
+    ImGui::PushFont(g_brand.heading, 24.0f);
+    float text_width = ImGui::CalcTextSize(title).x;
+    ImGui::PopFont();
+    text_width = std::max(text_width, ImGui::CalcTextSize(subtitle).x);
+    float text_x = ImGui::GetCursorPosX();
     float right = ImGui::GetWindowWidth() - play_width - ImGui::GetStyle().WindowPadding.x;
+    bool has_maps = !mod_maps(l).empty();
+    float picker_width = 0.0f;
+    if (has_maps) {
+        picker_width = std::clamp(right - 12 - gap - (text_x + text_width), 160.0f, 230.0f);
+    }
+    float text_end = has_maps ? right - 12 - picker_width - gap : right - gap;
+    if (text_x + text_width <= text_end) {
+        ImGui::BeginGroup();
+        ImGui::SetCursorPosY(top.y + 16);
+        ImGui::PushFont(g_brand.heading, 24.0f);
+        ImGui::TextUnformatted(title);
+        ImGui::PopFont();
+        ImGui::TextDisabled("%s", subtitle);
+        ImGui::EndGroup();
+    } else {
+        ImGui::Dummy(ImVec2(0, logo_height));
+    }
+
     float play_y = top.y + (logo_height - play_height) * 0.5f;
-    if (!mod_maps(l).empty()) {
+    if (has_maps) {
         ImGui::SameLine(right - picker_width - 12);
         ImGui::SetCursorPosY(play_y + (play_height - ImGui::GetFrameHeight()) * 0.5f);
         start_map_picker(l, picker_width);
@@ -962,14 +982,21 @@ int main(int argc, char **argv) {
         return 1;
     }
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+    // 1080x760, or 90% of the screen's free area when that is smaller (a laptop, display scaling).
+    int width = 1080, height = 760;
+    SDL_Rect usable;
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0) {
+        width = std::min(width, usable.w * 9 / 10);
+        height = std::min(height, usable.h * 9 / 10);
+    }
     SDL_Window *window = SDL_CreateWindow(
-        "BOZ Redux", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1080, 760,
+        "BOZ Redux", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return 1;
     }
-    SDL_SetWindowMinimumSize(window, 900, 620);
+    SDL_SetWindowMinimumSize(window, std::min(900, width), std::min(620, height));
     set_window_icon(window);
     SDL_Renderer *renderer =
         SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
