@@ -28,16 +28,22 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
         }
         result = GetAdaptersAddresses(AF_INET,
                                       GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
-                                          GAA_FLAG_SKIP_DNS_SERVER,
+                                          GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_INCLUDE_GATEWAYS,
                                       NULL, adapters, &size);
     }
+    /* Only Ethernet and Wi-Fi adapters carry mDNS multicast (LAN VPNs such as Radmin, Hamachi
+     * and ZeroTier appear as Ethernet); tunnels such as Tailscale and WireGuard do not. The
+     * adapter with the default gateway goes first, so the home network wins over virtual
+     * adapters. */
     int found = 0;
-    if (result == NO_ERROR) {
+    for (int pass = 0; result == NO_ERROR && pass < 2 && !found; ++pass) {
         for (const IP_ADAPTER_ADDRESSES *adapter = adapters; adapter && !found;
              adapter = adapter->Next) {
             if (adapter->OperStatus != IfOperStatusUp ||
-                adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
-                (adapter->Flags & IP_ADAPTER_NO_MULTICAST)) {
+                (adapter->IfType != IF_TYPE_ETHERNET_CSMACD &&
+                 adapter->IfType != IF_TYPE_IEEE80211) ||
+                (adapter->Flags & IP_ADAPTER_NO_MULTICAST) ||
+                (pass == 0 && !adapter->FirstGatewayAddress)) {
                 continue;
             }
             for (const IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress; unicast;

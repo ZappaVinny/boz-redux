@@ -130,7 +130,9 @@ bool mods_set_setting(const char *saves, const char *mod_id, const char *key, co
         line += length;
     }
     free(old);
-    fprintf(out, "%s=s:%s\n", key, value);
+    if (value) {
+        fprintf(out, "%s=s:%s\n", key, value);
+    }
     return fclose(out) == 0;
 }
 

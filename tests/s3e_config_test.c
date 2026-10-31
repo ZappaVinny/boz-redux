@@ -7,6 +7,12 @@
 
 char g_root[1024];
 
+
+/* s3e_config.c names the player after the device ID; device_id.c is not linked here. */
+const char *s3e_device_id_get(void) {
+    return "c0ffee0123456789abcdef0123456789";
+}
+
 static const char embedded_config[] = "[Demonware]\n"
                                       "LSGServer=codboh-iphone-lobby.prod.demonware.net:3074\n"
                                       "AuthServer=codboh-iphone-auth.prod.demonware.net:3074\n"
@@ -76,8 +82,10 @@ static void test_player_name(void) {
 
     setenv("BOZ_PLAYER_NAME", "too-long-player-name", 1);
     s3e_host_set_config((const uint8_t *)embedded_config, (uint32_t)strlen(embedded_config));
-    assert(strcmp(s3e_host_player_name(), "Player") == 0);
+    assert(strcmp(s3e_host_player_name(), "Player-c0ff") == 0);
     unsetenv("BOZ_PLAYER_NAME");
+    s3e_host_set_config((const uint8_t *)embedded_config, (uint32_t)strlen(embedded_config));
+    assert(strcmp(s3e_host_player_name(), "Player-c0ff") == 0);
 }
 
 static void test_player_name_patch(void) {

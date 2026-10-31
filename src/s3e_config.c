@@ -50,7 +50,19 @@ static void load_player_settings(void) {
     const char *name = getenv("BOZ_PLAYER_NAME");
     snprintf(g_multiplayer_server, sizeof(g_multiplayer_server), "%s", server ? server : "");
     g_voice_chat = voice && strcmp(voice, "1") == 0;
-    snprintf(g_player_name, sizeof(g_player_name), "%s", name && valid_player_name(name) ? name : "Player");
+    if (name && valid_player_name(name)) {
+        snprintf(g_player_name, sizeof(g_player_name), "%s", name);
+        return;
+    }
+    /* A co-op room refuses a second player with the same name, so the default differs per PC:
+     * part of the random device ID. (The game's own "Player-%d" is the same everywhere: it draws
+     * the number before seeding its random generator.) */
+    const char *device_id = s3e_device_id_get();
+    if (device_id && device_id[0]) {
+        snprintf(g_player_name, sizeof(g_player_name), "Player-%.4s", device_id);
+    } else {
+        snprintf(g_player_name, sizeof(g_player_name), "Player");
+    }
 }
 
 const char *s3e_host_player_name(void) {

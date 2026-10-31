@@ -28,7 +28,9 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
     for (const struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
         if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET ||
             !(item->ifa_flags & IFF_UP) || !(item->ifa_flags & IFF_RUNNING) ||
-            !(item->ifa_flags & IFF_MULTICAST) || (item->ifa_flags & IFF_LOOPBACK)) {
+            !(item->ifa_flags & IFF_MULTICAST) || (item->ifa_flags & IFF_LOOPBACK) ||
+            (item->ifa_flags & IFF_POINTOPOINT)) {
+            /* Point-to-point tunnels (Tailscale, WireGuard) do not carry mDNS multicast. */
             continue;
         }
         const struct sockaddr_in *candidate = (const struct sockaddr_in *)item->ifa_addr;

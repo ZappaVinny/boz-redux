@@ -261,8 +261,11 @@ static int ensure_mdns_socket(void) {
     struct in_addr interface_address;
     int fd = zeroconf_platform_open_socket(&interface_address);
     if (fd < 0) {
+        NET_TRACE("mDNS socket failed (UDP 5353)\n");
         return 0;
     }
+    char text[INET_ADDRSTRLEN];
+    NET_TRACE("mDNS on %s\n", inet_ntop(AF_INET, &interface_address, text, sizeof(text)) ? text : "?");
     g_mdns_fd = fd;
     g_mdns_interface = interface_address;
     g_mdns_interface_valid = 1;
@@ -537,6 +540,8 @@ static void dispatch_found(struct zero_conf_search *search, struct zero_conf_dis
         .txt_records = txt_records,
     };
     memcpy(&data.ipv4_address, entry->ipv4, sizeof(data.ipv4_address));
+    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", name, entry->ipv4[0], entry->ipv4[1],
+              entry->ipv4[2], entry->ipv4[3], entry->port);
     entry->notified = 1;
     callback_enter();
     s3e_guest_call(search->found_callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(&data),
@@ -1026,6 +1031,7 @@ void *s3eZeroConfStartSearch(const char *service_type, const char *domain,
         search->lost_callback = lost_callback;
         search->user_data = user_data;
         search->in_use = 1;
+        NET_TRACE("searching for %s\n", search->service_fqdn);
         uint64_t now = zero_conf_now_ms();
         (void)send_query(search);
         search->next_query_ms = now + ZERO_CONF_QUERY_INTERVAL_MS;
@@ -1083,6 +1089,9 @@ void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_ty
             memset(publisher, 0, sizeof(*publisher));
             return NULL;
         }
+        NET_TRACE("publishing \"%s\" (%s) at %u.%u.%u.%u:%u\n", publisher->name,
+                  publisher->service_fqdn, publisher->ipv4[0], publisher->ipv4[1],
+                  publisher->ipv4[2], publisher->ipv4[3], publisher->port);
         uint64_t now = zero_conf_now_ms();
         (void)send_publication(publisher, 0, NULL);
         mark_publisher_txt_announced(publisher);

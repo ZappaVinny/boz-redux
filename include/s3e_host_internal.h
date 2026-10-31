@@ -349,6 +349,14 @@ extern uint64_t g_host_start_us;
 uint64_t monotonic_us(void);
 uint64_t monotonic_ms(void);
 void sleep_ms(uint32_t ms);
+/* BOZ_TRACE_NET ([debug] log_network): sockets and co-op discovery go to stderr. */
+bool net_trace_enabled(void);
+#define NET_TRACE(...)                                                                            \
+    do {                                                                                          \
+        if (net_trace_enabled()) {                                                                \
+            fprintf(stderr, "[net] " __VA_ARGS__);                                                \
+        }                                                                                         \
+    } while (0)
 void *open_first(const char *const *names);
 void *lookup_gl(const char *symbol);
 void *lookup_egl(const char *symbol);

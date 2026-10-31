@@ -37,6 +37,7 @@ int main(void) {
     unsetenv("BOZ_MOUSE_SENS");
     unsetenv("BOZ_TRACE_STATUS");
     unsetenv("BOZ_PERF_STATS");
+    unsetenv("BOZ_TRACE_NET");
     unsetenv("BOZ_PLAYER_NAME");
     client_config_load(root);
     assert(access(path, R_OK) == 0);
@@ -46,7 +47,8 @@ int main(void) {
     expect_env("BOZ_MOUSE_SENS", "12000");
     expect_env("BOZ_TRACE_STATUS", NULL);
     expect_env("BOZ_PERF_STATS", NULL);
-    expect_env("BOZ_PLAYER_NAME", "Player");
+    expect_env("BOZ_TRACE_NET", NULL);
+    expect_env("BOZ_PLAYER_NAME", NULL);   /* empty: s3e_config.c picks a name per PC */
     for (int i = 0; i < CLIENT_BINDING_COUNT; ++i) {   /* every binding is in the file */
         assert(!strcmp(client_config_key_binding(CLIENT_BINDINGS[i].action), CLIENT_BINDINGS[i].defaults));
     }
@@ -76,7 +78,8 @@ int main(void) {
                      "[performance]\n"
                      "stats = true\n"
                      "[debug]\n"
-                     "status = true\n");
+                     "status = true\n"
+                     "log_network = true\n");
     client_config_load(root);
     expect_env("BOZ_WINDOWED", "1");
     expect_env("BOZ_VSYNC", "-1");
@@ -87,6 +90,7 @@ int main(void) {
     expect_env("BOZ_LOOK_MODE", "swipe");
     expect_env("BOZ_TRACE_STATUS", "1");
     expect_env("BOZ_PERF_STATS", "1");
+    expect_env("BOZ_TRACE_NET", "1");
     assert(strcmp(client_config_key_binding("crouch"), "C, Left Ctrl") == 0);
     assert(strcmp(client_config_key_binding("melee"), "") == 0);
     assert(strcmp(client_config_key_binding("shoot"), "Mouse1") == 0); /* from the first load */

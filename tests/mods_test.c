@@ -107,6 +107,14 @@ int main(void) {
     fclose(settings);
     assert(!strcmp(text, "fov=n:90\nbinds=s:F5\nautostart_level=s:arena\n"));
     assert(mods_set_setting(saves, "fresh", "autostart_level", "lab_2"));
+    /* NULL removes the key (the launcher clears the co-op mode for a solo start). */
+    assert(mods_set_setting(saves, "arena", "autostart_level", NULL));
+    settings = fopen(cfg, "r");
+    assert(settings);
+    read = fread(text, 1, sizeof(text) - 1, settings);
+    text[read] = '\0';
+    fclose(settings);
+    assert(!strcmp(text, "fov=n:90\nbinds=s:F5\n"));
 
     test_remove_tree(g_root);
     puts("mods_test: ok");

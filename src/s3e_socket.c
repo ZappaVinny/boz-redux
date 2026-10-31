@@ -126,6 +126,15 @@ static int32_t map_socket_errno(int error) {
     }
 }
 
+bool net_trace_enabled(void) {
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *setting = getenv("BOZ_TRACE_NET");
+        enabled = setting && strcmp(setting, "0") != 0;
+    }
+    return enabled;
+}
+
 static int32_t fail_with_errno(int error) {
     set_socket_error(map_socket_errno(error));
     return S3E_RESULT_ERROR;
@@ -570,9 +579,15 @@ int32_t s3eSocketBind(void *socket_handle_value, const struct s3e_inet_address *
             return fail_with_errno(socket_errno());
         }
     }
+    char text[64];
     if (bind(slot->fd, (const struct sockaddr *)&storage, length) < 0) {
-        return fail_with_errno(socket_errno());
+        int error = socket_errno();
+        NET_TRACE("bind %s:%u failed (error %d)\n", address_text(address, text, sizeof(text)),
+                  s3eInetNtohs(address->port), error);
+        return fail_with_errno(error);
     }
+    NET_TRACE("bind %s %s:%u\n", slot->type == S3E_SOCKET_TCP ? "tcp" : "udp",
+              address_text(address, text, sizeof(text)), s3eInetNtohs(address->port));
     set_socket_error(S3E_SOCKET_ERR_NONE);
     return S3E_RESULT_SUCCESS;
 }
@@ -583,7 +598,13 @@ int32_t s3eSocketListen(void *socket_handle_value, uint16_t backlog) {
         return S3E_RESULT_ERROR;
     }
     if (listen(slot->fd, backlog) < 0) {
-        return fail_with_errno(socket_errno());
+        int error = socket_errno();
+        NET_TRACE("listen failed (error %d)\n", error);
+        return fail_with_errno(error);
+    }
+    struct s3e_inet_address local = {0};
+    if (s3eSocketGetLocalName(socket_handle_value, &local) == S3E_RESULT_SUCCESS) {
+        NET_TRACE("listening on tcp port %u\n", s3eInetNtohs(local.port));
     }
     set_socket_error(S3E_SOCKET_ERR_NONE);
     return S3E_RESULT_SUCCESS;
@@ -626,6 +647,13 @@ void *s3eSocketAccept(void *socket_handle_value, struct s3e_inet_address *addres
         sockaddr_to_address((const struct sockaddr *)&peer, peer_length, address);
     }
     void *accepted = slot_handle((uint32_t)accepted_slot);
+    if (net_trace_enabled()) {
+        struct s3e_inet_address from = {0};
+        char text[64];
+        sockaddr_to_address((const struct sockaddr *)&peer, peer_length, &from);
+        NET_TRACE("accepted %s:%u\n", address_text(&from, text, sizeof(text)),
+                  s3eInetNtohs(from.port));
+    }
     set_socket_error(S3E_SOCKET_ERR_NONE);
     return accepted;
 }
@@ -641,6 +669,9 @@ int32_t s3eSocketConnect(void *socket_handle_value, const struct s3e_inet_addres
     if (address_to_sockaddr(address, &storage, &length) < 0) {
         return S3E_RESULT_ERROR;
     }
+    char text[64];
+    NET_TRACE("connect %s %s:%u\n", slot->type == S3E_SOCKET_TCP ? "tcp" : "udp",
+              address_text(address, text, sizeof(text)), s3eInetNtohs(address->port));
     int result = connect(slot->fd, (const struct sockaddr *)&storage, length);
     if (result == 0) {
         slot->connect_pending = callback != NULL;
@@ -663,6 +694,7 @@ int32_t s3eSocketConnect(void *socket_handle_value, const struct s3e_inet_addres
         set_socket_error(S3E_SOCKET_ERR_INPROGRESS);
         return S3E_RESULT_SUCCESS;
     }
+    NET_TRACE("connect failed (error %d)\n", error);
     return fail_with_errno(error);
 }
 
@@ -910,6 +942,11 @@ static void dispatch_socket_event(const struct socket_poll_entry *entry) {
         slot->connect_callback = NULL;
         slot->connect_user_data = NULL;
         int32_t result = native_error == 0 ? S3E_RESULT_SUCCESS : S3E_RESULT_ERROR;
+        if (native_error) {
+            NET_TRACE("connect failed (error %d)\n", native_error);
+        } else {
+            NET_TRACE("connected\n");
+        }
         set_socket_error(map_socket_errno(native_error));
         invoke_socket_callback(callback, handle, &result, user_data);
         if (!slot_matches(index, entry->generation)) {

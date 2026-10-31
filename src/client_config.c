@@ -58,8 +58,9 @@ static const char KEYS_INTRO[] =
 static const char DEFAULT_CONFIG_TAIL[] =
     "\n"
     "[player]\n"
-    "# Your name in the game: letters, digits, space, - _ . (at most 13 characters).\n"
-    "name = Player\n"
+    "# Your name in the game: letters, digits, space, - _ . (at most 13 characters). Empty:\n"
+    "# Player- and four characters that differ per PC (co-op refuses two players with one name).\n"
+    "name =\n"
     "\n"
     "[network]\n"
     "# Online play: a server that answers for the game's online service (empty: offline).\n"
@@ -69,10 +70,8 @@ static const char DEFAULT_CONFIG_TAIL[] =
     "[mods]\n"
     "# Set by the launcher's Mods tab. order: load order (when two mods replace the same file, the\n"
     "# later one wins); disabled: mods switched off. Mods not listed load last, switched on.\n"
-    "# start_map: a mod's map that PLAY starts (mod id/map name), empty for the main menu.\n"
     "order =\n"
     "disabled =\n"
-    "start_map =\n"
     "\n"
     "[performance]\n"
     "# Print frame times and emulator counters every two seconds (scripts/bench.sh reads them).\n"
@@ -82,7 +81,9 @@ static const char DEFAULT_CONFIG_TAIL[] =
     "# Print emulator and frame rate statistics every two seconds.\n"
     "status = false\n"
     "# Log every file the game opens and where it came from (finds the paths mods replace).\n"
-    "log_files = false\n";
+    "log_files = false\n"
+    "# Log sockets and co-op discovery (finds why two PCs do not see each other).\n"
+    "log_network = false\n";
 
 const struct client_binding CLIENT_BINDINGS[] = {
     {"move_forward", "Move forward", "W", NULL},
@@ -203,14 +204,16 @@ static bool apply(const char *section, const char *key, const char *value) {
             snprintf(g_mods_disabled, sizeof(g_mods_disabled), "%s", value);
             return true;
         }
-        if (!strcmp(key, "start_map")) {
+        if (!strcmp(key, "start_map")) {   /* the old PLAY map picker; PLAY now asks */
             return true;
         }
         return false;
     }
     if (!strcmp(section, "player")) {
         if (!strcmp(key, "name")) {
-            set_default("BOZ_PLAYER_NAME", value);
+            if (value[0]) {
+                set_default("BOZ_PLAYER_NAME", value);
+            }
             return true;
         }
         return false;
@@ -338,6 +341,12 @@ static bool apply(const char *section, const char *key, const char *value) {
         if (!strcmp(key, "log_files") && parse_bool(value, &flag)) {
             if (flag) {
                 set_default("BOZ_TRACE_FILES", "1");
+            }
+            return true;
+        }
+        if (!strcmp(key, "log_network") && parse_bool(value, &flag)) {
+            if (flag) {
+                set_default("BOZ_TRACE_NET", "1");
             }
             return true;
         }

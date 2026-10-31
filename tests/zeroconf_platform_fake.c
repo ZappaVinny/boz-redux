@@ -4,6 +4,7 @@
 
 #include "socket_compat.h"
 #include <errno.h>
+#include <stdbool.h>
 #include <string.h>
 
 enum {
@@ -19,6 +20,11 @@ struct sent_packet {
 static struct sent_packet g_sent_packets[TEST_MAX_PACKETS];
 static size_t g_sent_count;
 static uint64_t g_now_ms = 1000;
+
+/* s3e_socket.c owns the real switch; the tests run without the network log. */
+bool net_trace_enabled(void) {
+    return false;
+}
 
 uint64_t zeroconf_platform_now_ms(void) {
     return g_now_ms;

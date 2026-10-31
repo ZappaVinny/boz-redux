@@ -36,7 +36,7 @@ int mods_scan(const char *root, const char *order, const char *disabled, struct 
               int max);
 
 /* Sets one string value in a mod's saved settings (<saves>/mods/<id>.cfg, the file the Lua
- * `settings` module reads), keeping its other values. */
+ * `settings` module reads), keeping its other values. A NULL value removes the key. */
 bool mods_set_setting(const char *saves, const char *mod_id, const char *key, const char *value);
 
 /* Calls fn for each file under <mod dir>/assets with its path relative to assets/ ('/'-separated).

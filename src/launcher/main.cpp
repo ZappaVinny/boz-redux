@@ -313,6 +313,32 @@ bool combo(const char *label, const std::string &current, const char *const *val
     return changed;
 }
 
+// Characters the game accepts in a player name (s3e_config.c valid_player_name).
+int player_name_filter(ImGuiInputTextCallbackData *data) {
+    ImWchar c = data->EventChar;
+    bool allowed = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                   c == ' ' || c == '-' || c == '_' || c == '.';
+    return allowed ? 0 : 1;
+}
+
+// The name this PC plays under without one set: "Player-" and the first four hex digits of
+// saves/device-id.bin (s3e_config.c); the game makes the file on its first start.
+std::string default_player_name(const Launcher &l) {
+    std::string path = os::join(os::join(l.root, "saves"), "device-id.bin");
+    unsigned char bytes[2];
+    FILE *file = std::fopen(path.c_str(), "rb");
+    bool read = file && std::fread(bytes, 1, sizeof(bytes), file) == sizeof(bytes);
+    if (file) {
+        std::fclose(file);
+    }
+    if (!read) {
+        return "Player-xxxx";
+    }
+    char name[16];
+    std::snprintf(name, sizeof(name), "Player-%02x%02x", bytes[0], bytes[1]);
+    return name;
+}
+
 void settings_tab(Launcher &l) {
     ensure_ini(l);
     if (!l.ini_loaded) {
@@ -322,6 +348,25 @@ void settings_tab(Launcher &l) {
     std::string chosen;
     ImGui::BeginChild("settings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.2f));
     ImGui::PushItemWidth(260);
+
+    section("Player");
+    {
+        char name[14];  // at most 13 characters, as the game allows
+        std::snprintf(name, sizeof(name), "%s", l.ini.get("player", "name").c_str());
+        std::string hint = default_player_name(l) + " (this PC's default)";
+        if (ImGui::InputTextWithHint("Name", hint.c_str(), name, sizeof(name),
+                                     ImGuiInputTextFlags_CallbackCharFilter |
+                                         ImGuiInputTextFlags_EnterReturnsTrue,
+                                     player_name_filter) ||
+            ImGui::IsItemDeactivatedAfterEdit()) {
+            save_setting(l, "player", "name", name);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Your name in the game and in co-op: letters, digits, space, - _ .\n"
+                              "Two players with the same name cannot share a co-op room.\n"
+                              "Empty: a default that differs on each PC.");
+        }
+    }
 
     section("Display");
     bool fullscreen = l.ini.get("display", "fullscreen", "true") != "false";
@@ -474,6 +519,10 @@ void settings_tab(Launcher &l) {
     bool log_files = l.ini.get("debug", "log_files", "false") == "true";
     if (ImGui::Checkbox("Log every file the game opens (for mod makers)", &log_files)) {
         save_setting(l, "debug", "log_files", log_files ? "true" : "false");
+    }
+    bool log_network = l.ini.get("debug", "log_network", "false") == "true";
+    if (ImGui::Checkbox("Log network activity (for co-op problems)", &log_network)) {
+        save_setting(l, "debug", "log_network", log_network ? "true" : "false");
     }
     ImGui::PopItemWidth();
     ImGui::EndChild();
@@ -685,7 +734,7 @@ bool capture_binding(Launcher &l, const SDL_Event &event) {
 
 // --- Play -----------------------------------------------------------------------------------
 
-// Maps that enabled mods add, as "mod id/map name" (the client.ini [mods] start_map value).
+// Maps that enabled mods add, as "mod id/map name".
 std::vector<std::string> mod_maps(const Launcher &l) {
     std::vector<std::string> maps;
     for (const mod_info &mod : l.mods) {
@@ -697,9 +746,6 @@ std::vector<std::string> mod_maps(const Launcher &l) {
 }
 
 std::string map_label(const Launcher &l, const std::string &entry) {
-    if (entry.empty()) {
-        return "Main menu";
-    }
     size_t slash = entry.find('/');
     std::string id = entry.substr(0, slash), map = entry.substr(slash + 1);
     for (const mod_info &mod : l.mods) {
@@ -710,40 +756,18 @@ std::string map_label(const Launcher &l, const std::string &entry) {
     return map;
 }
 
-// The start_map setting when it still names a map of an enabled mod, else "" (the main menu).
-std::string chosen_map(const Launcher &l) {
-    std::string entry = l.ini.get("mods", "start_map");
-    std::vector<std::string> maps = mod_maps(l);
-    return std::find(maps.begin(), maps.end(), entry) != maps.end() ? entry : "";
-}
-
-void start_map_picker(Launcher &l, float width) {
-    std::string current = chosen_map(l);
-    ImGui::SetNextItemWidth(width);
-    if (ImGui::BeginCombo("##start_map", map_label(l, current).c_str())) {
-        std::vector<std::string> entries = mod_maps(l);
-        entries.insert(entries.begin(), "");
-        for (const std::string &entry : entries) {
-            if (ImGui::Selectable(map_label(l, entry).c_str(), entry == current)) {
-                save_setting(l, "mods", "start_map", entry);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Where PLAY takes you: the main menu, or straight into a map from a mod.");
-    }
-}
-
-void start_game(Launcher &l, SDL_Window *window) {
+// Starts the game: on the main menu (empty map), or in a mod's map ("mod id/map name"), alone
+// or in the Wi-Fi co-op room for that map.
+void start_game(Launcher &l, SDL_Window *window, const std::string &map, bool coop) {
     std::string saves = os::join(l.root, "saves");
     os::make_dir(saves);
-    std::string map = chosen_map(l);
     if (!map.empty()) {
         size_t slash = map.find('/');
-        // The map's mod starts it once the menu is up (boz.world reads this one-shot setting).
-        mods_set_setting(saves.c_str(), map.substr(0, slash).c_str(), "autostart_level",
+        std::string mod = map.substr(0, slash);
+        // The map's mod starts it once the menu is up (boz.levels reads these one-shot settings).
+        mods_set_setting(saves.c_str(), mod.c_str(), "autostart_level",
                          map.substr(slash + 1).c_str());
+        mods_set_setting(saves.c_str(), mod.c_str(), "autostart_mode", coop ? "coop" : NULL);
     }
     std::map<std::string, std::string> env;
     env["HOME"] = saves;
@@ -787,6 +811,60 @@ void poll_game(Launcher &l, SDL_Window *window) {
 #endif
 }
 
+const char *const PLAY_CHOOSER = "Where to play";
+
+// PLAY with mod maps: each map alone or as a Wi-Fi co-op room, or the game's main menu.
+void play_chooser(Launcher &l, SDL_Window *window) {
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(560.0f, viewport->Size.x - 32.0f), 0));
+    if (!ImGui::BeginPopupModal(PLAY_CHOOSER, nullptr,
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    const float button_width = 130.0f, gap = ImGui::GetStyle().ItemSpacing.x;
+    ImGui::TextDisabled("Custom maps from your mods");
+    std::string chosen;
+    bool coop = false;
+    for (const std::string &map : mod_maps(l)) {
+        ImGui::PushID(map.c_str());
+        ImGui::Separator();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(map_label(l, map).c_str());
+        ImGui::SameLine(ImGui::GetContentRegionMax().x - 2 * button_width - gap);
+        if (ImGui::Button("PLAY SOLO", ImVec2(button_width, 0))) {
+            chosen = map;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Straight into this map, on your own.");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("CO-OP ROOM", ImVec2(button_width, 0))) {
+            chosen = map;
+            coop = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Straight into the Wi-Fi co-op room for this map: joins a friend's room "
+                              "on the same map, or hosts one.\nEveryone needs this map's mod.");
+        }
+        ImGui::PopID();
+    }
+    ImGui::Separator();
+    ImGui::Spacing();
+    bool main_menu = ImGui::Button("MAIN MENU", ImVec2(button_width, 0));
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - button_width);
+    bool cancel = ImGui::Button("Cancel", ImVec2(button_width, 0)) ||
+                  ImGui::IsKeyPressed(ImGuiKey_Escape);
+    if (!chosen.empty() || main_menu || cancel) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+    if (!chosen.empty() || main_menu) {
+        start_game(l, window, chosen, coop);
+    }
+}
+
 // Tab labels in the heading face, as the brand's condensed capitals.
 bool begin_tab(const char *label, bool select) {
     ImGui::PushFont(g_brand.heading, 19.0f);
@@ -808,20 +886,14 @@ void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
         ImGui::SameLine(0, 22);
     }
 
-    // On a narrow window the map picker gets narrower first, then the title gives way.
+    // On a narrow window the title gives way.
     ImGui::PushFont(g_brand.heading, 24.0f);
     float text_width = ImGui::CalcTextSize(title).x;
     ImGui::PopFont();
     text_width = std::max(text_width, ImGui::CalcTextSize(subtitle).x);
     float text_x = ImGui::GetCursorPosX();
     float right = ImGui::GetWindowWidth() - play_width - ImGui::GetStyle().WindowPadding.x;
-    bool has_maps = !mod_maps(l).empty();
-    float picker_width = 0.0f;
-    if (has_maps) {
-        picker_width = std::clamp(right - 12 - gap - (text_x + text_width), 160.0f, 230.0f);
-    }
-    float text_end = has_maps ? right - 12 - picker_width - gap : right - gap;
-    if (text_x + text_width <= text_end) {
+    if (text_x + text_width <= right - gap) {
         ImGui::BeginGroup();
         ImGui::SetCursorPosY(top.y + 16);
         ImGui::PushFont(g_brand.heading, 24.0f);
@@ -834,11 +906,6 @@ void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
     }
 
     float play_y = top.y + (logo_height - play_height) * 0.5f;
-    if (has_maps) {
-        ImGui::SameLine(right - picker_width - 12);
-        ImGui::SetCursorPosY(play_y + (play_height - ImGui::GetFrameHeight()) * 0.5f);
-        start_map_picker(l, picker_width);
-    }
     ImGui::SameLine(right);
     ImGui::SetCursorPosY(play_y);
     ImGui::BeginDisabled(!status.ready() || l.files->busy() || l.game_running);
@@ -848,11 +915,22 @@ void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
     ImGui::PushStyleColor(ImGuiCol_Border, brand(BRAND_RED));
     ImGui::PushFont(g_brand.heading, 30.0f);
     if (ImGui::Button(l.game_running ? "RUNNING" : "PLAY", ImVec2(play_width, play_height))) {
-        start_game(l, window);
+        if (mod_maps(l).empty()) {
+            start_game(l, window, "", false);
+        } else {
+            ImGui::OpenPopup(PLAY_CHOOSER);
+        }
     }
     ImGui::PopFont();
     ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
+    // BOZ_LAUNCHER_PLAY=1 opens the chooser at once (for the launcher screenshot).
+    static bool chooser_requested = os::getenv_str("BOZ_LAUNCHER_PLAY") == "1";
+    if (chooser_requested && !mod_maps(l).empty()) {
+        chooser_requested = false;
+        ImGui::OpenPopup(PLAY_CHOOSER);
+    }
+    play_chooser(l, window);
     ImGui::SetCursorPosY(top.y + logo_height + 14);
 
     // The red rule under the header, as under the logo's wordmark.

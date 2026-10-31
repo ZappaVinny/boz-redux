@@ -12,6 +12,12 @@ enum {
 
 char g_root[1024];
 
+
+/* s3e_config.c names the player after the device ID; device_id.c is not linked here. */
+const char *s3e_device_id_get(void) {
+    return "c0ffee0123456789abcdef0123456789";
+}
+
 static int g_readable_count;
 static int g_accept_count;
 static int g_connect_count;

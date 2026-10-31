@@ -56,6 +56,7 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_PLAYER_NAME` | The name the game uses for you (`[player] name`) |
 | `BOZ_MULTIPLAYER_SERVER` | A server answering the game's online service (`[network] server`) |
 | `BOZ_VOICE_CHAT=1` | Voice chat on (`[network] voice_chat`) |
+| `BOZ_TRACE_NET=1` | Log sockets (bind, listen, accept, connect, errors) and co-op discovery (published and found games, the chosen interface) (`[debug] log_network`) |
 | `BOZ_SWIPE_GAIN` | Dead Ops: swipe look speed |
 | `BOZ_TRACE_CODE=1` | Trace guest code execution (very slow) |
 | `BOZ_PERF_STATS=1` | Performance line every 2 s: frame times (average, 99th percentile, worst), host calls, hook calls and time, JIT cache flushes per frame (`[performance] stats`) |
@@ -63,7 +64,7 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_LAZY_GL=1` | Resolve GL functions when first called |
 | `BOZ_WINDOW_TEST=1` | Linux: try the experimental 64 MB data window |
 | `BOZ_SCREENSHOT_DIR`, `BOZ_SCREENSHOT_EVERY=N` | Write every Nth frame to that folder as PPM (debugging) |
-| `BOZ_LAUNCHER_SCREENSHOT=file.bmp`, `BOZ_LAUNCHER_TAB=0..2` | Launcher: save the fourth frame (of that tab) and quit; works offscreen (`SDL_VIDEODRIVER=offscreen`) |
+| `BOZ_LAUNCHER_SCREENSHOT=file.bmp`, `BOZ_LAUNCHER_TAB=0..2`, `BOZ_LAUNCHER_PLAY=1` | Launcher: save the fourth frame (of that tab, or with PLAY's map chooser open) and quit; works offscreen (`SDL_VIDEODRIVER=offscreen`) |
 
 Most of these are also settings in `client.ini`, which the launcher edits.
 
@@ -78,6 +79,20 @@ What made the client fast (2026-10-30, see the commit history for numbers):
 - `third_party/patches/unicorn-notdirty-nonexec-regions.patch`: stores to executable regions take the fast path once the page holds no translated code (the game's data shares the image mapping with its code).
 - `third_party/patches/unicorn-precise-store-faults.patch`: failed stores leave the translated block at the store, so the exit check after every guest load and store is gone.
 - Hook changes made in one host call share one JIT flush; the trap reads and writes registers in batches.
+
+## Co-op
+
+The game's own Wi-Fi co-op works between PCs on one network, or on a virtual LAN that carries
+multicast (Radmin VPN, Hamachi, ZeroTier; not Tailscale). Discovery is mDNS on UDP 5353 on the
+first Ethernet or Wi-Fi adapter (the one with the default gateway first; tunnels are skipped); the
+host then accepts TCP on a port that changes per room. So the firewall has to let the client in:
+Windows asks the first time (allow private networks, and public ones for VPN adapters); on Linux
+with ufw, for example `sudo ufw allow from 192.168.1.0/24`. Two players with one name are refused:
+set a name in the launcher's Settings (`[player] name`), or leave it empty and each PC is
+`Player-` and four characters of its device ID. PLAY's map
+chooser opens a co-op room straight on a mod's map (every player needs the mod).
+`[debug] log_network` (`BOZ_TRACE_NET`) logs sockets and discovery when two PCs do not find each
+other.
 
 ## License
 
