@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(boz_redux_client VERSION 0.2.2 LANGUAGES C CXX)
+project(boz_redux_client VERSION 0.3.0 LANGUAGES C CXX)
 set(BOZ_VERSION ${PROJECT_VERSION})
 if(WIN32)
   enable_language(RC)
