@@ -97,6 +97,13 @@ static uint32_t g_hash_string;
 
 static uint64_t g_zombies_ms;
 static uint64_t g_dead_ops_ms;
+/* When the game's playing state (CIngameStatePlaying / CDOIngameStatePlaying::Update) last
+ * updated: the player keeps stepping on the results screen after the game is over, so a match
+ * counts only while its playing state runs too. Without the name: the player step alone. */
+static uint64_t g_zombies_playing_ms;
+static uint64_t g_dead_ops_playing_ms;
+static bool g_zombies_playing_hooked;
+static bool g_dead_ops_playing_hooked;
 static uint32_t g_controller;        /* the local player's controller, seen in FixedStep */
 
 static float g_look_dx, g_look_dy;
@@ -259,6 +266,22 @@ static bool hook(uint32_t address, arm_emu_code_hook fn) {
     return address && arm_emu_hook_add(address & ~1u, fn, NULL) >= 0;
 }
 
+static void on_zombies_playing(struct arm_emu_regs *regs, void *user) {
+    (void)regs;
+    (void)user;
+    g_zombies_playing_ms = monotonic_ms();
+}
+
+static void on_dead_ops_playing(struct arm_emu_regs *regs, void *user) {
+    (void)regs;
+    (void)user;
+    g_dead_ops_playing_ms = monotonic_ms();
+}
+
+static bool recent(uint64_t stamp, uint64_t now) {
+    return stamp && now - stamp < MATCH_TIMEOUT_MS;
+}
+
 bool native_input_init(void) {
     static bool started;
     if (started) {
@@ -290,6 +313,10 @@ bool native_input_init(void) {
         return false;
     }
     hook(dead_ops_step, on_dead_ops_fixed_step);
+    g_zombies_playing_hooked =
+        hook(game_symbol_address("CIngameStatePlaying::Update"), on_zombies_playing);
+    g_dead_ops_playing_hooked =
+        hook(game_symbol_address("CDOIngameStatePlaying::Update"), on_dead_ops_playing);
     g_sensitivity = env_float("BOZ_LOOK_SENS", 3.0f);
     g_aim_sensitivity = env_float("BOZ_AIM_SENS", 1.0f);
     const char *invert = getenv("BOZ_INVERT_Y");
@@ -309,10 +336,13 @@ enum native_match native_input_match(void) {
         return NATIVE_MATCH_NONE;
     }
     uint64_t now = monotonic_ms();
-    if (g_zombies_ms && now - g_zombies_ms < MATCH_TIMEOUT_MS) {
+    /* Game over (results, spectating) or a cutscene: the player still steps, the playing state not. */
+    if (recent(g_zombies_ms, now) &&
+        (!g_zombies_playing_hooked || recent(g_zombies_playing_ms, now))) {
         return NATIVE_MATCH_ZOMBIES;
     }
-    if (g_dead_ops_ms && now - g_dead_ops_ms < MATCH_TIMEOUT_MS) {
+    if (recent(g_dead_ops_ms, now) &&
+        (!g_dead_ops_playing_hooked || recent(g_dead_ops_playing_ms, now))) {
         return NATIVE_MATCH_DEAD_OPS;
     }
     return NATIVE_MATCH_NONE;

@@ -20,6 +20,10 @@ void crash_recovery_install(uint32_t image_base);
 /* The account name the game builds from "Player-%d" points at player_name_address instead. */
 bool player_name_install(struct s3e_loaded_image *loaded, uint32_t player_name_address);
 
+/* The interaction prompt without its touch/Xperia X button (prompt_button.c); off with
+ * BOZ_TOUCHPAD_CONTROLS. */
+bool prompt_button_install(struct s3e_loaded_image *loaded);
+
 /* The HUD's touch stick art in ingame.group.bin made transparent (hud_sticks.c). */
 bool hud_sticks_apply_to(const char *name);
 bool hud_sticks_hide(uint8_t *data, size_t size);

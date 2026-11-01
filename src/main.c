@@ -171,6 +171,9 @@ int main(int argc, char **argv) {
         !player_name_install(&loaded, (uint32_t)player_name_address)) {
         fprintf(stderr, "unable to apply configured player name\n");
     }
+    if (!prompt_button_install(&loaded)) {
+        fprintf(stderr, "prompt button not hidden: the game executable does not match\n");
+    }
 
     fprintf(stderr, "mapped S3E at %p, entry=%p\n", (void *)loaded.base,
             (void *)(loaded.base + loaded.entry_offset));
