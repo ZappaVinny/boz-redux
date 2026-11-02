@@ -34,9 +34,11 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
     /* Only Ethernet and Wi-Fi adapters carry mDNS multicast (LAN VPNs such as Radmin, Hamachi
      * and ZeroTier appear as Ethernet); tunnels such as Tailscale and WireGuard do not. The
      * adapter with the default gateway goes first, so the home network wins over virtual
-     * adapters. */
+     * adapters. Pass -1 looks only for the adapter [network] interface names. */
+    struct in_addr wanted;
+    int want = zeroconf_platform_wanted_ipv4(&wanted);
     int found = 0;
-    for (int pass = 0; result == NO_ERROR && pass < 2 && !found; ++pass) {
+    for (int pass = want ? -1 : 0; result == NO_ERROR && pass < 2 && !found; ++pass) {
         for (const IP_ADAPTER_ADDRESSES *adapter = adapters; adapter && !found;
              adapter = adapter->Next) {
             if (adapter->OperStatus != IfOperStatusUp ||
@@ -53,12 +55,19 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
                     continue;
                 }
                 const struct sockaddr_in *candidate = (const struct sockaddr_in *)address;
+                if (pass == -1 && candidate->sin_addr.s_addr != wanted.s_addr) {
+                    continue;
+                }
                 if (candidate->sin_addr.s_addr != htonl(INADDR_ANY)) {
                     *selected = candidate->sin_addr;
                     found = 1;
                     break;
                 }
             }
+        }
+        if (pass == -1 && !found) {
+            fprintf(stderr, "[net] no multicast adapter has %s; picking one automatically\n",
+                    getenv("BOZ_NETWORK_INTERFACE"));
         }
     }
     free(adapters);

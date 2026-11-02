@@ -66,6 +66,9 @@ static const char DEFAULT_CONFIG_TAIL[] =
     "# Online play: a server that answers for the game's online service (empty: offline).\n"
     "server =\n"
     "voice_chat = false\n"
+    "# Co-op discovery: the IPv4 address of the adapter to find rooms on, e.g. your Radmin VPN\n"
+    "# address (empty: picked automatically).\n"
+    "interface =\n"
     "\n"
     "[mods]\n"
     "# Set by the launcher's Mods tab. order: load order (when two mods replace the same file, the\n"
@@ -221,6 +224,12 @@ static bool apply(const char *section, const char *key, const char *value) {
     if (!strcmp(section, "network")) {
         if (!strcmp(key, "server")) {
             set_default("BOZ_MULTIPLAYER_SERVER", value);
+            return true;
+        }
+        if (!strcmp(key, "interface")) {
+            if (value[0]) {
+                set_default("BOZ_NETWORK_INTERFACE", value);
+            }
             return true;
         }
         if (!strcmp(key, "voice_chat") && parse_bool(value, &flag)) {

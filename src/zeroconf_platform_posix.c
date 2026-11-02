@@ -24,20 +24,32 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
     if (getifaddrs(&interfaces) != 0) {
         return 0;
     }
+    /* Pass 0 looks only for the adapter [network] interface names; pass 1 picks automatically. */
+    struct in_addr wanted;
+    int want = zeroconf_platform_wanted_ipv4(&wanted);
     int found = 0;
-    for (const struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
-        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET ||
-            !(item->ifa_flags & IFF_UP) || !(item->ifa_flags & IFF_RUNNING) ||
-            !(item->ifa_flags & IFF_MULTICAST) || (item->ifa_flags & IFF_LOOPBACK) ||
-            (item->ifa_flags & IFF_POINTOPOINT)) {
-            /* Point-to-point tunnels (Tailscale, WireGuard) do not carry mDNS multicast. */
-            continue;
+    for (int pass = want ? 0 : 1; pass < 2 && !found; ++pass) {
+        for (const struct ifaddrs *item = interfaces; item; item = item->ifa_next) {
+            if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET ||
+                !(item->ifa_flags & IFF_UP) || !(item->ifa_flags & IFF_RUNNING) ||
+                !(item->ifa_flags & IFF_MULTICAST) || (item->ifa_flags & IFF_LOOPBACK) ||
+                (item->ifa_flags & IFF_POINTOPOINT)) {
+                /* Point-to-point tunnels (Tailscale, WireGuard) do not carry mDNS multicast. */
+                continue;
+            }
+            const struct sockaddr_in *candidate = (const struct sockaddr_in *)item->ifa_addr;
+            if (pass == 0 && candidate->sin_addr.s_addr != wanted.s_addr) {
+                continue;
+            }
+            if (candidate->sin_addr.s_addr != htonl(INADDR_ANY)) {
+                *selected = candidate->sin_addr;
+                found = 1;
+                break;
+            }
         }
-        const struct sockaddr_in *candidate = (const struct sockaddr_in *)item->ifa_addr;
-        if (candidate->sin_addr.s_addr != htonl(INADDR_ANY)) {
-            *selected = candidate->sin_addr;
-            found = 1;
-            break;
+        if (pass == 0 && !found) {
+            fprintf(stderr, "[net] no multicast adapter has %s; picking one automatically\n",
+                    getenv("BOZ_NETWORK_INTERFACE"));
         }
     }
     freeifaddrs(interfaces);

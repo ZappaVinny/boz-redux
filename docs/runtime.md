@@ -56,6 +56,7 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_PLAYER_NAME` | The name the game uses for you (`[player] name`) |
 | `BOZ_MULTIPLAYER_SERVER` | A server answering the game's online service (`[network] server`) |
 | `BOZ_VOICE_CHAT=1` | Voice chat on (`[network] voice_chat`) |
+| `BOZ_NETWORK_INTERFACE` | IPv4 address of the adapter co-op discovery uses, e.g. a Radmin VPN address (`[network] interface`; empty: automatic) |
 | `BOZ_TRACE_NET=1` | Log sockets (bind, listen, accept, connect, errors) and co-op discovery (published and found games, the chosen interface) (`[debug] log_network`) |
 | `BOZ_SWIPE_GAIN` | Dead Ops: swipe look speed |
 | `BOZ_TRACE_CODE=1` | Trace guest code execution (very slow) |
