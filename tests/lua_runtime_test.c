@@ -66,6 +66,7 @@ int main(void) {
                "assert(settings.get('n') == 12.5 and settings.get('b') == true)\n"
                "local helper = require('lib.helper')\n"
                "assert(helper.answer == 42, 'require from the mod')\n"
+               "assert(require('lib.pack').packaged == true, 'a folder with init.lua')\n"
                "events.on('frame', function(dt) settings.set('frames', (settings.get('frames', 0)) + 1) end)\n"
                "input.bind('F5', function() settings.set('f5', true) end)\n"
                "assets.patch('Menu.BIN', function(bytes) return bytes:upper() .. '!' end)\n"
@@ -74,6 +75,10 @@ int main(void) {
     mkdir(path, 0755);
     snprintf(path, sizeof(path), "%s/mods/t/scripts/lib/helper.lua", root);
     write_file(path, "return {answer = 42}\n");
+    snprintf(path, sizeof(path), "%s/mods/t/scripts/lib/pack", root);
+    mkdir(path, 0755);
+    snprintf(path, sizeof(path), "%s/mods/t/scripts/lib/pack/init.lua", root);
+    write_file(path, "return {packaged = true}\n");
 
     client_config_load(root);
     mods_init(root);

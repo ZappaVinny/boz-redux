@@ -451,7 +451,8 @@ static void load_into_env(lua_State *state, const char *path, int env_index) {
     lua_setupvalue(state, -2, 1); /* _ENV */
 }
 
-/* require(name) inside a mod: <mod>/scripts/<name with dots as slashes>.lua, run once. */
+/* require(name) inside a mod: <mod>/scripts/<name with dots as slashes>.lua, else that folder's
+ * init.lua (a package: require("boz") loads scripts/boz/init.lua), run once. */
 static int api_require(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     int mod = (int)lua_tointeger(state, lua_upvalueindex(1));
@@ -476,6 +477,12 @@ static int api_require(lua_State *state) {
     }
     char path[1400];
     snprintf(path, sizeof(path), "%s/scripts/%s.lua", info ? info->dir : ".", relative);
+    FILE *probe = fopen(path, "rb");
+    if (probe) {
+        fclose(probe);
+    } else {
+        snprintf(path, sizeof(path), "%s/scripts/%s/init.lua", info ? info->dir : ".", relative);
+    }
     load_into_env(state, path, env);
     lua_pushstring(state, name);
     lua_call(state, 1, 1);
