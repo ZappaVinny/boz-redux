@@ -84,6 +84,35 @@ jobs:
       - name: Test
         run: scripts/test-windows.sh
 
+  # The Windows build made on Windows itself (MSYS2 MINGW32), for contributors without Linux:
+  # it must configure, build and pass the unit tests just like the cross build.
+  windows-native:
+    name: Windows native (MSYS2)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            git
+            mingw-w64-i686-toolchain
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+
+      - name: Build and test
+        run: |
+          cmake --preset windows-x86-msys2
+          cmake --build --preset windows-x86-msys2-tests
+          ctest --test-dir build/windows-x86 --output-on-failure
+
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
