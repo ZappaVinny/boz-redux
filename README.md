@@ -61,6 +61,24 @@ cmake --build --preset windows-x86
 scripts/package-windows.sh    # downloads ANGLE and Mesa for Windows and writes build/windows-x86/package/BOZ-Redux-windows-x86.zip
 ```
 
+### Windows build (on Windows)
+
+Install [MSYS2](https://www.msys2.org), open the **MSYS2 MINGW32** shell and install the tools once:
+
+```bash
+pacman -S --needed git zip libarchive mingw-w64-i686-toolchain mingw-w64-i686-cmake mingw-w64-i686-ninja
+```
+
+Then, in the repo:
+
+```bash
+git submodule update --init --recursive
+cmake --preset windows-x86-msys2
+cmake --build --preset windows-x86-msys2-tests   # loader, extractor, launcher, SDL2 and the tests
+ctest --test-dir build/windows-x86 --output-on-failure
+scripts/package-windows.sh    # the same zip as the cross build
+```
+
 The Windows client renders through ANGLE (OpenGL ES on Direct3D 11, as in Chrome), which works on almost every GPU. A bundled Mesa in `mesa\` is the fallback: the launcher's Renderer setting (or `renderer` in `client.ini`) picks Mesa's Direct3D 12, Vulkan or software renderer; software is slow but always works.
 
 ## Controls

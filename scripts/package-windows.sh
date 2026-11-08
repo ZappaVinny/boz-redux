@@ -6,7 +6,9 @@ stage="$build/package/BOZ-Redux"
 rm -rf "$build/package"
 mkdir -p "$stage"
 cp "$build/bin/boz-redux.exe" "$build/bin/codboz_s3e_loader.exe" "$build/bin/codboz_apk_extract.exe" "$build/bin/SDL2.dll" "$build/bin/SDL2_mixer.dll" "$stage/"
-i686-w64-mingw32-strip "$stage/boz-redux.exe" "$stage/codboz_s3e_loader.exe" "$stage/codboz_apk_extract.exe"
+# Cross toolchains prefix strip; an MSYS2 MINGW32 shell on Windows has it as plain strip.
+strip_tool="$(command -v i686-w64-mingw32-strip || command -v strip)"
+"$strip_tool" "$stage/boz-redux.exe" "$stage/codboz_s3e_loader.exe" "$stage/codboz_apk_extract.exe"
 cp "$here/packaging/windows/README.txt" "$stage/"
 cp "$here/packaging/windows/setup.bat" "$here/packaging/windows/run.bat" "$stage/"
 # ANGLE (Direct3D 11) next to the game is the default renderer; Mesa (software, Direct3D 12 or
