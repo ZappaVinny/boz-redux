@@ -88,6 +88,51 @@ static int configure_socket(int socket_fd, struct in_addr interface_address) {
             errno == EADDRINUSE);
 }
 
+static int eligible(const struct ifaddrs *item) {
+    if (!item->ifa_addr || item->ifa_addr->sa_family != AF_INET || !(item->ifa_flags & IFF_UP) ||
+        !(item->ifa_flags & IFF_RUNNING) || !(item->ifa_flags & IFF_MULTICAST) ||
+        (item->ifa_flags & IFF_LOOPBACK) || (item->ifa_flags & IFF_POINTOPOINT)) {
+        return 0;
+    }
+    uint32_t address = ntohl(((const struct sockaddr_in *)item->ifa_addr)->sin_addr.s_addr);
+    return address != 0 && (address >> 16) != 0xa9feu; /* not 169.254/16 */
+}
+
+int zeroconf_platform_list_ipv4(struct in_addr *addresses, struct in_addr *netmasks, int capacity) {
+    struct ifaddrs *interfaces = NULL;
+    if (capacity <= 0 || getifaddrs(&interfaces) != 0) {
+        return 0;
+    }
+    struct in_addr wanted;
+    int want = zeroconf_platform_wanted_ipv4(&wanted);
+    int count = 0;
+    for (int pass = want ? 0 : 1; pass < 2 && count == 0; ++pass) {
+        for (const struct ifaddrs *item = interfaces; item && count < capacity; item = item->ifa_next) {
+            if (!eligible(item)) {
+                continue;
+            }
+            const struct sockaddr_in *candidate = (const struct sockaddr_in *)item->ifa_addr;
+            if (pass == 0 && candidate->sin_addr.s_addr != wanted.s_addr) {
+                continue;
+            }
+            addresses[count] = candidate->sin_addr;
+            if (netmasks) {
+                netmasks[count].s_addr =
+                    item->ifa_netmask ? ((const struct sockaddr_in *)item->ifa_netmask)->sin_addr.s_addr
+                                      : htonl(0xffffff00u);
+            }
+            ++count;
+        }
+    }
+    freeifaddrs(interfaces);
+    return count;
+}
+
+int zeroconf_platform_set_multicast_interface(int socket_fd, struct in_addr interface_address) {
+    return setsockopt(socket_fd, IPPROTO_IP, IP_MULTICAST_IF, &interface_address,
+                      sizeof(interface_address)) == 0;
+}
+
 int zeroconf_platform_open_socket(struct in_addr *selected) {
     struct in_addr interface_address;
     if (!zeroconf_platform_select_ipv4(&interface_address)) {
@@ -100,6 +145,19 @@ int zeroconf_platform_open_socket(struct in_addr *selected) {
     if (!configure_socket(socket_fd, interface_address)) {
         close(socket_fd);
         return -1;
+    }
+    /* Also listen on the other adapters (configure_socket joined the first one). */
+    struct in_addr others[16];
+    int count = zeroconf_platform_list_ipv4(others, NULL, 16);
+    for (int i = 0; i < count; ++i) {
+        if (others[i].s_addr == interface_address.s_addr) {
+            continue;
+        }
+        struct ip_mreq multicast = {
+            .imr_multiaddr.s_addr = htonl(MDNS_MULTICAST_ADDRESS),
+            .imr_interface = others[i],
+        };
+        (void)setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &multicast, sizeof(multicast));
     }
     if (selected) {
         *selected = interface_address;

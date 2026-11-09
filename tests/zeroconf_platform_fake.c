@@ -38,6 +38,22 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
     return 1;
 }
 
+int zeroconf_platform_list_ipv4(struct in_addr *addresses, struct in_addr *netmasks, int capacity) {
+    if (capacity <= 0 || !zeroconf_platform_select_ipv4(&addresses[0])) {
+        return 0;
+    }
+    if (netmasks) {
+        netmasks[0].s_addr = htonl(0xffffff00u);
+    }
+    return 1;
+}
+
+int zeroconf_platform_set_multicast_interface(int socket_fd, struct in_addr interface_address) {
+    (void)socket_fd;
+    (void)interface_address;
+    return 1;
+}
+
 int zeroconf_platform_open_socket(struct in_addr *selected) {
     return zeroconf_platform_select_ipv4(selected) ? 1 : -1;
 }
