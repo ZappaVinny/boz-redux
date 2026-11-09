@@ -66,8 +66,8 @@ void dispatch_due_timers(void) {
         timer->next = NULL;
         pthread_mutex_unlock(&g_timer_mutex);
 
-        s3e_guest_call(timer->callback, 2, 0u, S3E_GUEST_ARG(timer->user_data));
-        free(timer);
+        s3e_guest_call(GUEST_ADDRESS(timer->callback), 2, 0u, S3E_GUEST_ARG(timer->user_data));
+        guest_free(timer);
     }
 }
 
@@ -77,7 +77,7 @@ int32_t s3eTimerSetTimer(uint32_t period_ms, void *callback, void *user_data) {
 
     if (!callback) {
         pthread_mutex_unlock(&g_timer_mutex);
-        free(timer);
+        guest_free(timer);
         return S3E_TIMER_ERROR;
     }
     if (!timer && timer_count_locked() >= S3E_TIMER_MAX_EVENTS) {
@@ -85,7 +85,7 @@ int32_t s3eTimerSetTimer(uint32_t period_ms, void *callback, void *user_data) {
         return S3E_TIMER_ERROR;
     }
     if (!timer) {
-        timer = calloc(1, sizeof(*timer));
+        timer = guest_calloc(1, sizeof(*timer));
         if (!timer) {
             pthread_mutex_unlock(&g_timer_mutex);
             return S3E_TIMER_ERROR;
@@ -118,7 +118,7 @@ int32_t s3eTimerCancelTimer(void *callback, void *user_data) {
     pthread_mutex_lock(&g_timer_mutex);
     struct timer_event *timer = remove_timer_locked(callback, user_data);
     pthread_mutex_unlock(&g_timer_mutex);
-    free(timer);
+    guest_free(timer);
     return timer ? S3E_TIMER_SUCCESS : S3E_TIMER_ERROR;
 }
 

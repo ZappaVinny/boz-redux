@@ -74,6 +74,80 @@ int zeroconf_platform_select_ipv4(struct in_addr *selected) {
     return found;
 }
 
+static IP_ADAPTER_ADDRESSES *adapter_list(void) {
+    ULONG size = 16 * 1024;
+    IP_ADAPTER_ADDRESSES *adapters = NULL;
+    ULONG result = ERROR_BUFFER_OVERFLOW;
+    for (int attempt = 0; attempt < 3 && result == ERROR_BUFFER_OVERFLOW; ++attempt) {
+        free(adapters);
+        adapters = malloc(size);
+        if (!adapters) {
+            return NULL;
+        }
+        result = GetAdaptersAddresses(AF_INET,
+                                      GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                          GAA_FLAG_SKIP_DNS_SERVER,
+                                      NULL, adapters, &size);
+    }
+    if (result != NO_ERROR) {
+        free(adapters);
+        return NULL;
+    }
+    return adapters;
+}
+
+int zeroconf_platform_list_ipv4(struct in_addr *addresses, struct in_addr *netmasks, int capacity) {
+    IP_ADAPTER_ADDRESSES *adapters = capacity > 0 ? adapter_list() : NULL;
+    if (!adapters) {
+        return 0;
+    }
+    struct in_addr wanted;
+    int want = zeroconf_platform_wanted_ipv4(&wanted);
+    int count = 0;
+    for (int pass = want ? 0 : 1; pass < 2 && count == 0; ++pass) {
+        for (const IP_ADAPTER_ADDRESSES *adapter = adapters; adapter && count < capacity;
+             adapter = adapter->Next) {
+            /* Ethernet and Wi-Fi carry mDNS multicast; LAN VPNs (Radmin, ZeroTier, Hamachi)
+             * appear as Ethernet. */
+            if (adapter->OperStatus != IfOperStatusUp ||
+                (adapter->IfType != IF_TYPE_ETHERNET_CSMACD &&
+                 adapter->IfType != IF_TYPE_IEEE80211) ||
+                (adapter->Flags & IP_ADAPTER_NO_MULTICAST)) {
+                continue;
+            }
+            for (const IP_ADAPTER_UNICAST_ADDRESS *unicast = adapter->FirstUnicastAddress;
+                 unicast && count < capacity; unicast = unicast->Next) {
+                const struct sockaddr *address = unicast->Address.lpSockaddr;
+                if (!address || address->sa_family != AF_INET) {
+                    continue;
+                }
+                struct in_addr candidate = ((const struct sockaddr_in *)address)->sin_addr;
+                uint32_t host = ntohl(candidate.s_addr);
+                if (!host || (host >> 16) == 0xa9feu) {
+                    continue; /* 169.254/16: no network behind it */
+                }
+                if (pass == 0 && candidate.s_addr != wanted.s_addr) {
+                    continue;
+                }
+                addresses[count] = candidate;
+                if (netmasks) {
+                    unsigned prefix = unicast->OnLinkPrefixLength;
+                    netmasks[count].s_addr =
+                        htonl(prefix >= 32 ? 0xffffffffu : prefix ? ~(0xffffffffu >> prefix) : 0);
+                }
+                ++count;
+            }
+        }
+    }
+    free(adapters);
+    return count;
+}
+
+int zeroconf_platform_set_multicast_interface(int socket_fd, struct in_addr interface_address) {
+    return setsockopt(socket_fd, IPPROTO_IP, IP_MULTICAST_IF, (const char *)&interface_address,
+                      sizeof(interface_address)) == 0;
+}
+
 static int configure_socket(int socket_fd, struct in_addr interface_address) {
     int enabled = 1;
     int ttl = 255;
@@ -116,6 +190,20 @@ int zeroconf_platform_open_socket(struct in_addr *selected) {
     if (!configure_socket(socket_fd, interface_address)) {
         socket_close(socket_fd);
         return -1;
+    }
+    /* Also listen on the other adapters (configure_socket joined the first one). */
+    struct in_addr others[16];
+    int count = zeroconf_platform_list_ipv4(others, NULL, 16);
+    for (int i = 0; i < count; ++i) {
+        if (others[i].s_addr == interface_address.s_addr) {
+            continue;
+        }
+        struct ip_mreq multicast = {
+            .imr_multiaddr.s_addr = htonl(MDNS_MULTICAST_ADDRESS),
+            .imr_interface = others[i],
+        };
+        (void)setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (const char *)&multicast,
+                         sizeof(multicast));
     }
     if (selected) {
         *selected = interface_address;

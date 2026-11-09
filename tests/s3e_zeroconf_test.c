@@ -31,15 +31,16 @@ static int32_t found_callback(void *search, void *system_data, void *user_data) 
     const struct s3e_zeroconf_found_data *found = system_data;
     assert(search == state->search);
     assert(found && found->service_id && found->name && found->host);
-    state->service_id = found->service_id;
+    state->service_id = (void *)(uintptr_t)found->service_id;
     state->ipv4_address = found->ipv4_address;
     state->port = found->port;
     state->txt_count = found->txt_count;
-    snprintf(state->name, sizeof(state->name), "%s", found->name);
+    snprintf(state->name, sizeof(state->name), "%s", (const char *)(uintptr_t)found->name);
     state->txt[0] = 0;
     if (found->txt_count) {
-        assert(found->txt_records && found->txt_records[0]);
-        snprintf(state->txt, sizeof(state->txt), "%s", found->txt_records[0]);
+        const uint32_t *records = (const uint32_t *)(uintptr_t)found->txt_records;
+        assert(records && records[0]);
+        snprintf(state->txt, sizeof(state->txt), "%s", (const char *)(uintptr_t)records[0]);
     }
     ++state->found_count;
     return 0;
@@ -49,12 +50,13 @@ static int32_t update_callback(void *search, void *system_data, void *user_data)
     struct callback_state *state = user_data;
     const struct s3e_zeroconf_txt_update_data *update = system_data;
     assert(search == state->search);
-    assert(update && update->service_id == state->service_id);
+    assert(update && (void *)(uintptr_t)update->service_id == state->service_id);
     state->txt_count = update->txt_count;
     state->txt[0] = 0;
     if (update->txt_count) {
-        assert(update->txt_records && update->txt_records[0]);
-        snprintf(state->txt, sizeof(state->txt), "%s", update->txt_records[0]);
+        const uint32_t *records = (const uint32_t *)(uintptr_t)update->txt_records;
+        assert(records && records[0]);
+        snprintf(state->txt, sizeof(state->txt), "%s", (const char *)(uintptr_t)records[0]);
     }
     ++state->update_count;
     if (state->reentrant_packet_size) {
@@ -201,7 +203,7 @@ static void test_discovery_ttl_expiry(void) {
 
 static void test_publish_lifecycle(void) {
     zeroconf_platform_fake_reset();
-    const char *txt[] = {"version=1"};
+    const uint32_t txt[] = {GUEST_ADDRESS("version=1")};
     void *publication =
         s3eZeroConfPublish(htons(10), "Kino Lobby", "_PROJECT_KIWI._tcp", NULL, 1, txt);
     assert(publication);
@@ -219,7 +221,7 @@ static void test_publish_lifecycle(void) {
     s3e_zero_conf_pump();
     assert(zeroconf_platform_fake_sent_count() == 1);
 
-    const char *updated[] = {"version=2"};
+    const uint32_t updated[] = {GUEST_ADDRESS("version=2")};
     assert(s3eZeroConfUpdateTxtRecord(publication, 1, updated) == TEST_RESULT_SUCCESS);
     zeroconf_platform_fake_advance(999);
     s3e_zero_conf_pump();

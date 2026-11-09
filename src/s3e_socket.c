@@ -310,7 +310,7 @@ static int resolve_hostname(const char *hostname, struct sockaddr_storage *resul
     while (selected && selected->ai_family != AF_INET && selected->ai_family != AF_INET6) {
         selected = selected->ai_next;
     }
-    if (!selected || selected->ai_addrlen > sizeof(*result)) {
+    if (!selected || (size_t)selected->ai_addrlen > sizeof(*result)) {
         freeaddrinfo(addresses);
         return EAI_NONAME;
     }
@@ -346,8 +346,8 @@ static void free_dns_lookup(struct dns_lookup *lookup) {
     if (!lookup) {
         return;
     }
-    free(lookup->hostname);
-    free(lookup);
+    guest_free(lookup->hostname);
+    guest_free(lookup);
 }
 
 static void pump_dns_lookup(void) {
@@ -372,7 +372,7 @@ static void pump_dns_lookup(void) {
         } else {
             set_socket_error(S3E_SOCKET_ERR_UNKNOWN_HOST);
         }
-        s3e_guest_call(lookup->callback, 2, S3E_GUEST_ARG(system_data),
+        s3e_guest_call(GUEST_ADDRESS(lookup->callback), 2, S3E_GUEST_ARG(system_data),
                        S3E_GUEST_ARG(lookup->user_data));
     }
     free_dns_lookup(lookup);
@@ -467,14 +467,14 @@ int32_t s3eInetLookup(const char *hostname, struct s3e_inet_address *address, vo
         return S3E_RESULT_SUCCESS;
     }
 
-    struct dns_lookup *lookup = calloc(1, sizeof(*lookup));
+    struct dns_lookup *lookup = guest_calloc(1, sizeof(*lookup));
     if (!lookup) {
         set_socket_error(S3E_SOCKET_ERR_UNAVAIL);
         return S3E_RESULT_ERROR;
     }
-    lookup->hostname = strdup(resolved_hostname);
+    lookup->hostname = guest_strdup(resolved_hostname);
     if (!lookup->hostname) {
-        free(lookup);
+        guest_free(lookup);
         set_socket_error(S3E_SOCKET_ERR_UNAVAIL);
         return S3E_RESULT_ERROR;
     }
@@ -914,7 +914,7 @@ static int slot_matches(uint32_t index, uint32_t generation) {
 static void invoke_socket_callback(s3e_socket_callback_fn callback, void *socket, void *system_data,
                                    void *user_data) {
     if (callback) {
-        s3e_guest_call(callback, 3, S3E_GUEST_ARG(socket), S3E_GUEST_ARG(system_data),
+        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(socket), S3E_GUEST_ARG(system_data),
                        S3E_GUEST_ARG(user_data));
     }
 }

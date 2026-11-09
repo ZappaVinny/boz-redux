@@ -26,6 +26,12 @@ uint64_t zeroconf_platform_now_ms(void);
 /* Selection and send return boolean success; open returns a descriptor or -1. */
 int zeroconf_platform_select_ipv4(struct in_addr *selected);
 int zeroconf_platform_open_socket(struct in_addr *selected);
+/* Every adapter co-op discovery speaks on (as BOZ Reimagined does): the home network, LAN VPNs
+ * such as Radmin and ZeroTier, wired and Wi-Fi alike, with their netmasks; only the [network]
+ * interface one when that is set. Link-local (169.254) addresses are left out. Returns the count. */
+int zeroconf_platform_list_ipv4(struct in_addr *addresses, struct in_addr *netmasks, int capacity);
+/* Which adapter the next multicast send leaves through. */
+int zeroconf_platform_set_multicast_interface(int socket_fd, struct in_addr interface_address);
 int zeroconf_platform_send(int socket_fd, const uint8_t *packet, size_t packet_size,
                            const struct sockaddr_in *destination);
 /* Receive returns a byte count or -1 with errno set. */

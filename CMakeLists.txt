@@ -5,13 +5,40 @@ if(WIN32)
   enable_language(RC)
 endif()
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-  message(FATAL_ERROR "The client must be built as a 32-bit program; use a preset (cmake --preset linux-x86)")
+# The ARM CPU: Unicorn on 32-bit x86 hosts (src/arm_emu.c), the Dynarmic JIT on 64-bit hosts
+# (src/arm_emu_dynarmic.cpp, x86-64 and AArch64), and on 32-bit ARM hosts (Android armeabi-v7a
+# TVs) none at all: the game's code runs natively (src/arm_emu_native.c). All run the same client;
+# see docs/runtime.md. -DBOZ_CPU=unicorn picks Unicorn on a 32-bit ARM host too.
+set(BOZ_CPU "" CACHE STRING "ARM CPU: unicorn, dynarmic or native (empty: by host)")
+if(NOT BOZ_CPU)
+  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(BOZ_CPU dynarmic)
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7)")
+    set(BOZ_CPU native)
+  else()
+    set(BOZ_CPU unicorn)
+  endif()
+endif()
+message(STATUS "ARM CPU: ${BOZ_CPU}")
+# The game's 4 GiB at an offset in the host (guest_memory.h): required on Android and the Switch,
+# where the low 4 GiB of the process are not ours; on a 64-bit PC it tests that path.
+option(BOZ_GUEST_BASE "Map the game's memory at a base offset (64-bit only)" OFF)
+# 32-bit Android (armeabi-v7a TVs): every host address fits the game's 32 bits, as on 32-bit x86,
+# so Unicorn maps the game where it lives; Gradle passes BOZ_GUEST_BASE=ON for all ABIs.
+if(ANDROID AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(BOZ_GUEST_BASE OFF CACHE BOOL "" FORCE)
+endif()
+if(BOZ_GUEST_BASE AND NOT BOZ_CPU STREQUAL "dynarmic")
+  message(FATAL_ERROR "BOZ_GUEST_BASE needs a 64-bit build")
 endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
+if(BOZ_CPU STREQUAL "dynarmic")
+  set(CMAKE_CXX_STANDARD 20) # Dynarmic's headers use concepts
+else()
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -19,6 +46,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+if(BOZ_CPU STREQUAL "unicorn")
 file(GLOB BOZ_UNICORN_PATCHES ${CMAKE_SOURCE_DIR}/third_party/patches/unicorn-*.patch)
 foreach(patch IN LISTS BOZ_UNICORN_PATCHES)
   execute_process(COMMAND git apply --reverse --check ${patch}
@@ -43,10 +71,33 @@ add_subdirectory(third_party/unicorn EXCLUDE_FROM_ALL)
 # Linux: Unicorn and the loader without position-independent code. On 32-bit x86, PIC costs a
 # get_pc_thunk call in every function, and the JIT calls Unicorn's helpers constantly: the game
 # ran 15-20% faster without it (scripts/bench.sh). Windows code is not PIC to begin with.
-if(NOT WIN32)
+if(NOT WIN32 AND NOT ANDROID) # Android's shared libraries must be PIC
   foreach(target unicorn unicorn-common arm-softmmu)
     target_compile_options(${target} PRIVATE -fno-pic -fno-pie)
   endforeach()
+endif()
+set(BOZ_CPU_SOURCES src/arm_emu.c)
+set(BOZ_CPU_LIBS unicorn)
+elseif(BOZ_CPU STREQUAL "native")
+  set(BOZ_CPU_SOURCES src/arm_emu_native.c)
+  set(BOZ_CPU_LIBS)
+else()
+  # Dynarmic: only the A32 frontend, its bundled externals (fmt, mcl, xbyak/oaknut, zydis) and
+  # Boost's headers (MSYS2: mingw-w64-x86_64-boost; Debian: libboost-dev).
+  set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
+  set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
+  set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_INSTALL OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(third_party/dynarmic EXCLUDE_FROM_ALL)
+  set(BOZ_CPU_SOURCES src/arm_emu_dynarmic.cpp)
+  set(BOZ_CPU_LIBS dynarmic merry::mcl)
+  # arm_emu_dynarmic.cpp uses Dynarmic's IR headers, which include Boost (Android: Gradle passes
+  # Boost_INCLUDE_DIR; MSYS2 and Linux find it in the system include path).
+  if(Boost_INCLUDE_DIR)
+    include_directories(SYSTEM ${Boost_INCLUDE_DIR})
+  endif()
 endif()
 
 set(SDL_SHARED ON CACHE BOOL "" FORCE)
@@ -136,7 +187,7 @@ endfunction()
 
 add_library(boz_project INTERFACE)
 target_include_directories(boz_project INTERFACE include src third_party/lzma)
-target_compile_definitions(boz_project INTERFACE _GNU_SOURCE)
+target_compile_definitions(boz_project INTERFACE _GNU_SOURCE $<$<BOOL:${BOZ_GUEST_BASE}>:BOZ_GUEST_BASE>)
 target_compile_options(boz_project INTERFACE ${BOZ_WARNINGS})
 
 if(WIN32)
@@ -149,10 +200,27 @@ endif()
 
 add_library(boz_common STATIC src/str_util.c)
 target_link_libraries(boz_common PUBLIC boz_project)
+# The guest heap (64-bit hosts: memory the game sees has to sit below 4 GiB).
+add_library(boz_guest_heap STATIC src/guest_heap.c src/host_signatures.c ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(boz_guest_heap PUBLIC boz_project)
+target_link_libraries(boz_common PUBLIC boz_guest_heap)
 
-add_executable(codboz_s3e_loader
+# Android: the game is libmain.so, which SDL's Java activity loads and runs (SDL_main); the guest
+# base map is required there (packaging/android).
+if(ANDROID AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  if(NOT BOZ_GUEST_BASE)
+    message(FATAL_ERROR "64-bit Android builds need -DBOZ_GUEST_BASE=ON")
+  endif()
+endif()
+if(ANDROID)
+  add_library(codboz_s3e_loader SHARED)
+  set_target_properties(codboz_s3e_loader PROPERTIES OUTPUT_NAME main)
+else()
+  add_executable(codboz_s3e_loader)
+endif()
+target_sources(codboz_s3e_loader PRIVATE
   ${BOZ_PLATFORM_SOURCES}
-  src/arm_emu.c
+  ${BOZ_CPU_SOURCES}
   src/client_config.c
   src/game_patches/crash_recovery.c
   src/game_patches/frame_interpolation.c
@@ -168,6 +236,7 @@ add_executable(codboz_s3e_loader
   src/lua_settings.c
   src/lua_assets.c
   src/native_input.c
+  src/touch_controls.c
   src/overlay.cpp
   src/branding/brand_imgui.cpp
   src/s3e_config.c
@@ -191,23 +260,66 @@ add_executable(codboz_s3e_loader
 if(WIN32)
   set(BOZ_SYSTEM_LIBS ws2_32 iphlpapi winmm bcrypt)
   set(BOZ_SYSTEM_LINK_OPTIONS -static -static-libgcc -Wl,--large-address-aware)
+elseif(ANDROID)
+  set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} log m)
+  set(BOZ_SYSTEM_LINK_OPTIONS)
 else()
   set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
   set(BOZ_SYSTEM_LINK_OPTIONS)
 endif()
-target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
+target_link_libraries(boz_guest_heap PUBLIC ${BOZ_SYSTEM_LIBS})
+# Programs that run game code on a 64-bit host: guest code calls host functions at their own
+# address, so the executable sits at a fixed base below 4 GiB (Linux: -no-pie, below).
+set(BOZ_GUEST_LINK_OPTIONS)
+if(WIN32 AND BOZ_CPU STREQUAL "dynarmic")
+  set(BOZ_SYSTEM_LINK_OPTIONS -static -static-libgcc -static-libstdc++)
+  if(NOT BOZ_GUEST_BASE)
+    # Guest-base builds call every host function through a slot, so the executable may sit
+    # anywhere; leaving it high also makes any host pointer handed to the game stand out.
+    set(BOZ_GUEST_LINK_OPTIONS -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase
+        -Wl,--disable-high-entropy-va)
+  endif()
+endif()
+target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding ${BOZ_CPU_LIBS} lua imgui_core ${BOZ_SYSTEM_LIBS})
 boz_windows_resources(codboz_s3e_loader "BOZ Redux game")
-target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
-if(NOT WIN32)
+target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
+if(NOT WIN32 AND NOT ANDROID)
   target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
 endif()
 target_compile_options(codboz_s3e_loader PRIVATE -falign-functions=16)
-if(NOT WIN32)
+if(NOT WIN32 AND NOT ANDROID)
   target_compile_options(codboz_s3e_loader PRIVATE -fno-pie)
   target_link_options(codboz_s3e_loader PRIVATE -no-pie)
 endif()
 set_target_properties(codboz_s3e_loader PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH "$ORIGIN")
 add_dependencies(codboz_s3e_loader SDL2 SDL2_mixer)
+
+if(ANDROID)
+  # The launcher on phones and TVs: the desktop launcher as libboz_launcher.so, run by its own
+  # SDL activity (packaging/android LauncherActivity) in the app's main process; the game keeps
+  # its own process. Android starts no programs, so the APK extractor is built in.
+  add_library(boz_launcher SHARED
+    src/launcher/main.cpp
+    src/branding/brand_imgui.cpp
+    src/launcher/game_files.cpp
+    src/launcher/ini_file.cpp
+    src/launcher/os.cpp
+    src/launcher/os_android.cpp
+    src/launcher/sha256.cpp
+    src/client_config.c
+    src/mods.c
+    tools/apk_extract/codboz_apk_extract.c
+    tools/apk_extract/apk_extract_inprocess.c
+    third_party/lzma/LzmaDec.c
+    third_party/imgui/backends/imgui_impl_sdl2.cpp
+    third_party/imgui/backends/imgui_impl_sdlrenderer2.cpp)
+  set_source_files_properties(tools/apk_extract/codboz_apk_extract.c PROPERTIES
+    COMPILE_DEFINITIONS "main=boz_apk_extract_main;exit=boz_apk_extract_exit")
+  target_include_directories(boz_launcher PRIVATE include third_party/imgui/backends)
+  target_compile_definitions(boz_launcher PRIVATE BOZ_VERSION="${BOZ_VERSION}")
+  target_link_libraries(boz_launcher PRIVATE imgui_core boz_common boz_branding SDL2::SDL2 log)
+  return() # the desktop launcher, the extractor program and the tests are desktop programs
+endif()
 
 # Launcher: Dear ImGui on SDL's 2D renderer (Direct3D on Windows, OpenGL or software on Linux).
 add_library(imgui STATIC
@@ -251,7 +363,7 @@ function(boz_test name)
   cmake_parse_arguments(T "" "" "SOURCES;DEFINES;INCLUDES" ${ARGN})
   add_executable(${name} tests/${name}.c ${T_SOURCES} tests/test_support.c)
   target_link_libraries(${name} PRIVATE boz_project boz_common ${BOZ_SYSTEM_LIBS})
-  target_link_options(${name} PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+  target_link_options(${name} PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
   target_compile_definitions(${name} PRIVATE ${T_DEFINES})
   target_compile_options(${name} PRIVATE -UNDEBUG)
   target_include_directories(${name} PRIVATE ${T_INCLUDES})
@@ -281,27 +393,27 @@ boz_test(s3e_audio_test SOURCES src/s3e_audio.c
          DEFINES dlsym=s3e_audio_test_dlsym dlclose=s3e_audio_test_dlclose
                  plat_lib_symbol=s3e_audio_test_dlsym plat_lib_close=s3e_audio_test_dlclose)
 boz_test(s3e_audio_unit_test SOURCES src/s3e_audio_unit.c)
-boz_test(s3e_input_test SOURCES src/s3e_input.c src/client_config.c
+boz_test(s3e_input_test SOURCES src/s3e_input.c src/touch_controls.c src/client_config.c
          DEFINES dlsym=s3e_input_test_dlsym dlclose=s3e_input_test_dlclose
                  plat_lib_symbol=s3e_input_test_dlsym plat_lib_close=s3e_input_test_dlclose)
 
-add_executable(arm_emu_test tests/arm_emu_test.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(arm_emu_test PRIVATE boz_project unicorn ${BOZ_SYSTEM_LIBS})
+add_executable(arm_emu_test tests/arm_emu_test.c ${BOZ_CPU_SOURCES} ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(arm_emu_test PRIVATE boz_project boz_guest_heap ${BOZ_CPU_LIBS} ${BOZ_SYSTEM_LIBS})
 if(NOT WIN32)
   target_link_options(arm_emu_test PRIVATE -no-pie)  # Unicorn is built without PIC
 endif()
-target_link_options(arm_emu_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+target_link_options(arm_emu_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
 target_compile_options(arm_emu_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(arm_emu_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 add_test(NAME arm_emu_test COMMAND arm_emu_test)
 
-add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common unicorn lua ${BOZ_SYSTEM_LIBS})
+add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c ${BOZ_CPU_SOURCES} ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common ${BOZ_CPU_LIBS} lua ${BOZ_SYSTEM_LIBS})
 if(NOT WIN32)
   target_link_options(lua_hooks_test PRIVATE -no-pie)  # Unicorn is built without PIC
 endif()
-target_link_options(lua_hooks_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+target_link_options(lua_hooks_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
 target_compile_options(lua_hooks_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(lua_hooks_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)

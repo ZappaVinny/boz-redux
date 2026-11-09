@@ -109,15 +109,24 @@ static struct sdl_egl_state g_sdl = {
     .depth_size = 16,
     .renderable_type = EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT,
 };
-static int g_display_token;
-static int g_config_token;
 
+/* The handles the game gets for SDL's display, config, window surface and GL context: small
+ * numbers, never memory, so they pass through unchanged however the game's memory is mapped (see
+ * GUEST_LOWEST_ADDRESS in guest_memory.h). */
 static EGLDisplay fallback_display(void) {
-    return (EGLDisplay)(void *)&g_display_token;
+    return (EGLDisplay)(uintptr_t)0x1001;
 }
 
 static EGLConfig fallback_config(void) {
-    return (EGLConfig)(void *)&g_config_token;
+    return (EGLConfig)(uintptr_t)0x1002;
+}
+
+static EGLSurface sdl_surface_handle(void) {
+    return (EGLSurface)(uintptr_t)0x1003;
+}
+
+static EGLContext sdl_context_handle(void) {
+    return (EGLContext)(uintptr_t)0x1004;
 }
 
 static const char *sdl_error(void) {
@@ -378,8 +387,10 @@ static int uses_sdl(EGLDisplay display) {
 }
 
 static int sdl_owns_display(void) {
-#if defined(_WIN32)
-    /* There is no headless native EGL window on Windows; SDL always owns the window. */
+#if defined(_WIN32) || defined(BOZ_GUEST_BASE) || defined(__ANDROID__)
+    /* There is no headless native EGL window on Windows or Android (the only window is SDL's
+     * activity surface); and in guest-base builds (64-bit Android, the Switch) the driver's
+     * handles are pointers the game could not hold. SDL owns the window. */
     return 1;
 #endif
     const char *wayland_display = getenv("WAYLAND_DISPLAY");
@@ -776,7 +787,7 @@ static EGLSurface host_eglCreateWindowSurface(EGLDisplay display, EGLConfig conf
         return NULL;
     }
     g_sdl.surface_valid = 1;
-    return (EGLSurface)g_sdl.window;
+    return sdl_surface_handle();
 }
 
 static EGLContext host_eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext share,
@@ -801,7 +812,7 @@ static EGLContext host_eglCreateContext(EGLDisplay display, EGLConfig config, EG
         return NULL;
     }
     g_sdl.context_valid = 1;
-    return (EGLContext)g_sdl.context;
+    return sdl_context_handle();
 }
 
 static int g_vsync_active;
@@ -848,11 +859,11 @@ static EGLBoolean host_eglMakeCurrent(EGLDisplay display, EGLSurface draw, EGLSu
         destroy_pending_context();
         return 1;
     }
-    if (context != (EGLContext)g_sdl.context || !g_sdl.context_valid) {
+    if (context != sdl_context_handle() || !g_sdl.context_valid) {
         set_error(EGL_BAD_CONTEXT);
         return 0;
     }
-    if (draw != (EGLSurface)g_sdl.window || read != (EGLSurface)g_sdl.window ||
+    if (draw != sdl_surface_handle() || read != sdl_surface_handle() ||
         !g_sdl.surface_valid) {
         set_error(EGL_BAD_SURFACE);
         return 0;
@@ -880,8 +891,8 @@ static EGLBoolean host_eglQuerySurface(EGLDisplay display, EGLSurface surface, E
         }
         return result;
     }
-    if (surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid || !value) {
-        set_error(surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid ? EGL_BAD_SURFACE
+    if (surface != sdl_surface_handle() || !g_sdl.surface_valid || !value) {
+        set_error(surface != sdl_surface_handle() || !g_sdl.surface_valid ? EGL_BAD_SURFACE
                                                                               : EGL_BAD_PARAMETER);
         return 0;
     }
@@ -903,8 +914,8 @@ static EGLBoolean host_eglQueryContext(EGLDisplay display, EGLContext context, E
             lookup_egl("eglQueryContext");
         return native ? native(display, context, attribute, value) : 0;
     }
-    if (context != (EGLContext)g_sdl.context || !g_sdl.context_valid || !value) {
-        set_error(context != (EGLContext)g_sdl.context || !g_sdl.context_valid ? EGL_BAD_CONTEXT
+    if (context != sdl_context_handle() || !g_sdl.context_valid || !value) {
+        set_error(context != sdl_context_handle() || !g_sdl.context_valid ? EGL_BAD_CONTEXT
                                                                                : EGL_BAD_PARAMETER);
         return 0;
     }
@@ -931,7 +942,7 @@ static EGLDisplay host_eglGetCurrentDisplay(void) {
 
 static EGLContext host_eglGetCurrentContext(void) {
     if (g_sdl.active) {
-        return g_sdl.current ? (EGLContext)g_sdl.context : NULL;
+        return g_sdl.current ? sdl_context_handle() : NULL;
     }
     EGLContext (GL_APIENTRY *native)(void) = lookup_egl("eglGetCurrentContext");
     return native ? native() : NULL;
@@ -940,7 +951,7 @@ static EGLContext host_eglGetCurrentContext(void) {
 static EGLSurface host_eglGetCurrentSurface(EGLint readdraw) {
     if (g_sdl.active) {
         (void)readdraw;
-        return g_sdl.current ? (EGLSurface)g_sdl.window : NULL;
+        return g_sdl.current ? sdl_surface_handle() : NULL;
     }
     EGLSurface (GL_APIENTRY *native)(EGLint) = lookup_egl("eglGetCurrentSurface");
     return native ? native(readdraw) : NULL;
@@ -983,7 +994,7 @@ static EGLBoolean host_eglDestroyContext(EGLDisplay display, EGLContext context)
         EGLBoolean (GL_APIENTRY *native)(EGLDisplay, EGLContext) = lookup_egl("eglDestroyContext");
         return native ? native(display, context) : 0;
     }
-    if (context != (EGLContext)g_sdl.context || !g_sdl.context_valid) {
+    if (context != sdl_context_handle() || !g_sdl.context_valid) {
         set_error(EGL_BAD_CONTEXT);
         return 0;
     }
@@ -1003,7 +1014,7 @@ static EGLBoolean host_eglDestroySurface(EGLDisplay display, EGLSurface surface)
         EGLBoolean (GL_APIENTRY *native)(EGLDisplay, EGLSurface) = lookup_egl("eglDestroySurface");
         return native ? native(display, surface) : 0;
     }
-    if (surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid) {
+    if (surface != sdl_surface_handle() || !g_sdl.surface_valid) {
         set_error(EGL_BAD_SURFACE);
         return 0;
     }
@@ -1070,7 +1081,7 @@ EGLBoolean egl_backend_swap_buffers(EGLDisplay display, EGLSurface surface) {
         EGLBoolean (GL_APIENTRY *native)(EGLDisplay, EGLSurface) = lookup_egl("eglSwapBuffers");
         return native ? native(display, surface) : 0;
     }
-    if (surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid) {
+    if (surface != sdl_surface_handle() || !g_sdl.surface_valid) {
         set_error(EGL_BAD_SURFACE);
         return 0;
     }

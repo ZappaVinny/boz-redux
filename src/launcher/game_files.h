@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 struct PackStatus {
     const char *name;
@@ -37,6 +38,13 @@ public:
     void install_apk(const std::string &apk_path);
     void download_packs();
     void import_packs(const std::string &folder);
+#if defined(__ANDROID__)
+    // Picked files (content:// URIs): each one with the size of a pack becomes that pack, so an
+    // Android OBB (main.*.obb is blackops_etc.dz) works under any name.
+    void import_pack_documents(const std::vector<std::string> &uris);
+    void import_mod(const std::string &uri);
+    bool mods_changed();  // once after a mod was imported
+#endif
 
 private:
     void start(void (GameFiles::*job)(std::string), std::string argument);
@@ -44,6 +52,13 @@ private:
     void job_install(std::string apk_path);
     void job_download(std::string unused);
     void job_import(std::string folder);
+#if defined(__ANDROID__)
+    void job_import_documents(std::string uris);
+    void job_import_mod(std::string uri);
+    bool fetch(bool (*copy)(const std::string &, const std::string &), const std::string &from,
+               const std::string &part, int64_t size);
+    std::atomic<bool> mods_changed_{false};
+#endif
     void check_image();
     bool verify_pack(int index, const std::string &path);
 

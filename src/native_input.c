@@ -119,18 +119,18 @@ static bool g_down[NATIVE_ACTION_COUNT];
 
 static uint32_t read_u32(uint32_t address) {
     uint32_t value;
-    memcpy(&value, (const void *)(uintptr_t)address, sizeof(value));
+    memcpy(&value, GUEST_POINTER(address), sizeof(value));
     return value;
 }
 
 static float read_float(uint32_t address) {
     float value;
-    memcpy(&value, (const void *)(uintptr_t)address, sizeof(value));
+    memcpy(&value, GUEST_POINTER(address), sizeof(value));
     return value;
 }
 
 static void write_float(uint32_t address, float value) {
-    memcpy((void *)(uintptr_t)address, &value, sizeof(value));
+    memcpy(GUEST_POINTER(address), &value, sizeof(value));
 }
 
 static uint32_t float_bits(float value) {
@@ -156,9 +156,13 @@ static uint32_t input_manager(void) {
 /* The MaxPitch console variable, registered by the game's first FixedStep. */
 static float max_pitch(void) {
     static uint32_t var;
+    static char *name; /* in guest memory: a string literal may lie above 4 GiB */
     if (!var && g_console_global && g_console_find_var && read_u32(g_console_global)) {
-        var = s3e_guest_call((const void *)(uintptr_t)g_console_find_var, 2,
-                             read_u32(g_console_global), S3E_GUEST_ARG("MaxPitch"));
+        if (!name) {
+            name = guest_strdup("MaxPitch");
+        }
+        var = s3e_guest_call(g_console_find_var, 2, read_u32(g_console_global),
+                             S3E_GUEST_ARG(name));
     }
     return var ? read_float(var + CVAR_VALUE) : 0.5f;
 }
@@ -174,7 +178,7 @@ static void on_player_fixed_step(struct arm_emu_regs *regs, void *user) {
     }
     float dx = g_look_dx, dy = g_look_dy;
     g_look_dx = g_look_dy = 0;
-    if (!*(const uint8_t *)(uintptr_t)(controller + PC_LOOK_ALLOWED)) {
+    if (!*(const uint8_t *)GUEST_POINTER(controller + PC_LOOK_ALLOWED)) {
         return;
     }
 
@@ -188,7 +192,7 @@ static void on_player_fixed_step(struct arm_emu_regs *regs, void *user) {
             scale *= tanf(current * PI / 360.0f) / tanf(base * PI / 360.0f);
         }
     }
-    if (weapons && *(const uint8_t *)(uintptr_t)(weapons + WM_AIMING)) {
+    if (weapons && *(const uint8_t *)GUEST_POINTER(weapons + WM_AIMING)) {
         scale *= g_aim_sensitivity;
     }
 
@@ -208,8 +212,8 @@ static void on_player_fixed_step(struct arm_emu_regs *regs, void *user) {
     }
     write_float(controller + PC_YAW, new_yaw);
     write_float(controller + PC_PITCH, new_pitch);
-    *(uint8_t *)(uintptr_t)(controller + PC_LOOK_ACTIVE) = 1;
-    if (weapons && *(const uint8_t *)(uintptr_t)(weapons + WM_RECOIL_ACTIVE)) {
+    *(uint8_t *)GUEST_POINTER(controller + PC_LOOK_ACTIVE) = 1;
+    if (weapons && *(const uint8_t *)GUEST_POINTER(weapons + WM_RECOIL_ACTIVE)) {
         write_float(weapons + WM_TURN_YAW, read_float(weapons + WM_TURN_YAW) + yaw_delta);
         write_float(weapons + WM_TURN_PITCH,
                     read_float(weapons + WM_TURN_PITCH) + (new_pitch - pitch));
@@ -263,7 +267,7 @@ static uint32_t require(const char *name, bool *ok) {
 }
 
 static bool hook(uint32_t address, arm_emu_code_hook fn) {
-    return address && arm_emu_hook_add(address & ~1u, fn, NULL) >= 0;
+    return address && arm_emu_hook_add(address, fn, NULL) >= 0; /* Thumb bit: the code's mode */
 }
 
 static void on_zombies_playing(struct arm_emu_regs *regs, void *user) {
@@ -360,7 +364,7 @@ void native_input_move(float x, float y, bool sprint) {
 }
 
 static uint32_t hash_string(const char *text) {
-    return s3e_guest_call((const void *)(uintptr_t)g_hash_string, 1, S3E_GUEST_ARG(text));
+    return s3e_guest_call(g_hash_string, 1, S3E_GUEST_ARG(text));
 }
 
 /* What the weapon button's reload branch does: flag it and send ON_RELOAD_BUTTON. */
@@ -369,8 +373,8 @@ static void press_reload(uint32_t input) {
     if (!event) {
         event = hash_string("ON_RELOAD_BUTTON");
     }
-    *(uint8_t *)(uintptr_t)(input + IM_RELOAD) = 1;
-    s3e_guest_call((const void *)(uintptr_t)g_notify, 5, input + IM_SUBJECT, event, 1u, 0u, 0u);
+    *(uint8_t *)GUEST_POINTER(input + IM_RELOAD) = 1;
+    s3e_guest_call(g_notify, 5, input + IM_SUBJECT, event, 1u, 0u, 0u);
 }
 
 const char *native_input_action_name(enum native_action action) {
@@ -399,12 +403,12 @@ void native_input_send(enum native_action action, bool down) {
     }
     uint32_t id = down ? ACTION_IDS[action].press : ACTION_IDS[action].release;
     if (id) {
-        s3e_guest_call((const void *)(uintptr_t)g_on_input_action, 3, input, id, 0u);
+        s3e_guest_call(g_on_input_action, 3, input, id, 0u);
     }
     if (action == NATIVE_SHOOT && down) {
         /* A touch fire button only auto-fires after a double tap; a held key or button always
          * should. The game still fires single shots for semi-automatic weapons. */
-        *(uint8_t *)(uintptr_t)(input + IM_AUTO_FIRE) = 1;
+        *(uint8_t *)GUEST_POINTER(input + IM_AUTO_FIRE) = 1;
     }
 }
 
@@ -431,7 +435,7 @@ bool native_input_aiming(void) {
      * manager's flag the zoom. Neither is fully reliable yet (hold-to-aim work, SDK notes). */
     uint32_t weapons = read_u32(g_controller + PC_WEAPON_MANAGER);
     int state = read_u32(g_controller + PC_STATE) == PC_STATE_AIMING;
-    int flag = weapons && *(const uint8_t *)(uintptr_t)(weapons + WM_AIMING);
+    int flag = weapons && *(const uint8_t *)GUEST_POINTER(weapons + WM_AIMING);
     return state || flag;
 }
 

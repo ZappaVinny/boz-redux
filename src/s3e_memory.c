@@ -1,4 +1,6 @@
 #include "s3e_host_internal.h"
+#include "arm_emu.h"
+#include "host_signatures.h"
 
 static _Thread_local int g_memory_error;
 static _Thread_local struct s3e_user_mem_mgr g_user_mem_mgr;
@@ -8,9 +10,9 @@ static pthread_mutex_t g_heap_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static struct s3e_user_mem_mgr default_user_mem_mgr(void) {
     return (struct s3e_user_mem_mgr){
-        .alloc = (void *)(uintptr_t)&s3eMallocBase,
-        .realloc = (void *)(uintptr_t)&s3eReallocBase,
-        .free = (void *)(uintptr_t)&s3eFreeBase,
+        .alloc = GUEST_FN(s3eMallocBase),
+        .realloc = GUEST_FN(s3eReallocBase),
+        .free = GUEST_FN(s3eFreeBase),
     };
 }
 
@@ -18,17 +20,17 @@ static struct s3e_user_mem_mgr default_user_mem_mgr(void) {
 void *s3eMallocBase(uint32_t size, const char *file, int line) {
     (void)file;
     (void)line;
-    return malloc(size ? size : 1);
+    return guest_malloc(size ? size : 1);
 }
 
 void *s3eReallocBase(void *ptr, uint32_t size, const char *file, int line) {
     (void)file;
     (void)line;
-    return realloc(ptr, size ? size : 1);
+    return guest_realloc(ptr, size ? size : 1);
 }
 
 void s3eFreeBase(void *ptr) {
-    free(ptr);
+    guest_free(ptr);
 }
 
 int32_t s3eMemoryGetInt(uint32_t key) {
@@ -73,7 +75,7 @@ int32_t s3eMemoryGetUserMemMgr(void *out) {
 static int32_t heap_create_locked(uint32_t heap_index) {
     if (!g_heaps[heap_index].base) {
         uint32_t size = heap_index == 0 ? 128u * 1024u * 1024u : 16u * 1024u * 1024u;
-        g_heaps[heap_index].base = calloc(1, size);
+        g_heaps[heap_index].base = guest_calloc(1, size);
         if (!g_heaps[heap_index].base) {
             g_memory_error = ENOMEM;
             return 1;
@@ -100,7 +102,7 @@ int32_t s3eMemoryHeapDestroy(uint32_t heap_index) {
         return 1;
     }
     pthread_mutex_lock(&g_heap_mutex);
-    free(g_heaps[heap_index].base);
+    guest_free(g_heaps[heap_index].base);
     memset(&g_heaps[heap_index], 0, sizeof(g_heaps[heap_index]));
     pthread_mutex_unlock(&g_heap_mutex);
     return 0;
@@ -128,7 +130,7 @@ const char *s3eMemoryGetErrorString(void) {
 void s3e_memory_shutdown(void) {
     pthread_mutex_lock(&g_heap_mutex);
     for (size_t i = 0; i < sizeof(g_heaps) / sizeof(g_heaps[0]); ++i) {
-        free(g_heaps[i].base);
+        guest_free(g_heaps[i].base);
         memset(&g_heaps[i], 0, sizeof(g_heaps[i]));
     }
     pthread_mutex_unlock(&g_heap_mutex);

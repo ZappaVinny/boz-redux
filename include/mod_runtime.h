@@ -16,10 +16,13 @@ extern "C" {
 
 /* --- Game image (game_image.c) ------------------------------------------------------------- */
 
-void game_set_image_base(uintptr_t base);
-uintptr_t game_image_base(void);
+void game_set_image_base(uint32_t base);
+uint32_t game_image_base(void);
 /* Address of a gamedef symbol (functions carry the Thumb bit), or 0. */
 uint32_t game_symbol_address(const char *name);
+/* Whether the gamedef function starting at address is Thumb: 1, ARM: 0, no such function: -1.
+ * The native CPU (arm_emu_native.c) needs the mode to patch code hooks. */
+int game_code_is_thumb(uint32_t address);
 
 /* --- Lua runtime (lua_runtime.c) ----------------------------------------------------------- */
 
@@ -69,6 +72,12 @@ bool overlay_capturing(void);
 /* Wraps the Lua frame: begin before lua_runtime_frame, end after (draws into framebuffer 0). */
 void overlay_begin_frame(int width, int height, double dt);
 void overlay_end_frame(void);
+/* Draws the on-screen touch controls (touch_controls.h) into the overlay frame; rect is where the
+ * game's 1280x720 picture sits in the window (x, y, width, height). */
+void overlay_draw_touch_controls(const int32_t rect[4]);
+/* Where the game's 1280x720 picture sits in the window this frame (x, y, width, height): the
+ * ui.draw_* functions take game coordinates and draw there. */
+void overlay_set_game_rect(const int32_t rect[4]);
 /* Adds the `ui` and `overlay` modules to a Lua state. */
 void overlay_open_lua(void *lua_state);
 

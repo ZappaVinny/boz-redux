@@ -4,7 +4,9 @@
 // touches so the game never notices. Input arrives from the client's SDL pump (s3e_input.c).
 // Lua draws through the `ui` module; widgets that contain others take a function, so a Lua error
 // can never leave a window open.
+#include "touch_controls.h"
 #include "mod_runtime.h"
+#include "mods.h"
 #include "brand_imgui.h"
 #include "branding.h"
 
@@ -14,10 +16,12 @@
 extern "C" {
 #include "lauxlib.h"
 #include "lua.h"
+#include "lua_runtime_internal.h"
 void *lookup_gl(const char *symbol);
 }
 
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -375,6 +379,45 @@ void update_texture(ImTextureData *tex) {
     }
 }
 
+// --- Mod images ------------------------------------------------------------------------------
+// PNG files from a mod's folder (ui.image, ui.draw_image), decoded on first use and uploaded the
+// next time the overlay draws. Their ImTextureID carries USER_TEXTURE and an index here; ImGui's
+// own textures (the font atlas) are plain GL names. Images stay loaded for the session.
+struct UserTexture {
+    std::string path;
+    int width = 0, height = 0;
+    unsigned char *pixels = nullptr; // until uploaded
+    GLuint name = 0;
+};
+std::vector<UserTexture> g_textures;
+std::unordered_map<std::string, int> g_texture_index;
+const ImTextureID USER_TEXTURE = (ImTextureID)1 << 40;
+
+GLuint gl_texture(ImTextureID id) {
+    if (id & USER_TEXTURE) {
+        size_t index = (size_t)(id & 0xffffff);
+        return index < g_textures.size() ? g_textures[index].name : 0;
+    }
+    return (GLuint)id;
+}
+
+void upload_user_textures() {
+    for (UserTexture &t : g_textures) {
+        if (t.name || !t.pixels) {
+            continue;
+        }
+        gl.GenTextures(1, &t.name);
+        gl.BindTexture(GL_TEXTURE_2D, t.name);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, t.width, t.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, t.pixels);
+        brand_image_free(t.pixels);
+        t.pixels = nullptr;
+    }
+}
+
 void render(ImDrawData *draw) {
     int fb_width = (int)(draw->DisplaySize.x * draw->FramebufferScale.x);
     int fb_height = (int)(draw->DisplaySize.y * draw->FramebufferScale.y);
@@ -391,6 +434,7 @@ void render(ImDrawData *draw) {
             }
         }
     }
+    upload_user_textures();
 
     gl.Enable(GL_BLEND);
     gl.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
@@ -438,7 +482,7 @@ void render(ImDrawData *draw) {
             }
             gl.Scissor((GLint)min.x, (GLint)((float)fb_height - max.y), (GLsizei)(max.x - min.x),
                        (GLsizei)(max.y - min.y));
-            gl.BindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)cmd.GetTexID());
+            gl.BindTexture(GL_TEXTURE_2D, gl_texture(cmd.GetTexID()));
             gl.DrawElements(GL_TRIANGLES, (GLsizei)cmd.ElemCount,
                             sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT,
                             (void *)(intptr_t)(cmd.IdxOffset * sizeof(ImDrawIdx)));
@@ -451,6 +495,27 @@ void render(ImDrawData *draw) {
 
 bool g_context;
 bool g_in_frame;
+int32_t g_game_rect[4] = {0, 0, 1280, 720};
+
+// Mod fonts (ui.font): TTF files from a mod's folder, added to the atlas before the next frame.
+struct UserFont {
+    std::string path;
+    ImFont *font = nullptr;
+    bool tried = false;
+};
+std::vector<UserFont> g_fonts;
+
+void load_user_fonts() {
+    for (UserFont &f : g_fonts) {
+        if (!f.tried) {
+            f.tried = true;
+            f.font = ImGui::GetIO().Fonts->AddFontFromFileTTF(f.path.c_str(), 32.0f);
+            if (!f.font) {
+                std::fprintf(stderr, "[overlay] cannot load font %s\n", f.path.c_str());
+            }
+        }
+    }
+}
 bool g_capturing;
 float g_scale = 1.0f;
 ImGuiErrorRecoveryState g_recovery;
@@ -585,6 +650,7 @@ extern "C" void overlay_begin_frame(int width, int height, double dt) {
     if (!g_capturing) {
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     }
+    load_user_fonts();
     ImGui::NewFrame();
     ImGui::ErrorRecoveryStoreState(&g_recovery);
     g_in_frame = true;
@@ -600,6 +666,41 @@ extern "C" void overlay_end_frame(void) {
     ImDrawData *draw = ImGui::GetDrawData();
     if (draw && (draw->TotalVtxCount > 0 || (draw->Textures && !draw->Textures->empty()))) {
         render(draw);
+    }
+}
+
+extern "C" void overlay_set_game_rect(const int32_t rect[4]) {
+    if (rect[2] > 0 && rect[3] > 0) {
+        std::memcpy(g_game_rect, rect, sizeof(g_game_rect));
+    }
+}
+
+extern "C" void overlay_draw_touch_controls(const int32_t rect[4]) {
+    if (!g_in_frame || rect[2] <= 0 || rect[3] <= 0) {
+        return;
+    }
+    struct touch_shape shapes[32];
+    int count = touch_controls_shapes(shapes, 32);
+    ImDrawList *draw = ImGui::GetForegroundDrawList();
+    float sx = (float)rect[2] / 1280.0f, sy = (float)rect[3] / 720.0f;
+    auto color = [](uint32_t argb) {
+        return IM_COL32((argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff, argb >> 24);
+    };
+    for (int i = 0; i < count; ++i) {
+        const touch_shape &s = shapes[i];
+        ImVec2 center((float)rect[0] + s.x * sx, (float)rect[1] + s.y * sy);
+        float radius = s.r * sy;
+        draw->AddCircleFilled(center, radius, color(s.fill), 48);
+        if (s.outline) {
+            draw->AddCircle(center, radius - 2.0f * sy, color(s.outline), 48, 3.0f * sy);
+        }
+        if (s.label) {
+            float size = (s.r > 80 ? 26.0f : 19.0f) * sy;
+            ImFont *font = ImGui::GetFont();
+            ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, s.label);
+            draw->AddText(font, size, ImVec2(center.x - extent.x * 0.5f, center.y - extent.y * 0.5f),
+                          IM_COL32(255, 255, 255, 230), s.label);
+        }
     }
 }
 
@@ -1044,6 +1145,266 @@ int ui_wants_keyboard(lua_State *L) {
     return 1;
 }
 
+// --- Images, fonts and drawing in game coordinates (1280x720, where the game's picture is) -------
+
+// A file in the calling mod's folder ("ui/hud/d0.png"): no absolute paths, no "..".
+bool mod_file(lua_State *L, int arg, std::string *out) {
+    const char *relative = luaL_checkstring(L, arg);
+    if (!relative[0] || relative[0] == '/' || relative[0] == '\\' || std::strchr(relative, ':') ||
+        std::strstr(relative, "..")) {
+        return false;
+    }
+    int mod = lua_runtime_current_mod();
+    const struct mod_info *info = mod >= 0 ? mods_enabled_at(mod) : nullptr;
+    if (!info) {
+        return false;
+    }
+    *out = std::string(info->dir) + "/" + relative;
+    return true;
+}
+
+// The texture of a mod image, loading it the first time; -1 when it cannot be read.
+int texture_for(lua_State *L, int arg) {
+    std::string path;
+    if (!mod_file(L, arg, &path)) {
+        return -1;
+    }
+    auto found = g_texture_index.find(path);
+    if (found != g_texture_index.end()) {
+        return found->second;
+    }
+    int index = -1;
+    if (FILE *file = std::fopen(path.c_str(), "rb")) {
+        std::vector<unsigned char> data;
+        unsigned char chunk[65536];
+        size_t n;
+        while ((n = std::fread(chunk, 1, sizeof(chunk), file)) > 0) {
+            data.insert(data.end(), chunk, chunk + n);
+        }
+        std::fclose(file);
+        struct brand_blob blob = {data.data(), (unsigned)data.size()};
+        UserTexture t;
+        t.path = path;
+        t.pixels = data.empty() ? nullptr : brand_image_decode(&blob, &t.width, &t.height);
+        if (t.pixels) {
+            index = (int)g_textures.size();
+            g_textures.push_back(t);
+        }
+    }
+    if (index < 0) {
+        std::fprintf(stderr, "[overlay] cannot load image %s (PNG only)\n", path.c_str());
+    }
+    g_texture_index[path] = index; // failures are not retried every frame
+    return index;
+}
+
+ImTextureRef texture_ref(int index) {
+    return ImTextureRef(USER_TEXTURE | (ImTextureID)index);
+}
+
+ImU32 opt_color(lua_State *L, int opts, const char *key, ImU32 fallback) {
+    if (!lua_istable(L, opts)) {
+        return fallback;
+    }
+    lua_getfield(L, opts, key);
+    ImU32 color = fallback;
+    if (lua_istable(L, -1)) {
+        float c[4] = {1, 1, 1, 1};
+        for (int i = 0; i < 4; ++i) {
+            lua_rawgeti(L, -1, i + 1);
+            if (lua_isnumber(L, -1)) {
+                c[i] = (float)lua_tonumber(L, -1);
+            }
+            lua_pop(L, 1);
+        }
+        color = ImGui::ColorConvertFloat4ToU32(ImVec4(c[0], c[1], c[2], c[3]));
+    }
+    lua_pop(L, 1);
+    return color;
+}
+
+// opts.uv = {u0, v0, u1, v1}
+void opt_uv(lua_State *L, int opts, ImVec2 *uv0, ImVec2 *uv1) {
+    *uv0 = ImVec2(0, 0);
+    *uv1 = ImVec2(1, 1);
+    if (!lua_istable(L, opts)) {
+        return;
+    }
+    lua_getfield(L, opts, "uv");
+    if (lua_istable(L, -1)) {
+        float v[4] = {0, 0, 1, 1};
+        for (int i = 0; i < 4; ++i) {
+            lua_rawgeti(L, -1, i + 1);
+            if (lua_isnumber(L, -1)) {
+                v[i] = (float)lua_tonumber(L, -1);
+            }
+            lua_pop(L, 1);
+        }
+        *uv0 = ImVec2(v[0], v[1]);
+        *uv1 = ImVec2(v[2], v[3]);
+    }
+    lua_pop(L, 1);
+}
+
+// Game coordinates to window pixels.
+float game_x(float x) { return (float)g_game_rect[0] + x * (float)g_game_rect[2] / 1280.0f; }
+float game_y(float y) { return (float)g_game_rect[1] + y * (float)g_game_rect[3] / 720.0f; }
+float game_scale() { return (float)g_game_rect[3] / 720.0f; }
+
+// opts.layer: "back" (default, under mod windows) or "front" (over everything).
+ImDrawList *draw_list(lua_State *L, int opts) {
+    if (lua_istable(L, opts)) {
+        lua_getfield(L, opts, "layer");
+        bool front = lua_isstring(L, -1) && std::strcmp(lua_tostring(L, -1), "front") == 0;
+        lua_pop(L, 1);
+        if (front) {
+            return ImGui::GetForegroundDrawList();
+        }
+    }
+    return ImGui::GetBackgroundDrawList();
+}
+
+ImFont *opt_font(lua_State *L, int opts) {
+    int handle = (int)opt_number(L, opts, "font", 0);
+    if (handle >= 1 && handle <= (int)g_fonts.size() && g_fonts[handle - 1].font) {
+        return g_fonts[handle - 1].font;
+    }
+    return ImGui::GetFont();
+}
+
+// ui.font(path) -> handle: a TTF font from the mod's folder for ui.draw_text (from the next frame).
+int ui_font(lua_State *L) {
+    std::string path;
+    if (!mod_file(L, 1, &path)) {
+        return luaL_error(L, "ui.font: a file in the mod's folder");
+    }
+    for (size_t i = 0; i < g_fonts.size(); ++i) {
+        if (g_fonts[i].path == path) {
+            lua_pushinteger(L, (lua_Integer)i + 1);
+            return 1;
+        }
+    }
+    UserFont f;
+    f.path = path;
+    g_fonts.push_back(f);
+    lua_pushinteger(L, (lua_Integer)g_fonts.size());
+    return 1;
+}
+
+// ui.image_size(path) -> width, height in pixels, or nil.
+int ui_image_size(lua_State *L) {
+    int index = texture_for(L, 1);
+    if (index < 0) {
+        return 0;
+    }
+    lua_pushinteger(L, g_textures[index].width);
+    lua_pushinteger(L, g_textures[index].height);
+    return 2;
+}
+
+// ui.image(path, w, h, [opts]): an image widget in a window (720p units). opts: uv, tint.
+int ui_image(lua_State *L) {
+    check_frame(L);
+    int index = texture_for(L, 1);
+    float w = (float)luaL_checknumber(L, 2) * g_scale, h = (float)luaL_checknumber(L, 3) * g_scale;
+    if (index < 0) {
+        ImGui::Dummy(ImVec2(w, h));
+        return 0;
+    }
+    ImVec2 uv0, uv1;
+    opt_uv(L, 4, &uv0, &uv1);
+    ImVec4 tint = ImGui::ColorConvertU32ToFloat4(opt_color(L, 4, "tint", IM_COL32_WHITE));
+    ImGui::ImageWithBg(texture_ref(index), ImVec2(w, h), uv0, uv1, ImVec4(0, 0, 0, 0), tint);
+    return 0;
+}
+
+// ui.draw_image(path, x, y, w, h, [opts]): an image at game coordinates. opts: uv, tint, layer.
+int ui_draw_image(lua_State *L) {
+    check_frame(L);
+    int index = texture_for(L, 1);
+    if (index < 0) {
+        return 0;
+    }
+    float x = (float)luaL_checknumber(L, 2), y = (float)luaL_checknumber(L, 3);
+    float w = (float)luaL_checknumber(L, 4), h = (float)luaL_checknumber(L, 5);
+    ImVec2 uv0, uv1;
+    opt_uv(L, 6, &uv0, &uv1);
+    draw_list(L, 6)->AddImage(texture_ref(index), ImVec2(game_x(x), game_y(y)),
+                              ImVec2(game_x(x + w), game_y(y + h)), uv0, uv1,
+                              opt_color(L, 6, "tint", IM_COL32_WHITE));
+    return 0;
+}
+
+// ui.text_size(text, [opts]) -> width, height in game units. opts: font, size.
+int ui_text_size(lua_State *L) {
+    const char *text = luaL_checkstring(L, 1);
+    float size = opt_number(L, 2, "size", 20.0f);
+    ImVec2 extent = opt_font(L, 2)->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    lua_pushnumber(L, extent.x);
+    lua_pushnumber(L, extent.y);
+    return 2;
+}
+
+// ui.draw_text(text, x, y, [opts]): text at game coordinates. opts: font (ui.font), size (game
+// pixels, default 20), color, align ("left", "center", "right"), shadow (a color: drawn 2 game
+// pixels down and right), outline (a color: drawn around the text, like the game's HUD numbers)
+// and outline_width (game pixels, default 2), layer.
+int ui_draw_text(lua_State *L) {
+    check_frame(L);
+    const char *text = luaL_checkstring(L, 1);
+    float x = (float)luaL_checknumber(L, 2), y = (float)luaL_checknumber(L, 3);
+    ImFont *font = opt_font(L, 4);
+    float size = opt_number(L, 4, "size", 20.0f);
+    float width = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+    if (lua_istable(L, 4)) {
+        lua_getfield(L, 4, "align");
+        const char *align = lua_isstring(L, -1) ? lua_tostring(L, -1) : "left";
+        if (std::strcmp(align, "center") == 0) {
+            x -= width * 0.5f;
+        } else if (std::strcmp(align, "right") == 0) {
+            x -= width;
+        }
+        lua_pop(L, 1);
+    }
+    ImDrawList *list = draw_list(L, 4);
+    float scale = game_scale();
+    ImU32 shadow = opt_color(L, 4, "shadow", 0);
+    if (shadow) {
+        list->AddText(font, size * scale, ImVec2(game_x(x + 2), game_y(y + 2)), shadow, text);
+    }
+    ImU32 outline = opt_color(L, 4, "outline", 0);
+    if (outline) {
+        // the text drawn at 16 points around a circle: a solid outline at any width
+        float r = opt_number(L, 4, "outline_width", 2.0f);
+        for (int i = 0; i < 16; ++i) {
+            float a = (float)i * 0.39269908f; // 2 pi / 16
+            list->AddText(font, size * scale, ImVec2(game_x(x + r * std::cos(a)), game_y(y + r * std::sin(a))),
+                          outline, text);
+        }
+    }
+    list->AddText(font, size * scale, ImVec2(game_x(x), game_y(y)), opt_color(L, 4, "color", IM_COL32_WHITE),
+                  text);
+    return 0;
+}
+
+// ui.draw_rect(x, y, w, h, [opts]): a rectangle at game coordinates. opts: color, rounding,
+// thickness (outline width; filled when absent), layer.
+int ui_draw_rect(lua_State *L) {
+    check_frame(L);
+    float x = (float)luaL_checknumber(L, 1), y = (float)luaL_checknumber(L, 2);
+    float w = (float)luaL_checknumber(L, 3), h = (float)luaL_checknumber(L, 4);
+    ImU32 color = opt_color(L, 5, "color", IM_COL32(0, 0, 0, 160));
+    float rounding = opt_number(L, 5, "rounding", 0) * game_scale();
+    float thickness = opt_number(L, 5, "thickness", 0);
+    ImVec2 a(game_x(x), game_y(y)), b(game_x(x + w), game_y(y + h));
+    if (thickness > 0) {
+        draw_list(L, 5)->AddRect(a, b, color, rounding, 0, thickness * game_scale());
+    } else {
+        draw_list(L, 5)->AddRectFilled(a, b, color, rounding);
+    }
+    return 0;
+}
+
 // overlay.capture(on): the overlay takes the mouse and keyboard from the game while on.
 int overlay_capture(lua_State *L) {
     g_capturing = lua_toboolean(L, 1);
@@ -1074,6 +1435,10 @@ extern "C" void overlay_open_lua(void *state) {
         {"scroll_to_bottom", ui_scroll_to_bottom}, {"at_bottom", ui_at_bottom},
         {"focus_next", ui_focus_next}, {"item_width", ui_item_width},
         {"scale", ui_scale},         {"wants_keyboard", ui_wants_keyboard},
+        {"image", ui_image},         {"image_size", ui_image_size},
+        {"draw_image", ui_draw_image}, {"draw_text", ui_draw_text},
+        {"draw_rect", ui_draw_rect}, {"text_size", ui_text_size},
+        {"font", ui_font},
         {nullptr, nullptr},
     };
     static const luaL_Reg overlay[] = {

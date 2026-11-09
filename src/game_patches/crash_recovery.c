@@ -4,6 +4,7 @@
 #include "game_patches.h"
 
 #include "arm_emu.h"
+#include "guest_memory.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -27,15 +28,17 @@ enum {
 enum { R0, R1, R2, R3, R4, R5, R6, R7, SP = 13, PC = 15 };
 
 static uint32_t g_base;
-static const char g_empty_string[8] __attribute__((aligned(8))) = "";
-static uint32_t g_bucket_allocator_table[33] __attribute__((aligned(8)));
+/* Data handed to the game, so in guest memory: an empty string and a bucket table. */
+static char *g_empty_string;
+static uint32_t *g_bucket_allocator_table;
+enum { BUCKET_TABLE_WORDS = 33 };
 
 static uint32_t host_address(const void *pointer) {
-    return (uint32_t)(uintptr_t)pointer;
+    return GUEST_ADDRESS(pointer);
 }
 
 static uint32_t *guest_words(uint32_t address) {
-    return (uint32_t *)(uintptr_t)address;
+    return (uint32_t *)GUEST_POINTER(address);
 }
 
 static void attach_bucket_allocator_table(uint32_t object) {
@@ -64,7 +67,7 @@ static bool recover_bucket_allocator(struct arm_emu_fault *f, uint32_t offset) {
     f->r[R4] = index;
     f->r[R5] = object;
     if (offset == BUCKET_ALLOCATOR_PREPARE) {
-        memset(g_bucket_allocator_table, 0, sizeof(g_bucket_allocator_table));
+        memset(g_bucket_allocator_table, 0, BUCKET_TABLE_WORDS * sizeof(uint32_t));
     } else {
         g_bucket_allocator_table[index] = 0;
         f->r[PC] = g_base + BUCKET_ALLOCATOR_LOOKUP_DONE;
@@ -85,6 +88,12 @@ static void return_from_frame(struct arm_emu_fault *f, int first_register, int s
     f->thumb = (return_address & 1u) != 0;
 }
 
+/* The string sites read through a post-indexed load (ldrb rX, [rX], #1). Dynarmic stops after the
+ * base register's write-back, Unicorn before it: a NULL string shows as 0 or 1 there. */
+static bool null_string(const struct arm_emu_fault *f, int reg) {
+    return f->address < 0x10u && f->r[reg] <= 1u;
+}
+
 static bool recover(struct arm_emu_fault *f) {
     uint32_t offset = f->r[PC] - g_base;
     if (recover_bucket_allocator(f, offset)) {
@@ -98,15 +107,15 @@ static bool recover(struct arm_emu_fault *f) {
         return_from_frame(f, R3, 5);
         return true;
     }
-    if ((offset == NULL_STRING_R1_A || offset == NULL_STRING_R1_B) && f->r[R1] == 0) {
+    if ((offset == NULL_STRING_R1_A || offset == NULL_STRING_R1_B) && null_string(f, R1)) {
         f->r[R1] = host_address(g_empty_string);
         return true;
     }
-    if ((offset == NULL_STRING_R0_A || offset == NULL_STRING_R0_B) && f->r[R0] == 0) {
+    if ((offset == NULL_STRING_R0_A || offset == NULL_STRING_R0_B) && null_string(f, R0)) {
         f->r[R0] = host_address(g_empty_string);
         return true;
     }
-    if (offset == NULL_STRING_SKIP && f->r[R1] == 0) {
+    if (offset == NULL_STRING_SKIP && null_string(f, R1)) {
         f->r[R0] = 0;
         f->r[R2] = 0;
         f->r[PC] = g_base + NULL_STRING_SKIP_TARGET;
@@ -117,5 +126,9 @@ static bool recover(struct arm_emu_fault *f) {
 
 void crash_recovery_install(uint32_t image_base) {
     g_base = image_base;
+    if (!g_empty_string) {
+        g_empty_string = guest_calloc(1, 8);
+        g_bucket_allocator_table = guest_calloc(BUCKET_TABLE_WORDS, sizeof(uint32_t));
+    }
     arm_emu_set_fault_handler(recover);
 }

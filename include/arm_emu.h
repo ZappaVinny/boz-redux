@@ -12,6 +12,12 @@ uint64_t arm_emu_call(uint32_t fn, int argc, const uint32_t *argv);
 void arm_emu_thread_exit(void);
 uint32_t arm_emu_call_scratch(void);
 uint64_t arm_emu_call_host(uint32_t fn, const uint32_t *args);
+/* The address the guest calls to run host function fn: fn itself when it lies below 4 GiB (always
+ * on 32-bit hosts), else a slot in the emulator's code page that calls it. */
+uint32_t arm_emu_guest_fn(const void *fn);
+/* The same, with fn's argument kinds (host_signatures.h) so guest-base builds can translate its
+ * pointer arguments and result. */
+uint32_t arm_emu_guest_fn_sig(const void *fn, const char *signature);
 
 /* A guest memory fault. r[15] is the faulting instruction (no Thumb bit); thumb is its mode. */
 struct arm_emu_fault {
@@ -35,8 +41,10 @@ struct arm_emu_regs {
 
 typedef void (*arm_emu_code_hook)(struct arm_emu_regs *regs, void *user);
 
-/* Calls fn before the guest instruction at address runs (Thumb bit ignored), on the calling
- * thread's CPU only; the game's code is never patched. Returns an id, or -1. */
+/* Calls fn before the guest instruction at address runs, on the calling thread's CPU only.
+ * Emulated CPUs never patch the game's code and ignore the Thumb bit; the native CPU
+ * (arm_emu_native.c) patches it and reads the mode from the Thumb bit, else from the gamedef.
+ * Returns an id, or -1. */
 int arm_emu_hook_add(uint32_t address, arm_emu_code_hook fn, void *user);
 void arm_emu_hook_remove(int id);
 /* An address in the emulator's own code page that guest code may jump to but that never runs:

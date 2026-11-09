@@ -99,6 +99,22 @@ struct zero_conf_publisher {
 
 static struct zero_conf_search g_searches[ZERO_CONF_MAX_SEARCHES];
 static struct zero_conf_publisher g_publishers[ZERO_CONF_MAX_PUBLISHERS];
+
+/* The handles the game gets for a search and a publication: small numbers, never memory, like
+ * the socket handles (the structures are host memory the game may not be able to address). */
+enum {
+    ZERO_CONF_SEARCH_HANDLE_FIRST = 0x5300,
+    ZERO_CONF_PUBLISHER_HANDLE_FIRST = 0x5400,
+};
+
+static void *search_handle(const struct zero_conf_search *search) {
+    return (void *)(uintptr_t)(ZERO_CONF_SEARCH_HANDLE_FIRST + (uintptr_t)(search - g_searches));
+}
+
+static void *publisher_handle(const struct zero_conf_publisher *publisher) {
+    return (void *)(uintptr_t)(ZERO_CONF_PUBLISHER_HANDLE_FIRST +
+                               (uintptr_t)(publisher - g_publishers));
+}
 static int g_mdns_fd = -1;
 static int g_zero_conf_pumping;
 static uint32_t g_search_generation;
@@ -128,13 +144,13 @@ static uint64_t expiry_from_ttl(uint64_t now, uint32_t ttl) {
 }
 
 static struct zero_conf_service_id *allocate_service_id(void) {
-    struct zero_conf_service_id *service_id = malloc(sizeof(*service_id));
+    struct zero_conf_service_id *service_id = guest_malloc(sizeof(*service_id));
     if (!service_id) {
         return NULL;
     }
-    service_id->guest_token = malloc(sizeof(*service_id->guest_token));
+    service_id->guest_token = guest_malloc(sizeof(*service_id->guest_token));
     if (!service_id->guest_token) {
-        free(service_id);
+        guest_free(service_id);
         return NULL;
     }
     *service_id->guest_token = ++g_identity_generation;
@@ -149,8 +165,8 @@ static void free_service_id(struct zero_conf_service_id *service_id) {
     if (!service_id) {
         return;
     }
-    free(service_id->guest_token);
-    free(service_id);
+    guest_free(service_id->guest_token);
+    guest_free(service_id);
 }
 
 static void flush_retired_service_ids(void) {
@@ -254,6 +270,8 @@ static int instance_name_for_search(const struct zero_conf_search *search,
     return 1;
 }
 
+enum { ZERO_CONF_MAX_INTERFACES = 16 };
+
 static int ensure_mdns_socket(void) {
     if (g_mdns_fd >= 0) {
         return 1;
@@ -266,6 +284,14 @@ static int ensure_mdns_socket(void) {
     }
     char text[INET_ADDRSTRLEN];
     NET_TRACE("mDNS on %s\n", inet_ntop(AF_INET, &interface_address, text, sizeof(text)) ? text : "?");
+    if (net_trace_enabled()) {
+        struct in_addr all[ZERO_CONF_MAX_INTERFACES];
+        int count = zeroconf_platform_list_ipv4(all, NULL, ZERO_CONF_MAX_INTERFACES);
+        for (int i = 0; i < count; ++i) {
+            NET_TRACE("  co-op discovery also on %s\n",
+                      inet_ntop(AF_INET, &all[i], text, sizeof(text)) ? text : "?");
+        }
+    }
     g_mdns_fd = fd;
     g_mdns_interface = interface_address;
     g_mdns_interface_valid = 1;
@@ -310,9 +336,27 @@ static void make_host_label(char output[64]) {
     snprintf(output, 64, "codboz-%s-%lx", sanitized, (unsigned long)((uint32_t)getpid() & 0xffffu));
 }
 
+/* Multicast goes out on every adapter (home network, Radmin, ZeroTier...): with only the first
+ * one, a PC whose VPN adapter came first never reached the phone on its Wi-Fi. A unicast reply
+ * needs no adapter choice. */
 static int send_packet_to(const uint8_t *packet, size_t packet_size,
                           const struct sockaddr_in *destination) {
-    return zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination);
+    if (destination) {
+        return zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination);
+    }
+    struct in_addr interfaces[ZERO_CONF_MAX_INTERFACES];
+    int count = zeroconf_platform_list_ipv4(interfaces, NULL, ZERO_CONF_MAX_INTERFACES);
+    if (count <= 0) {
+        return zeroconf_platform_send(g_mdns_fd, packet, packet_size, NULL);
+    }
+    int sent = 0;
+    for (int i = 0; i < count; ++i) {
+        if (zeroconf_platform_set_multicast_interface(g_mdns_fd, interfaces[i]) &&
+            zeroconf_platform_send(g_mdns_fd, packet, packet_size, NULL)) {
+            sent = 1;
+        }
+    }
+    return sent;
 }
 
 static int send_record_query(const char *name, uint16_t type) {
@@ -346,8 +390,8 @@ static void mark_publisher_txt_announced(struct zero_conf_publisher *publisher) 
     publisher->txt_update_due_ms = 0;
 }
 
-static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
-                            const struct sockaddr_in *destination) {
+static int send_publication_with(struct zero_conf_publisher *publisher, int goodbye,
+                                 const struct sockaddr_in *destination, const uint8_t ipv4[4]) {
     struct mdns_wire_txt_string txt[ZERO_CONF_MAX_TXT_RECORDS];
     publisher_txt_views(publisher, txt);
     struct mdns_wire_service service = {
@@ -359,7 +403,7 @@ static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
         .txt = txt,
         .txt_count = publisher->txt_count,
     };
-    memcpy(service.ipv4, publisher->ipv4, sizeof(service.ipv4));
+    memcpy(service.ipv4, ipv4, sizeof(service.ipv4));
     struct mdns_wire_response_options options = {
         .header_flags = MDNS_WIRE_RESPONSE_FLAGS,
         .ttl = ZERO_CONF_DEFAULT_TTL_SECONDS,
@@ -370,27 +414,59 @@ static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
     size_t packet_size = 0;
     enum mdns_wire_status status =
         mdns_wire_build_service_response(packet, sizeof(packet), &service, &options, &packet_size);
-    if (status != MDNS_WIRE_OK || !send_packet_to(packet, packet_size, destination)) {
+    if (status != MDNS_WIRE_OK ||
+        !zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination)) {
         return 0;
     }
     return 1;
 }
 
+/* Each adapter announces its own address in the A record, so a player on another network than
+ * the first one (a ZeroTier or Radmin peer) gets an address it can reach. A unicast reply carries
+ * the address on the asker's subnet. */
+static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
+                            const struct sockaddr_in *destination) {
+    struct in_addr addresses[ZERO_CONF_MAX_INTERFACES], netmasks[ZERO_CONF_MAX_INTERFACES];
+    int count = zeroconf_platform_list_ipv4(addresses, netmasks, ZERO_CONF_MAX_INTERFACES);
+    if (destination) {
+        const uint8_t *ipv4 = publisher->ipv4;
+        for (int i = 0; i < count; ++i) {
+            if (((addresses[i].s_addr ^ destination->sin_addr.s_addr) & netmasks[i].s_addr) == 0) {
+                ipv4 = (const uint8_t *)&addresses[i].s_addr;
+                break;
+            }
+        }
+        return send_publication_with(publisher, goodbye, destination, ipv4);
+    }
+    if (count <= 0) {
+        return send_publication_with(publisher, goodbye, NULL, publisher->ipv4);
+    }
+    int sent = 0;
+    for (int i = 0; i < count; ++i) {
+        if (zeroconf_platform_set_multicast_interface(g_mdns_fd, addresses[i]) &&
+            send_publication_with(publisher, goodbye, NULL, (const uint8_t *)&addresses[i].s_addr)) {
+            sent = 1;
+        }
+    }
+    return sent;
+}
+
 static int copy_txt_records(char target[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE],
-                            uint16_t *target_count, uint16_t count, const char **records) {
+                            uint16_t *target_count, uint16_t count, const uint32_t *records) {
     if (count > ZERO_CONF_MAX_TXT_RECORDS || (count && !records)) {
         return 0;
     }
     char copied[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE] = {{0}};
     for (uint16_t i = 0; i < count; ++i) {
-        if (!records[i]) {
+        const char *record = GUEST_POINTER(records[i]); /* the game's list of string addresses */
+        if (!record) {
             return 0;
         }
-        size_t length = strnlen(records[i], ZERO_CONF_TXT_RECORD_SIZE);
+        size_t length = strnlen(record, ZERO_CONF_TXT_RECORD_SIZE);
         if (length >= ZERO_CONF_TXT_RECORD_SIZE) {
             return 0;
         }
-        memcpy(copied[i], records[i], length + 1);
+        memcpy(copied[i], record, length + 1);
     }
     memcpy(target, copied, sizeof(copied));
     *target_count = count;
@@ -509,65 +585,64 @@ static void apply_cached_address(struct zero_conf_search *search,
     entry->has_ipv4 = 1;
 }
 
+/* Copies text (at most max bytes, NUL-terminated or not) into guest scratch space. */
+static uint32_t scratch_string(const char *text, size_t max) {
+    size_t length = strnlen(text, max);
+    char *copy = guest_scratch_push(length + 1);
+    memcpy(copy, text, length);
+    return GUEST_ADDRESS(copy);
+}
+
+/* The TXT records as the game's list of string addresses, in guest scratch space. */
+static uint32_t scratch_txt_records(const struct zero_conf_discovered *entry) {
+    uint32_t *records = guest_scratch_push(sizeof(uint32_t) * ZERO_CONF_MAX_TXT_RECORDS);
+    for (uint16_t i = 0; i < entry->txt_count && i < ZERO_CONF_MAX_TXT_RECORDS; ++i) {
+        records[i] = scratch_string(entry->txt[i], ZERO_CONF_TXT_RECORD_SIZE);
+    }
+    return GUEST_ADDRESS(records);
+}
+
+/* The callbacks get copies in guest memory: they may change the search (and so this entry), and
+ * on 64-bit hosts the entry itself is not memory the game can see. */
 static void dispatch_found(struct zero_conf_search *search, struct zero_conf_discovered *entry) {
     if (!search->found_callback) {
         entry->notified = 1;
         return;
     }
-    char name[sizeof(entry->name)];
-    char service_type[sizeof(search->service_type)];
-    char domain[sizeof(search->domain)];
-    char host[sizeof(entry->host)];
-    char txt[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE];
-    const char *txt_records[ZERO_CONF_MAX_TXT_RECORDS];
-    memcpy(name, entry->name, sizeof(name));
-    memcpy(service_type, search->service_type, sizeof(service_type));
-    memcpy(domain, search->domain, sizeof(domain));
-    memcpy(host, entry->host, sizeof(host));
-    memcpy(txt, entry->txt, sizeof(txt));
-    for (uint16_t i = 0; i < entry->txt_count; ++i) {
-        txt_records[i] = txt[i];
-    }
-    struct s3e_zeroconf_found_data data = {
-        .service_id = discovered_service_id(entry),
-        .name = name,
-        .service_type = service_type,
-        .domain = domain,
-        .host = host,
-        /* BOZ copies this value directly into the network-order address port. */
-        .port = htons(entry->port),
-        .txt_count = entry->txt_count,
-        .txt_records = txt_records,
-    };
-    memcpy(&data.ipv4_address, entry->ipv4, sizeof(data.ipv4_address));
-    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", name, entry->ipv4[0], entry->ipv4[1],
-              entry->ipv4[2], entry->ipv4[3], entry->port);
+    struct s3e_zeroconf_found_data *data = guest_scratch_push(sizeof(*data));
+    data->service_id = GUEST_ADDRESS(discovered_service_id(entry));
+    data->name = scratch_string(entry->name, sizeof(entry->name));
+    data->service_type = scratch_string(search->service_type, sizeof(search->service_type));
+    data->domain = scratch_string(search->domain, sizeof(search->domain));
+    data->host = scratch_string(entry->host, sizeof(entry->host));
+    /* BOZ copies this value directly into the network-order address port. */
+    data->port = htons(entry->port);
+    data->txt_count = entry->txt_count;
+    data->txt_records = scratch_txt_records(entry);
+    memcpy(&data->ipv4_address, entry->ipv4, sizeof(data->ipv4_address));
+    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", (const char *)GUEST_POINTER(data->name),
+              entry->ipv4[0], entry->ipv4[1], entry->ipv4[2], entry->ipv4[3], entry->port);
     entry->notified = 1;
     callback_enter();
-    s3e_guest_call(search->found_callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(&data),
+    s3e_guest_call(GUEST_ADDRESS(search->found_callback), 3, S3E_GUEST_ARG(search_handle(search)), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
+    guest_scratch_pop(data);
 }
 
 static void dispatch_update(struct zero_conf_search *search, struct zero_conf_discovered *entry) {
     if (!search->update_callback) {
         return;
     }
-    char txt[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE];
-    const char *txt_records[ZERO_CONF_MAX_TXT_RECORDS];
-    memcpy(txt, entry->txt, sizeof(txt));
-    for (uint16_t i = 0; i < entry->txt_count; ++i) {
-        txt_records[i] = txt[i];
-    }
-    struct s3e_zeroconf_txt_update_data data = {
-        .service_id = discovered_service_id(entry),
-        .txt_count = entry->txt_count,
-        .txt_records = txt_records,
-    };
+    struct s3e_zeroconf_txt_update_data *data = guest_scratch_push(sizeof(*data));
+    data->service_id = GUEST_ADDRESS(discovered_service_id(entry));
+    data->txt_count = entry->txt_count;
+    data->txt_records = scratch_txt_records(entry);
     callback_enter();
-    s3e_guest_call(search->update_callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(&data),
+    s3e_guest_call(GUEST_ADDRESS(search->update_callback), 3, S3E_GUEST_ARG(search_handle(search)), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
+    guest_scratch_pop(data);
 }
 
 static void dispatch_lost(struct zero_conf_search *search, struct zero_conf_discovered *entry,
@@ -577,7 +652,7 @@ static void dispatch_lost(struct zero_conf_search *search, struct zero_conf_disc
     entry->notified = 0;
     if (callback) {
         callback_enter();
-        s3e_guest_call(callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(service_id),
+        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(search_handle(search)), S3E_GUEST_ARG(service_id),
                        S3E_GUEST_ARG(user_data));
         callback_leave();
     }
@@ -885,13 +960,13 @@ void s3e_zero_conf_process_packet(const uint8_t *data, size_t data_size,
     if (!data || !data_size) {
         return;
     }
-    struct mdns_wire_packet *packet = malloc(sizeof(*packet));
+    struct mdns_wire_packet *packet = guest_malloc(sizeof(*packet));
     if (!packet) {
         return;
     }
     enum mdns_wire_status status = mdns_wire_parse_packet(data, data_size, packet);
     if (status != MDNS_WIRE_OK) {
-        free(packet);
+        guest_free(packet);
         return;
     }
     if (packet->flags & MDNS_WIRE_FLAG_QR) {
@@ -907,7 +982,7 @@ void s3e_zero_conf_process_packet(const uint8_t *data, size_t data_size,
             send_followup_queries(search, now);
             dispatch_search_changes(search);
         }
-        free(packet);
+        guest_free(packet);
         return;
     }
     for (size_t i = 0; i < ZERO_CONF_MAX_PUBLISHERS; ++i) {
@@ -917,7 +992,7 @@ void s3e_zero_conf_process_packet(const uint8_t *data, size_t data_size,
             send_publication(publisher, 0, unicast_response && source ? source : NULL);
         }
     }
-    free(packet);
+    guest_free(packet);
 }
 
 static void expire_discovered(uint64_t now) {
@@ -972,19 +1047,17 @@ static void expire_discovered(uint64_t now) {
 }
 
 static struct zero_conf_search *resolve_search(void *handle) {
-    for (size_t i = 0; i < ZERO_CONF_MAX_SEARCHES; ++i) {
-        if (&g_searches[i] == handle && g_searches[i].in_use) {
-            return &g_searches[i];
-        }
+    uintptr_t index = (uintptr_t)handle - ZERO_CONF_SEARCH_HANDLE_FIRST;
+    if (index < ZERO_CONF_MAX_SEARCHES && g_searches[index].in_use) {
+        return &g_searches[index];
     }
     return NULL;
 }
 
 static struct zero_conf_publisher *resolve_publisher(void *handle) {
-    for (size_t i = 0; i < ZERO_CONF_MAX_PUBLISHERS; ++i) {
-        if (&g_publishers[i] == handle && g_publishers[i].in_use) {
-            return &g_publishers[i];
-        }
+    uintptr_t index = (uintptr_t)handle - ZERO_CONF_PUBLISHER_HANDLE_FIRST;
+    if (index < ZERO_CONF_MAX_PUBLISHERS && g_publishers[index].in_use) {
+        return &g_publishers[index];
     }
     return NULL;
 }
@@ -1035,7 +1108,7 @@ void *s3eZeroConfStartSearch(const char *service_type, const char *domain,
         uint64_t now = zero_conf_now_ms();
         (void)send_query(search);
         search->next_query_ms = now + ZERO_CONF_QUERY_INTERVAL_MS;
-        return search;
+        return search_handle(search);
     }
     return NULL;
 }
@@ -1049,7 +1122,7 @@ void s3eZeroConfStopSearch(void *handle) {
 }
 
 void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_type,
-                         const char *domain, uint16_t txt_count, const char **txt_records) {
+                         const char *domain, uint16_t txt_count, const uint32_t *txt_records) {
     if (!port || !name || !name[0] || !service_type || strlen(name) > 64) {
         return NULL;
     }
@@ -1097,12 +1170,12 @@ void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_ty
         mark_publisher_txt_announced(publisher);
         publisher->last_announce_ms = now;
         publisher->next_announce_ms = now + ZERO_CONF_ANNOUNCE_INTERVAL_MS;
-        return publisher;
+        return publisher_handle(publisher);
     }
     return NULL;
 }
 
-int32_t s3eZeroConfUpdateTxtRecord(void *handle, uint16_t txt_count, const char **txt_records) {
+int32_t s3eZeroConfUpdateTxtRecord(void *handle, uint16_t txt_count, const uint32_t *txt_records) {
     struct zero_conf_publisher *publisher = resolve_publisher(handle);
     char updated[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE] = {{0}};
     uint16_t updated_count = 0;

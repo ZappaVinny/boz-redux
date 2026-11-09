@@ -28,7 +28,7 @@ int g_cursor_active = 1;
 uint8_t g_is_device_resources[IS_DEVICE_RESOURCES_SIZE];
 uint64_t g_host_start_us;
 
-uint32_t s3e_guest_call(const void *fn, int argc, ...) {
+uint32_t s3e_guest_call(uint32_t fn, int argc, ...) {
     uint32_t a[6] = {0};
     va_list ap;
     va_start(ap, argc);
@@ -36,7 +36,7 @@ uint32_t s3e_guest_call(const void *fn, int argc, ...) {
         a[i] = va_arg(ap, uint32_t);
     }
     va_end(ap);
-    return (uint32_t)arm_emu_call(S3E_GUEST_ARG(fn), argc, a);
+    return (uint32_t)arm_emu_call(fn, argc, a);
 }
 
 uint64_t monotonic_us(void) {
@@ -100,16 +100,16 @@ bool s3e_host_set_display_size(uint32_t width, uint32_t height) {
     }
 
     if (surface_width > SIZE_MAX / surface_height ||
-        surface_width * surface_height > SIZE_MAX / sizeof(*g_surface_pixels)) {
+        (uint64_t)surface_width * surface_height > SIZE_MAX / sizeof(*g_surface_pixels)) {
         return false;
     }
 
-    uint32_t *pixels = calloc((size_t)surface_width * surface_height, sizeof(*pixels));
+    uint32_t *pixels = guest_calloc((size_t)surface_width * surface_height, sizeof(*pixels));
     if (!pixels) {
         return false;
     }
 
-    free(g_surface_pixels);
+    guest_free(g_surface_pixels);
     g_surface_pixels = pixels;
     g_native_window.width = (uint16_t)width;
     g_native_window.height = (uint16_t)height;
@@ -148,7 +148,7 @@ static void clear_timers(void) {
     pthread_mutex_unlock(&g_timer_mutex);
     while (timer) {
         struct timer_event *next = timer->next;
-        free(timer);
+        guest_free(timer);
         timer = next;
     }
 }
@@ -157,8 +157,8 @@ static void close_all_memory_files(void) {
     while (g_memory_files) {
         struct memory_file *next = g_memory_files->next;
         fclose(g_memory_files->file);
-        free(g_memory_files->buffer);
-        free(g_memory_files);
+        guest_free(g_memory_files->buffer);
+        guest_free(g_memory_files);
         g_memory_files = next;
     }
 }
@@ -172,11 +172,11 @@ void s3e_host_shutdown(void) {
     egl_backend_shutdown();
     clear_timers();
     close_all_memory_files();
-    free(g_surface_pixels);
+    guest_free(g_surface_pixels);
     g_surface_pixels = NULL;
     s3e_memory_shutdown();
     for (size_t i = 0; i < g_stub_count; ++i) {
-        free((void *)g_stub_names[i]);
+        guest_free((void *)g_stub_names[i]);
     }
     g_stub_count = 0;
     if (g_stub_code) {

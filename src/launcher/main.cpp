@@ -8,10 +8,13 @@
 #include "os.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"  // touch_scroll: the active id and the window's move id
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 
-#define SDL_MAIN_HANDLED
+#if !defined(__ANDROID__)
+#define SDL_MAIN_HANDLED  // on Android, SDL's activity calls this main as SDL_main
+#endif
 #include <SDL.h>
 
 #include <cstdio>
@@ -23,7 +26,9 @@
 #include <string>
 #include <vector>
 
-#if !defined(_WIN32)
+#if defined(__ANDROID__)
+#include <dirent.h>
+#elif !defined(_WIN32)
 #include <dlfcn.h>
 #include <unistd.h>
 #endif
@@ -72,6 +77,26 @@ struct Brand {
     int logo_width = 0, logo_height = 0;
 };
 Brand g_brand;
+
+// Layout scale: 1 on the desktop; phones and TVs draw everything larger (set in main).
+float g_scale = 1.0f;
+float px(float v) {
+    return v * g_scale;
+}
+
+// Phones: dragging a page with a finger scrolls it (ImGui scrolls with a wheel or the bar).
+// Call inside the scrolling window, before its End.
+void touch_scroll() {
+#if defined(__ANDROID__)
+    // A press on a window's empty space makes the window's move handle active (even when it
+    // cannot move): that counts as no item.
+    ImGuiID active = ImGui::GetCurrentContext()->ActiveId;
+    bool idle = active == 0 || active == ImGui::GetCurrentWindow()->MoveId;
+    if (idle && ImGui::IsWindowHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, px(6))) {
+        ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseDelta.y);
+    }
+#endif
+}
 
 void apply_style() {
     ImGui::StyleColorsDark();
@@ -148,9 +173,10 @@ void section(const char *title) {
     ImGui::PushFont(g_brand.heading, 20.0f);
     ImVec2 at = ImGui::GetCursorScreenPos();
     float height = ImGui::GetTextLineHeight();
-    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(at.x, at.y + 3), ImVec2(at.x + 4, at.y + height - 3),
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(at.x, at.y + px(3)),
+                                              ImVec2(at.x + px(4), at.y + height - px(3)),
                                               ImGui::GetColorU32(brand(BRAND_RED)));
-    ImGui::SetCursorScreenPos(ImVec2(at.x + 14, at.y));
+    ImGui::SetCursorScreenPos(ImVec2(at.x + px(14), at.y));
     std::string upper = title;
     for (char &ch : upper) {
         ch = (char)std::toupper((unsigned char)ch);
@@ -176,9 +202,9 @@ bool primary_button(const char *label, const ImVec2 &size = ImVec2(0, 0)) {
 void status_line(bool ok, const char *good, const char *bad) {
     ImVec2 at = ImGui::GetCursorScreenPos();
     float height = ImGui::GetTextLineHeight();
-    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + 6, at.y + height * 0.5f), 4.5f,
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + px(6), at.y + height * 0.5f), px(4.5f),
                                                 ImGui::GetColorU32(ok ? OK_COLOUR : ERROR_COLOUR));
-    ImGui::SetCursorScreenPos(ImVec2(at.x + 20, at.y));
+    ImGui::SetCursorScreenPos(ImVec2(at.x + px(20), at.y));
     ImGui::TextUnformatted(ok ? good : bad);
 }
 
@@ -194,7 +220,7 @@ void ensure_ini(Launcher &l) {
 }
 
 // A setting value with two decimals ("3.25"), the precision the sliders show.
-std::string format_float(float value) {
+[[maybe_unused]] std::string format_float(float value) {
     char text[32];
     std::snprintf(text, sizeof(text), "%.2f", value);
     return text;
@@ -207,10 +233,19 @@ void save_setting(Launcher &l, const char *section, const char *key, const std::
 
 // --- Game files tab -------------------------------------------------------------------------
 
-void game_files_tab(Launcher &l, const GameStatus &status) {
+void job_message(Launcher &l) {
     bool busy = l.files->busy();
+    std::string message = l.files->message();
+    if (busy) {
+        float progress = l.files->progress();
+        ImGui::ProgressBar(progress < 0 ? -1.0f * (float)ImGui::GetTime() : progress,
+                           ImVec2(-1, 0), message.empty() ? "Working..." : message.c_str());
+    } else if (!message.empty()) {
+        ImGui::TextWrapped("%s", message.c_str());
+    }
+}
 
-    section("1. Game APK");
+void image_status(const GameStatus &status) {
     if (!status.image) {
         status_line(false, "", "Not installed. Use your own Black Ops Zombies APK, version 1.0.11.");
     } else if (!status.image_checked) {
@@ -220,7 +255,101 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
     } else {
         ImGui::TextColored(WARN_COLOUR, "Installed, but not the 1.0.11 release. It may not work.");
     }
-    ImGui::SetNextItemWidth(-260);
+}
+
+#if defined(__ANDROID__)
+
+// The first file in a folder whose name ends with suffix (no case), or "".
+std::string find_file(const std::string &folder, const char *suffix) {
+    std::string found;
+    if (DIR *dir = opendir(folder.c_str())) {
+        size_t length = std::strlen(suffix);
+        while (dirent *entry = readdir(dir)) {
+            std::string name = entry->d_name;
+            if (name.size() > length &&
+                strcasecmp(name.c_str() + name.size() - length, suffix) == 0) {
+                found = os::join(folder, name);
+                break;
+            }
+        }
+        closedir(dir);
+    }
+    return found;
+}
+
+// Phones and TVs: files come from the system picker (content:// URIs) or, on a TV without
+// one, from the game folder's import/ folder (adb push), never from a typed path.
+void game_files_tab(Launcher &l, const GameStatus &status) {
+    bool busy = l.files->busy();
+    bool picker = os::has_file_dialogs();
+    std::string import_dir = os::join(l.root, "import");
+    os::make_dir(import_dir);
+
+    section("1. Game APK");
+    image_status(status);
+    ImGui::BeginDisabled(busy);
+    if (picker && primary_button(status.image ? "Reinstall from an APK file..." : "Choose the APK file...")) {
+        std::string picked = os::pick_file("", "", "");
+        if (!picked.empty()) {
+            l.files->install_apk(picked);
+        }
+    }
+    std::string local_apk = find_file(import_dir, ".apk");
+    if (!local_apk.empty()) {
+        if (picker) {
+            ImGui::SameLine();
+        }
+        std::string label = "Install " + local_apk.substr(local_apk.rfind('/') + 1) + " (import folder)";
+        if (ImGui::Button(label.c_str())) {
+            l.files->install_apk(local_apk);
+        }
+    }
+    ImGui::EndDisabled();
+
+    section("2. Data packs");
+    for (const PackStatus &pack : status.packs) {
+        status_line(pack.present, pack.name, pack.name);
+    }
+    bool packs_ready = status.packs[0].present && status.packs[1].present;
+    ImGui::BeginDisabled(busy || packs_ready);
+    if (primary_button("Download from Activision (825 MB)")) {
+        l.files->download_packs();
+    }
+    if (picker) {
+        ImGui::SameLine();
+        if (ImGui::Button("Import files...")) {
+            std::vector<std::string> picked = os::pick_documents(true);
+            if (!picked.empty()) {
+                l.files->import_pack_documents(picked);
+            }
+        }
+    }
+    if (!find_file(import_dir, ".dz").empty()) {
+        ImGui::SameLine();
+        if (ImGui::Button("Import from the import folder")) {
+            l.files->import_packs(import_dir);
+        }
+    }
+    ImGui::EndDisabled();
+    if (picker) {
+        ImGui::TextDisabled("Import: choose blackops_etc.dz and blackops_gles1.dz, or the game's .obb file.");
+    } else {
+        ImGui::TextWrapped("No file picker on this device. To use files from a PC instead, copy them "
+                           "into %s (for example with adb push); buttons for them appear here.",
+                           import_dir.c_str());
+    }
+    ImGui::Spacing();
+    job_message(l);
+}
+
+#else
+
+void game_files_tab(Launcher &l, const GameStatus &status) {
+    bool busy = l.files->busy();
+
+    section("1. Game APK");
+    image_status(status);
+    ImGui::SetNextItemWidth(px(-260));
     ImGui::InputTextWithHint("##apk", "Path to com.activision.boz.apk (or drag it onto this window)",
                              l.apk_path, sizeof(l.apk_path));
     ImGui::SameLine();
@@ -250,7 +379,7 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
     }
     ImGui::EndDisabled();
     ImGui::TextDisabled("Or import them from a folder (an Android obb folder works):");
-    ImGui::SetNextItemWidth(-260);
+    ImGui::SetNextItemWidth(px(-260));
     ImGui::InputTextWithHint("##packs", "Folder with blackops_etc.dz and blackops_gles1.dz",
                              l.pack_folder, sizeof(l.pack_folder));
     ImGui::SameLine();
@@ -270,14 +399,7 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
     ImGui::EndDisabled();
 
     ImGui::Spacing();
-    std::string message = l.files->message();
-    if (busy) {
-        float progress = l.files->progress();
-        ImGui::ProgressBar(progress < 0 ? -1.0f * (float)ImGui::GetTime() : progress,
-                           ImVec2(-1, 0), message.empty() ? "Working..." : message.c_str());
-    } else if (!message.empty()) {
-        ImGui::TextWrapped("%s", message.c_str());
-    }
+    job_message(l);
 
     ImGui::Spacing();
     if (ImGui::Button("Open game folder")) {
@@ -289,6 +411,8 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
         os::open_path(os::join(l.root, "saves"));
     }
 }
+
+#endif
 
 // --- Settings tab ---------------------------------------------------------------------------
 
@@ -346,8 +470,9 @@ void settings_tab(Launcher &l) {
         return;
     }
     std::string chosen;
-    ImGui::BeginChild("settings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.2f));
-    ImGui::PushItemWidth(260);
+    ImGui::BeginChild("settings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.2f),
+                      ImGuiChildFlags_NavFlattened);
+    ImGui::PushItemWidth(px(260));
 
     section("Player");
     {
@@ -369,10 +494,12 @@ void settings_tab(Launcher &l) {
     }
 
     section("Display");
+#if !defined(__ANDROID__)
     bool fullscreen = l.ini.get("display", "fullscreen", "true") != "false";
     if (ImGui::Checkbox("Fullscreen (F11 toggles in game)", &fullscreen)) {
         save_setting(l, "display", "fullscreen", fullscreen ? "true" : "false");
     }
+#endif
     {
         const char *values[] = {"on", "adaptive", "off"};
         const char *names[] = {"On (smoothest)", "Adaptive (tear when late)", "Off"};
@@ -413,6 +540,7 @@ void settings_tab(Launcher &l) {
             save_setting(l, "display", "scaling", chosen);
         }
     }
+#if !defined(__ANDROID__)  // phones and TVs: touch and controllers, no mouse or keyboard setup
     bool software_cursor = l.ini.get("display", "software_cursor", "false") == "true";
     if (ImGui::Checkbox("Crosshair pointer in menus", &software_cursor)) {
         save_setting(l, "display", "software_cursor", software_cursor ? "true" : "false");
@@ -471,9 +599,9 @@ void settings_tab(Launcher &l) {
     section("Controls (during a match)");
     ImGui::TextDisabled("Click Set, then press a key or mouse button. Separate several with commas.");
     if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180);
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, px(180));
         ImGui::TableSetupColumn("Keys", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 150);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, px(150));
         for (int i = 0; i < CLIENT_BINDING_COUNT; ++i) {
             ImGui::PushID(i);
             ImGui::TableNextRow();
@@ -510,6 +638,7 @@ void settings_tab(Launcher &l) {
         }
         ImGui::EndTable();
     }
+#endif
 
     section("Troubleshooting");
     bool status = l.ini.get("debug", "status", "false") == "true";
@@ -525,6 +654,7 @@ void settings_tab(Launcher &l) {
         save_setting(l, "debug", "log_network", log_network ? "true" : "false");
     }
     ImGui::PopItemWidth();
+    touch_scroll();
     ImGui::EndChild();
     ImGui::TextDisabled("%s", l.settings_note.empty() ? "Changes apply the next time the game starts."
                                                       : l.settings_note.c_str());
@@ -601,10 +731,24 @@ void mods_tab(Launcher &l) {
         scan_mods(l);
     }
     std::string folder = os::join(l.root, "mods");
+#if defined(__ANDROID__)
+    if (l.files->mods_changed()) {
+        scan_mods(l);
+    }
+    ImGui::BeginDisabled(l.files->busy() || !os::has_file_dialogs());
+    if (primary_button("Install a mod (.zip)...")) {
+        std::string picked = os::pick_file("", "", "");
+        if (!picked.empty()) {
+            l.files->import_mod(picked);
+        }
+    }
+    ImGui::EndDisabled();
+#else
     if (ImGui::Button("Open mods folder")) {
         os::make_dir(folder);
         os::open_path(folder);
     }
+#endif
     ImGui::SameLine();
     if (ImGui::Button("Refresh")) {
         scan_mods(l);
@@ -612,16 +756,26 @@ void mods_tab(Launcher &l) {
     ImGui::SameLine();
     ImGui::TextDisabled("Later mods win when two replace the same file.");
 
+#if defined(__ANDROID__)
+    job_message(l);
+#endif
     if (l.mods.empty()) {
         ImGui::Spacing();
+#if defined(__ANDROID__)
+        ImGui::TextWrapped("No mods installed. Press Install a mod and choose its .zip, or copy each "
+                           "mod's folder (with its mod.toml) into %s, then press Refresh.",
+                           folder.c_str());
+#else
         ImGui::TextWrapped("No mods installed. Put each mod in its own folder in %s, with a "
                            "mod.toml and an assets folder, then press Refresh.",
                            folder.c_str());
+#endif
         return;
     }
 
     float details_height = ImGui::GetTextLineHeightWithSpacing() * 6;
-    ImGui::BeginChild("mod_list", ImVec2(0, -details_height), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("mod_list", ImVec2(0, -details_height),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
     int move_from = -1, move_to = -1;
     if (ImGui::BeginTable("mods", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
@@ -670,6 +824,7 @@ void mods_tab(Launcher &l) {
         }
         save_mods(l);
     }
+    touch_scroll();
     ImGui::EndChild();
 
     if (l.mod_selected >= 0 && l.mod_selected < (int)l.mods.size()) {
@@ -771,13 +926,22 @@ void start_game(Launcher &l, SDL_Window *window, const std::string &map, bool co
     }
     std::map<std::string, std::string> env;
     env["HOME"] = saves;
+    std::string image = os::join(os::join(l.root, "assets"), "boz.s3e.unpacked");
+#if defined(__ANDROID__)
+    // The game's activity runs in its own process; this one waits behind it.
+    (void)window;
+    if (!os::start_game({"--root", l.root, "--log", os::join(l.root, "boz-log.txt"), "--run", image},
+                        env)) {
+        l.game_note = "Could not start the game.";
+    }
+    return;
+#endif
 #if !defined(_WIN32)
     if (os::getenv_str("XDG_CACHE_HOME").empty() && !os::getenv_str("HOME").empty()) {
         env["XDG_CACHE_HOME"] = os::join(os::getenv_str("HOME"), ".cache");
     }
 #endif
     std::string loader = os::join(l.bin_dir, os::executable_name("codboz_s3e_loader"));
-    std::string image = os::join(os::join(l.root, "assets"), "boz.s3e.unpacked");
     if (!os::spawn(l.game, loader, {"--root", l.root, "--run", image}, env,
                    os::join(l.root, "boz-log.txt"), l.root)) {
         l.game_note = "Could not start " + loader + ": " + os::spawn_error();
@@ -817,13 +981,13 @@ const char *const PLAY_CHOOSER = "Where to play";
 void play_chooser(Launcher &l, SDL_Window *window) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(560.0f, viewport->Size.x - 32.0f), 0));
+    ImGui::SetNextWindowSize(ImVec2(std::min(px(560), viewport->Size.x - px(32)), 0));
     if (!ImGui::BeginPopupModal(PLAY_CHOOSER, nullptr,
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                                     ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
-    const float button_width = 130.0f, gap = ImGui::GetStyle().ItemSpacing.x;
+    const float button_width = px(130), gap = ImGui::GetStyle().ItemSpacing.x;
     ImGui::TextDisabled("Custom maps from your mods");
     std::string chosen;
     bool coop = false;
@@ -874,16 +1038,20 @@ bool begin_tab(const char *label, bool select) {
 }
 
 void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
-    const float logo_height = 78.0f;
-    const float play_width = 200.0f, play_height = 54.0f, gap = 20.0f;
+    const float logo_height = px(78);
+    const float play_width = px(200), play_height = px(54), gap = px(20);
     const char *title = "CLASSIC BLACK OPS ZOMBIES";
     char subtitle[96];
+#if defined(__ANDROID__)
+    std::snprintf(subtitle, sizeof(subtitle), "The original mobile game, reborn   v%s", BOZ_VERSION);
+#else
     std::snprintf(subtitle, sizeof(subtitle), "The original mobile game, on PC   v%s", BOZ_VERSION);
+#endif
     ImVec2 top = ImGui::GetCursorPos();
     if (g_brand.logo) {
         float logo_width = logo_height * (float)g_brand.logo_width / (float)g_brand.logo_height;
         ImGui::Image(ImTextureRef((ImTextureID)(intptr_t)g_brand.logo), ImVec2(logo_width, logo_height));
-        ImGui::SameLine(0, 22);
+        ImGui::SameLine(0, px(22));
     }
 
     // On a narrow window the title gives way.
@@ -895,7 +1063,7 @@ void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
     float right = ImGui::GetWindowWidth() - play_width - ImGui::GetStyle().WindowPadding.x;
     if (text_x + text_width <= right - gap) {
         ImGui::BeginGroup();
-        ImGui::SetCursorPosY(top.y + 16);
+        ImGui::SetCursorPosY(top.y + px(16));
         ImGui::PushFont(g_brand.heading, 24.0f);
         ImGui::TextUnformatted(title);
         ImGui::PopFont();
@@ -931,21 +1099,25 @@ void header(Launcher &l, SDL_Window *window, const GameStatus &status) {
         ImGui::OpenPopup(PLAY_CHOOSER);
     }
     play_chooser(l, window);
-    ImGui::SetCursorPosY(top.y + logo_height + 14);
+    ImGui::SetCursorPosY(top.y + logo_height + px(14));
 
     // The red rule under the header, as under the logo's wordmark.
     ImVec2 at = ImGui::GetCursorScreenPos();
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(viewport->Pos.x, at.y),
-                                              ImVec2(viewport->Pos.x + viewport->Size.x, at.y + 2),
+                                              ImVec2(viewport->Pos.x + viewport->Size.x, at.y + px(2)),
                                               ImGui::GetColorU32(brand(BRAND_RED)));
-    ImGui::Dummy(ImVec2(0, 8));
+    ImGui::Dummy(ImVec2(0, px(8)));
 }
 
 void footer(Launcher &l) {
     ImGui::Separator();
     ImGui::TextDisabled("BOZ Redux %s  ·  Not affiliated with Activision. Use your own copy of the game.",
                         BOZ_VERSION);
+#if defined(__ANDROID__)
+    (void)l;
+    return;
+#endif
     const char *label = "Open log";
     float width = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
     ImGui::SameLine(ImGui::GetWindowWidth() - width - ImGui::GetStyle().WindowPadding.x);
@@ -988,8 +1160,10 @@ void draw(Launcher &l, SDL_Window *window) {
             if (!begin_tab(tab.label, select)) {
                 continue;
             }
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22, 16));
-            ImGui::BeginChild("page", ImVec2(0, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(22), px(16)));
+            // NavFlattened: a TV remote or controller moves straight to the page's buttons.
+            ImGui::BeginChild("page", ImVec2(0, -footer_height),
+                              ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
             if (tab.tab == 0) {
                 game_files_tab(l, status);
             } else if (tab.tab == 1) {
@@ -997,6 +1171,7 @@ void draw(Launcher &l, SDL_Window *window) {
             } else {
                 mods_tab(l);
             }
+            touch_scroll();
             ImGui::EndChild();
             ImGui::PopStyleVar();
             ImGui::EndTabItem();
@@ -1019,7 +1194,7 @@ void save_screenshot(SDL_Renderer *renderer, const std::string &path) {
     SDL_FreeSurface(shot);
 }
 
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__ANDROID__)
 bool has_library(const char *name) {
     void *handle = dlopen(name, RTLD_LAZY);
     if (handle) {
@@ -1059,7 +1234,7 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__ANDROID__)
     choose_video_driver();
     // The window class the desktop shortcut names (StartupWMClass), so the taskbar shows the
     // BOZ Redux icon; the game inherits it.
@@ -1068,7 +1243,12 @@ int main(int argc, char **argv) {
 #endif
 
     SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+#if defined(__ANDROID__)
+    const Uint32 subsystems = SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER;  // TV remotes, controllers
+#else
+    const Uint32 subsystems = SDL_INIT_VIDEO;
+#endif
+    if (SDL_Init(subsystems) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
@@ -1080,14 +1260,20 @@ int main(int argc, char **argv) {
         width = std::min(width, usable.w * 9 / 10);
         height = std::min(height, usable.h * 9 / 10);
     }
-    SDL_Window *window = SDL_CreateWindow(
-        "BOZ Redux", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height,
-        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+#if defined(__ANDROID__)
+    const Uint32 window_flags = SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI;
+#else
+    const Uint32 window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
+    SDL_Window *window = SDL_CreateWindow("BOZ Redux", SDL_WINDOWPOS_CENTERED,
+                                          SDL_WINDOWPOS_CENTERED, width, height, window_flags);
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return 1;
     }
+#if !defined(__ANDROID__)
     SDL_SetWindowMinimumSize(window, std::min(900, width), std::min(620, height));
+#endif
     set_window_icon(window);
     SDL_Renderer *renderer =
         SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -1103,10 +1289,27 @@ int main(int argc, char **argv) {
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
     apply_style();
+#if defined(__ANDROID__)
+    // A phone's or TV's screen in pixels: lay out as on a window about 640 pixels high, and let
+    // a TV remote or controller move between the buttons.
+    {
+        int w = 0, h = 0;
+        SDL_GetRendererOutputSize(renderer, &w, &h);
+        g_scale = std::max(1.0f, std::min(3.0f, std::min((float)h / 640.0f, (float)w / 1000.0f)));
+        ImGui::GetStyle().ScaleAllSizes(g_scale);
+        ImGui::GetStyle().FontScaleDpi = g_scale;
+        ImGui::GetStyle().ScrollbarSize = px(18);
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    }
+#endif
     load_fonts();
     load_logo(renderer);
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+#if defined(__ANDROID__)
+    // Every gamepad steers the launcher: a TV's first "gamepad" is often its remote's IR receiver.
+    ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);
+#endif
 
     GameFiles files(l.root, l.bin_dir);
     l.files = &files;
@@ -1124,6 +1327,23 @@ int main(int argc, char **argv) {
                     continue;
                 }
                 ImGui_ImplSDL2_ProcessEvent(&event);
+#if defined(__ANDROID__)
+                // A TV remote's OK (DPAD_CENTER) arrives as Select, which ImGui does not know:
+                // it presses the focused button like Enter.
+                if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                    event.key.keysym.scancode == SDL_SCANCODE_SELECT) {
+                    ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, event.type == SDL_KEYDOWN);
+                }
+#endif
+                if (event.type == SDL_RENDER_DEVICE_RESET) {
+                    // The GPU context was lost (Android, after the game ran): rebuild textures.
+                    ImGui_ImplSDLRenderer2_DestroyDeviceObjects();
+                    if (g_brand.logo) {
+                        SDL_DestroyTexture(g_brand.logo);
+                        g_brand.logo = nullptr;
+                    }
+                    load_logo(renderer);
+                }
                 if (event.type == SDL_QUIT) {
                     done = !l.game_running;
                 } else if (event.type == SDL_DROPFILE) {

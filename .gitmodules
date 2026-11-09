@@ -17,3 +17,6 @@
 [submodule "runtime/third_party/lua"]
 	path = third_party/lua
 	url = https://github.com/lua/lua.git
+[submodule "third_party/dynarmic"]
+	path = third_party/dynarmic
+	url = https://github.com/azahar-emu/dynarmic.git

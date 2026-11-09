@@ -3,7 +3,10 @@
 #include "client_config.h"
 #include "mod_runtime.h"
 #include "native_input.h"
+#include "touch_controls.h"
 
+#include <stdbool.h>
+#include <string.h>
 #include <strings.h>
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
@@ -130,6 +133,7 @@ struct sdl_input_api {
     int (*IsGameController)(int joystick_index);
     const char *(*JoystickNameForIndex)(int joystick_index);
     const char *(*GameControllerNameForIndex)(int joystick_index);
+    int (*GameControllerTypeForIndex)(int joystick_index); /* SDL 2.0.12+ */
     void *(*GameControllerOpen)(int joystick_index);
     void (*GameControllerClose)(void *gamecontroller);
     int (*GameControllerGetAttached)(void *gamecontroller);
@@ -231,7 +235,29 @@ static void input_scan_controllers(void) {
     int report = count != g_last_joystick_count;
     g_last_joystick_count = count;
 
-    for (int i = 0; i < count; ++i) {
+    /* Android TVs list their remote's IR receiver and virtual input devices as controllers too:
+     * gamepads SDL recognises (Xbox, PlayStation, Switch...) first, then other controllers,
+     * remotes and virtual devices last. A DualShock 4 may show up as "Wireless Controller
+     * Touchpad" alone, and that device carries its buttons: it counts as a gamepad. */
+    int rank[64];
+    for (int i = 0; i < count && i < 64; ++i) {
+        const char *name = input_joystick_name(i);
+        int type = g_sdl.GameControllerTypeForIndex ? g_sdl.GameControllerTypeForIndex(i) : 0;
+        bool remote = strstr(name, "IR Receiver") || strstr(name, "Remote") ||
+                      strstr(name, "remote") || strstr(name, "Keypad") ||
+                      strstr(name, "KEYPAD") || !strncmp(name, "sim-", 4) ||
+                      strstr(name, "virtual");
+        rank[i] = remote ? 0 : type > 0 ? 2 : 1;
+        if (report) {
+            fprintf(stderr, "[input] device %d: %s (type %d)%s\n", i, name, type,
+                    remote ? ", a remote or virtual device" : "");
+        }
+    }
+    for (int want = 2; want >= 0; --want)
+    for (int i = 0; i < count && i < 64; ++i) {
+        if (rank[i] != want) {
+            continue;
+        }
         if (!g_sdl.IsGameController(i)) {
             if (report) {
                 fprintf(stderr, "[input] joystick %d (%s) has no SDL controller mapping\n", i,
@@ -279,6 +305,8 @@ static void input_open(void) {
     sdl_load_optional_symbol((void **)&g_sdl.JoystickNameForIndex, "SDL_JoystickNameForIndex");
     sdl_load_optional_symbol((void **)&g_sdl.GameControllerNameForIndex,
                              "SDL_GameControllerNameForIndex");
+    sdl_load_optional_symbol((void **)&g_sdl.GameControllerTypeForIndex,
+                             "SDL_GameControllerTypeForIndex");
     ok &= sdl_load_symbol((void **)&g_sdl.GameControllerOpen, "SDL_GameControllerOpen");
     ok &= sdl_load_symbol((void **)&g_sdl.GameControllerClose, "SDL_GameControllerClose");
     ok &=
@@ -414,7 +442,7 @@ static int32_t clamp_pointer_y(int32_t y) {
     return clamp_value(y, window_height());
 }
 
-static void pointer_dispatch(uint32_t id, void *event) {
+static void pointer_dispatch(uint32_t id, void *event, size_t size) {
     if (id >= ARRAY_SIZE(g_pointer_callbacks)) {
         return;
     }
@@ -422,10 +450,12 @@ static void pointer_dispatch(uint32_t id, void *event) {
     if (!slot->callback) {
         return;
     }
-    s3e_guest_call(slot->callback, 2, S3E_GUEST_ARG(event), S3E_GUEST_ARG(slot->user_data));
+    uint32_t data = guest_block_in(event, size);
+    s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
+    guest_block_out(event, data, size);
 }
 
-static void touchpad_dispatch(uint32_t id, void *event) {
+static void touchpad_dispatch(uint32_t id, void *event, size_t size) {
     if (id >= ARRAY_SIZE(g_touchpad_callbacks)) {
         return;
     }
@@ -433,7 +463,9 @@ static void touchpad_dispatch(uint32_t id, void *event) {
     if (!slot->callback) {
         return;
     }
-    s3e_guest_call(slot->callback, 2, S3E_GUEST_ARG(event), S3E_GUEST_ARG(slot->user_data));
+    uint32_t data = guest_block_in(event, size);
+    s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
+    guest_block_out(event, data, size);
 }
 
 static void pointer_set_down(int down) {
@@ -476,8 +508,12 @@ static void pointer_dispatch_button(uint32_t button, int32_t pressed) {
         .x = g_pointer_x,
         .y = g_pointer_y,
     };
-    pointer_dispatch(0, &event);
-    pointer_dispatch(2, &touch_event);
+    if (getenv("BOZ_TRACE_INPUT")) {
+        fprintf(stderr, "[input] pointer %u %s at %d,%d\n", button, pressed ? "down" : "up",
+                g_pointer_x, g_pointer_y);
+    }
+    pointer_dispatch(0, &event, sizeof(event));
+    pointer_dispatch(2, &touch_event, sizeof(touch_event));
 }
 
 static void pointer_dispatch_motion(void) {
@@ -490,8 +526,8 @@ static void pointer_dispatch_motion(void) {
         .x = g_pointer_x,
         .y = g_pointer_y,
     };
-    pointer_dispatch(1, &event);
-    pointer_dispatch(3, &touch_event);
+    pointer_dispatch(1, &event, sizeof(event));
+    pointer_dispatch(3, &touch_event, sizeof(touch_event));
 }
 
 static void input_release_pointer(void) {
@@ -510,7 +546,9 @@ static void keyboard_dispatch_event(uint32_t key, int32_t pressed) {
     for (size_t i = 0; i < ARRAY_SIZE(g_keyboard_callbacks); ++i) {
         struct keyboard_callback_slot *slot = &g_keyboard_callbacks[i];
         if (slot->callback && slot->id == 0) {
-            s3e_guest_call(slot->callback, 2, S3E_GUEST_ARG(&event), S3E_GUEST_ARG(slot->user_data));
+            uint32_t data = guest_block_in(&event, sizeof(event));
+            s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
+            guest_block_out(&event, data, sizeof(event));
         }
     }
 }
@@ -601,7 +639,7 @@ static void touchpad_dispatch_button(uint32_t id, int32_t pressed, int32_t x, in
         .x = x,
         .y = y,
     };
-    touchpad_dispatch(0, &event);
+    touchpad_dispatch(0, &event, sizeof(event));
 }
 
 static void touchpad_dispatch_motion(uint32_t id, int32_t x, int32_t y) {
@@ -610,7 +648,7 @@ static void touchpad_dispatch_motion(uint32_t id, int32_t x, int32_t y) {
         .x = x,
         .y = y,
     };
-    touchpad_dispatch(1, &event);
+    touchpad_dispatch(1, &event, sizeof(event));
 }
 
 static void touchpad_release(uint32_t id) {
@@ -774,6 +812,9 @@ static struct {
 } g_bindings[BIND_COUNT];
 static int g_bindings_loaded;
 static uint32_t g_mouse_buttons;
+/* The touch screen was the last input: on-screen controls during a Zombies match. A key or a
+ * controller button hands the match back to them. */
+static int g_touch_mode;
 
 static void parse_binding(enum binding_id id, const char *text) {
     char copy[128];
@@ -872,9 +913,73 @@ static void desktop_set_game_mode(int enabled) {
     fprintf(stderr, "[input] %s mode\n", enabled ? "game (mouse captured)" : "menu (mouse pointer)");
 }
 
+/* Left-button presses and releases from SDL's events, with their positions. A tap on a touch
+ * screen can be down and up again before the game looks, so polling the state would miss it.
+ * The game reads the pointer once per s3ePointerUpdate (its menu update), and a press and a
+ * release between two reads overwrite each other: each queued change is held for a number of
+ * those reads (with a time fallback), and a finger lands only after a move there, as a mouse
+ * would have hovered. */
+enum { PRESS_QUEUE = 16 };
+static struct {
+    int32_t x, y;
+    int down; /* 1 press, 0 release, -1 move only */
+} g_press_queue[PRESS_QUEUE];
+static int g_press_head, g_press_count;
+enum {
+    PRESS_DOWN_UPDATES = 3, /* the menus ignore a press seen by a single update */
+    PRESS_OTHER_UPDATES = 2,
+    PRESS_UPDATE_FALLBACK_MS = 40, /* screens that do not call s3ePointerUpdate */
+};
+static int g_press_active, g_press_hold;
+static int32_t g_press_x, g_press_y;
+static int g_press_down;
+static unsigned g_pointer_updates, g_press_seen_updates;
+static uint64_t g_press_tick_ms;
+
+static void queue_press(int32_t x, int32_t y, int down) {
+    if (g_press_count == PRESS_QUEUE) {
+        return;
+    }
+    int at = (g_press_head + g_press_count++) % PRESS_QUEUE;
+    g_press_queue[at].x = x;
+    g_press_queue[at].y = y;
+    g_press_queue[at].down = down;
+}
+
 static void desktop_update_menu(void *window) {
     int mx = 0, my = 0, ww = 0, wh = 0;
     uint32_t buttons = g_sdl.GetMouseState(&mx, &my);
+    uint64_t now = monotonic_ms();
+    if (g_press_active) {
+        if (g_pointer_updates != g_press_seen_updates ||
+            now - g_press_tick_ms >= PRESS_UPDATE_FALLBACK_MS) {
+            g_press_seen_updates = g_pointer_updates;
+            g_press_tick_ms = now;
+            if (--g_press_hold <= 0) {
+                g_press_active = 0;
+            }
+        }
+    }
+    if (!g_press_active && g_press_count) {
+        g_press_x = g_press_queue[g_press_head].x;
+        g_press_y = g_press_queue[g_press_head].y;
+        g_press_down = g_press_queue[g_press_head].down;
+        g_press_head = (g_press_head + 1) % PRESS_QUEUE;
+        --g_press_count;
+        g_press_active = 1;
+        g_press_hold = g_press_down > 0 ? PRESS_DOWN_UPDATES : PRESS_OTHER_UPDATES;
+        g_press_seen_updates = g_pointer_updates;
+        g_press_tick_ms = now;
+    }
+    if (g_press_active) {
+        mx = g_press_x;
+        my = g_press_y;
+        if (g_press_down >= 0) {
+            buttons = g_press_down ? MOUSE_LEFT : 0;
+        } else {
+            buttons = g_prev_mouse_left ? MOUSE_LEFT : 0; /* a move only */
+        }
+    }
     g_sdl.GetWindowSize(window, &ww, &wh);
     if (ww <= 0 || wh <= 0) {
         return;
@@ -999,6 +1104,10 @@ static void desktop_update_game(const uint8_t *keys, int count, uint64_t dt) {
 /* Game mode in a Zombies match with native controls: the mouse turns the player directly, the
  * movement keys and buttons go to the game's own input functions (native_input.c). Only pause
  * still goes through the Xperia Play key. */
+/* Mouse counts per reference unit a look finger drags: across the screen turns about 180 degrees
+ * at the default look sensitivity. */
+#define TOUCH_LOOK_COUNTS 2.0f
+
 static void desktop_update_native(const uint8_t *keys, int count) {
     static const struct {
         enum binding_id binding;
@@ -1014,14 +1123,37 @@ static void desktop_update_native(const uint8_t *keys, int count) {
     if (g_sdl.GetRelativeMouseState) {
         g_sdl.GetRelativeMouseState(&dx, &dy);
     }
-    native_input_look((float)dx, (float)dy);
+    bool touch = touch_controls_visible();
+    if (touch) {
+        /* SDL also turns fingers into mouse motion and clicks: the controls have them already. */
+        dx = dy = 0;
+        g_mouse_buttons = 0;
+        float tdx, tdy;
+        touch_controls_take_look(&tdx, &tdy);
+        native_input_look(tdx * TOUCH_LOOK_COUNTS, tdy * TOUCH_LOOK_COUNTS);
+    } else {
+        native_input_look((float)dx, (float)dy);
+    }
     float x = (float)(binding_down(keys, count, BIND_MOVE_RIGHT) - binding_down(keys, count, BIND_MOVE_LEFT));
     float y = (float)(binding_down(keys, count, BIND_MOVE_BACK) - binding_down(keys, count, BIND_MOVE_FORWARD));
-    native_input_move(x, y, binding_down(keys, count, BIND_SPRINT) != 0);
-    for (size_t i = 0; i < ARRAY_SIZE(BUTTONS); ++i) {
-        native_input_action(BUTTONS[i].action, binding_down(keys, count, BUTTONS[i].binding) != 0);
+    bool sprint = binding_down(keys, count, BIND_SPRINT) != 0;
+    if (touch) {
+        float tx, ty;
+        touch_controls_move(&tx, &ty);
+        if (tx != 0.0f || ty != 0.0f) {
+            x = tx;
+            y = ty;
+            sprint = sprint || touch_controls_sprint();
+        }
     }
-    game_action_apply(pause_down(keys, count), &KEYMAP_START);
+    native_input_move(x, y, sprint);
+    for (size_t i = 0; i < ARRAY_SIZE(BUTTONS); ++i) {
+        bool down = binding_down(keys, count, BUTTONS[i].binding) != 0 ||
+                    (touch && touch_controls_down(BUTTONS[i].action));
+        native_input_action(BUTTONS[i].action, down);
+    }
+    game_action_apply(pause_down(keys, count) || (touch && touch_controls_pause_held()),
+                      &KEYMAP_START);
 }
 
 /* F11 or Alt+Enter switches between a window and borderless fullscreen. */
@@ -1052,6 +1184,11 @@ static void desktop_update(uint64_t dt) {
     }
     load_bindings();
     void *window = g_sdl.GetMouseFocus();
+    if (!window && g_sdl.GetKeyboardFocus) {
+        /* Touch screens: SDL drops the mouse focus when the finger lifts, so the release would
+         * never be seen through it. */
+        window = g_sdl.GetKeyboardFocus();
+    }
     int count = 0;
     const uint8_t *keys = g_sdl.GetKeyboardState(&count);
     g_mouse_buttons = g_sdl.GetMouseState(NULL, NULL);
@@ -1068,6 +1205,7 @@ static void desktop_update(uint64_t dt) {
     g_prev_tab = tab;
 
     enum native_match match = native_input_match();
+    touch_controls_set_visible(g_touch_mode && g_desktop_game_mode && match == NATIVE_MATCH_ZOMBIES);
     if (native_input_available()) {
         if (match == NATIVE_MATCH_NONE) {
             g_mouse_freed = 0;
@@ -1123,6 +1261,14 @@ static void input_refresh_controller(uint64_t now) {
         g_last_joystick_count = -1;
     }
 
+    /* A controller plugged in later may beat the one in use (a gamepad over a TV remote). */
+    if (g_controller && now - g_controller_scan_ms >= CONTROLLER_RESCAN_MS) {
+        g_controller_scan_ms = now;
+        if (g_sdl.NumJoysticks() != g_last_joystick_count) {
+            input_close_controller();
+            g_controller_scan_ms = 0;
+        }
+    }
     if (!g_controller &&
         (!g_controller_scan_ms || now - g_controller_scan_ms >= CONTROLLER_RESCAN_MS)) {
         g_controller_scan_ms = now;
@@ -1140,6 +1286,11 @@ enum {
     SDL_MOUSEBUTTONDOWN_EVENT = 0x401,
     SDL_MOUSEBUTTONUP_EVENT = 0x402,
     SDL_MOUSEWHEEL_EVENT = 0x403,
+    SDL_CONTROLLERAXISMOTION_EVENT = 0x650,
+    SDL_CONTROLLERBUTTONDOWN_EVENT = 0x651,
+    SDL_FINGERDOWN_EVENT = 0x700,
+    SDL_FINGERUP_EVENT = 0x701,
+    SDL_FINGERMOTION_EVENT = 0x702,
     SDL_EVENT_BYTES = 56,
 };
 
@@ -1159,11 +1310,63 @@ static void mod_mouse_scale(float *sx, float *sy) {
     }
 }
 
+
+/* An SDL finger (normalized to the window) in the 1280x720 reference units of the controls. */
+static int touch_reference_position(float nx, float ny, float *rx, float *ry) {
+    void *window = g_sdl.GetKeyboardFocus ? g_sdl.GetKeyboardFocus() : NULL;
+    if (!window && g_sdl.GetMouseFocus) {
+        window = g_sdl.GetMouseFocus();
+    }
+    int ww = 0, wh = 0;
+    if (!window || !g_sdl.GetWindowSize) {
+        return 0;
+    }
+    g_sdl.GetWindowSize(window, &ww, &wh);
+    if (ww <= 0 || wh <= 0) {
+        return 0;
+    }
+    int32_t rect[4];
+    present_rect(ww, wh, rect);
+    if (rect[2] <= 0 || rect[3] <= 0) {
+        return 0;
+    }
+    *rx = (nx * (float)ww - (float)rect[0]) * 1280.0f / (float)rect[2];
+    *ry = (ny * (float)wh - (float)rect[1]) * 720.0f / (float)rect[3];
+    return 1;
+}
+
+static void touch_handle_event(uint32_t type, const uint8_t *ev) {
+    if (type == SDL_KEYDOWN_EVENT || type == SDL_CONTROLLERBUTTONDOWN_EVENT) {
+        g_touch_mode = 0;
+        return;
+    }
+    if (type != SDL_FINGERDOWN_EVENT && type != SDL_FINGERUP_EVENT && type != SDL_FINGERMOTION_EVENT) {
+        return;
+    }
+    int64_t finger;
+    float nx, ny, rx, ry;
+    memcpy(&finger, ev + 16, 8);
+    memcpy(&nx, ev + 24, 4);
+    memcpy(&ny, ev + 28, 4);
+    if (type == SDL_FINGERDOWN_EVENT) {
+        g_touch_mode = 1;
+    }
+    if (!touch_controls_visible() || !touch_reference_position(nx, ny, &rx, &ry)) {
+        return;
+    }
+    touch_controls_finger(finger,
+                          type == SDL_FINGERDOWN_EVENT ? TOUCH_DOWN
+                          : type == SDL_FINGERUP_EVENT ? TOUCH_UP
+                                                       : TOUCH_MOVE,
+                          rx, ry);
+}
+
 static void mod_handle_event(const uint8_t *ev) {
     uint32_t type;
     memcpy(&type, ev, 4);
     struct overlay_event out;
     memset(&out, 0, sizeof(out));
+    touch_handle_event(type, ev);
     switch (type) {
     case SDL_KEYDOWN_EVENT:
     case SDL_KEYUP_EVENT: {
@@ -1214,6 +1417,17 @@ static void mod_handle_event(const uint8_t *ev) {
     case SDL_MOUSEBUTTONUP_EVENT: {
         static const int buttons[] = {-1, 0, 2, 1}; /* SDL left, middle, right -> ImGui 0, 2, 1 */
         uint8_t button = ev[16];
+        if (button == 1 && !g_desktop_game_mode) {
+            int32_t ex, ey;
+            memcpy(&ex, ev + 20, 4);
+            memcpy(&ey, ev + 24, 4);
+            if (type == SDL_MOUSEBUTTONDOWN_EVENT) {
+                /* A finger lands without hovering first: move the pointer there before the
+                 * press, as a mouse would have, so the menu sees the press on its button. */
+                queue_press(ex, ey, -1);
+            }
+            queue_press(ex, ey, type == SDL_MOUSEBUTTONDOWN_EVENT);
+        }
         int32_t x, y;
         float sx, sy;
         memcpy(&x, ev + 20, 4);
@@ -1548,6 +1762,7 @@ int32_t s3ePointerUnRegister(uint32_t id, void *callback) {
 }
 
 int32_t s3ePointerUpdate(void) {
+    ++g_pointer_updates; /* the menu press queue advances per game read */
     pointer_clear_transitions();
     input_pump();
     dispatch_due_timers();

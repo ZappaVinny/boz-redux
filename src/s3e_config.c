@@ -248,7 +248,7 @@ static int root_asset_exists(const char *name) {
 void s3e_host_set_config(const uint8_t *data, uint32_t size) {
     g_config_entry_count = 0;
     if (data && size) {
-        char *text = malloc((size_t)size + 1);
+        char *text = guest_malloc((size_t)size + 1);
         if (text) {
             memcpy(text, data, size);
             text[size] = 0;
@@ -287,7 +287,7 @@ void s3e_host_set_config(const uint8_t *data, uint32_t size) {
                 strip_quotes(value);
                 config_set(section, key, value);
             }
-            free(text);
+            guest_free(text);
         }
     }
 

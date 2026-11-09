@@ -195,7 +195,12 @@ void *plat_alloc(void *want, size_t size, bool executable) {
         }
     }
     if (address == MAP_FAILED) {
+#if UINTPTR_MAX > 0xffffffffu && defined(MAP_32BIT)
+        /* 64-bit: the game sees this memory, so it has to sit below 4 GiB. */
+        address = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+#else
         address = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
     }
     return address == MAP_FAILED ? NULL : address;
 }
@@ -220,10 +225,12 @@ bool plat_region(uintptr_t address, uint64_t *start, uint64_t *end) {
     bool found = false;
     while (fgets(line, sizeof(line), maps)) {
         unsigned long long lo, hi;
-        if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && address >= lo && address < hi) {
+        char perms[8] = "";
+        if (sscanf(line, "%llx-%llx %7s", &lo, &hi, perms) == 3 && address >= lo && address < hi) {
+            /* Readable regions only: reserved space (PROT_NONE) is not memory yet. */
+            found = perms[0] == 'r';
             *start = lo;
             *end = hi;
-            found = true;
             break;
         }
     }
