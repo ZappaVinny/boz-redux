@@ -310,7 +310,7 @@ static int resolve_hostname(const char *hostname, struct sockaddr_storage *resul
     while (selected && selected->ai_family != AF_INET && selected->ai_family != AF_INET6) {
         selected = selected->ai_next;
     }
-    if (!selected || selected->ai_addrlen > sizeof(*result)) {
+    if (!selected || (size_t)selected->ai_addrlen > sizeof(*result)) {
         freeaddrinfo(addresses);
         return EAI_NONAME;
     }

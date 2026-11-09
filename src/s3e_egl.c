@@ -387,9 +387,10 @@ static int uses_sdl(EGLDisplay display) {
 }
 
 static int sdl_owns_display(void) {
-#if defined(_WIN32) || defined(BOZ_GUEST_BASE)
-    /* There is no headless native EGL window on Windows; and in guest-base builds (Android, the
-     * Switch) the driver's handles are pointers the game could not hold. SDL owns the window. */
+#if defined(_WIN32) || defined(BOZ_GUEST_BASE) || defined(__ANDROID__)
+    /* There is no headless native EGL window on Windows or Android (the only window is SDL's
+     * activity surface); and in guest-base builds (64-bit Android, the Switch) the driver's
+     * handles are pointers the game could not hold. SDL owns the window. */
     return 1;
 #endif
     const char *wayland_display = getenv("WAYLAND_DISPLAY");

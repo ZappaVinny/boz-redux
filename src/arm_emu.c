@@ -56,8 +56,19 @@ static uint64_t call_host16(uint32_t fn, const uint32_t *args) {
                      : "esi", "memory", "cc");
     return ((uint64_t)hi << 32) | lo;
 }
+#elif defined(__arm__)
+/* 32-bit ARM hosts (Android armeabi-v7a TVs) use the game's own calling convention (AAPCS,
+   soft-float): the guest already laid the words out as r0-r3 and then the stack, with 64-bit
+   values aligned, so passing them on in order is the native call. 64-bit results are r0:r1. */
+typedef uint64_t (*host16_fn)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                              uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                              uint32_t, uint32_t, uint32_t, uint32_t);
+static uint64_t call_host16(uint32_t fn, const uint32_t *a) {
+    return ((host16_fn)(uintptr_t)fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9],
+                                      a[10], a[11], a[12], a[13], a[14], a[15]);
+}
 #else
-#error "arm_emu.c requires a 32-bit x86 host"
+#error "arm_emu.c requires a 32-bit x86 or ARM host"
 #endif
 
 static uint32_t *g_svc_page;

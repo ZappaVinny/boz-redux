@@ -470,7 +470,8 @@ void settings_tab(Launcher &l) {
         return;
     }
     std::string chosen;
-    ImGui::BeginChild("settings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.2f));
+    ImGui::BeginChild("settings", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.2f),
+                      ImGuiChildFlags_NavFlattened);
     ImGui::PushItemWidth(px(260));
 
     section("Player");
@@ -773,7 +774,8 @@ void mods_tab(Launcher &l) {
     }
 
     float details_height = ImGui::GetTextLineHeightWithSpacing() * 6;
-    ImGui::BeginChild("mod_list", ImVec2(0, -details_height), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("mod_list", ImVec2(0, -details_height),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
     int move_from = -1, move_to = -1;
     if (ImGui::BeginTable("mods", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
@@ -1159,7 +1161,9 @@ void draw(Launcher &l, SDL_Window *window) {
                 continue;
             }
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(22), px(16)));
-            ImGui::BeginChild("page", ImVec2(0, -footer_height), ImGuiChildFlags_AlwaysUseWindowPadding);
+            // NavFlattened: a TV remote or controller moves straight to the page's buttons.
+            ImGui::BeginChild("page", ImVec2(0, -footer_height),
+                              ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_NavFlattened);
             if (tab.tab == 0) {
                 game_files_tab(l, status);
             } else if (tab.tab == 1) {
@@ -1319,6 +1323,14 @@ int main(int argc, char **argv) {
                     continue;
                 }
                 ImGui_ImplSDL2_ProcessEvent(&event);
+#if defined(__ANDROID__)
+                // A TV remote's OK (DPAD_CENTER) arrives as Select, which ImGui does not know:
+                // it presses the focused button like Enter.
+                if ((event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) &&
+                    event.key.keysym.scancode == SDL_SCANCODE_SELECT) {
+                    ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, event.type == SDL_KEYDOWN);
+                }
+#endif
                 if (event.type == SDL_RENDER_DEVICE_RESET) {
                     // The GPU context was lost (Android, after the game ran): rebuild textures.
                     ImGui_ImplSDLRenderer2_DestroyDeviceObjects();

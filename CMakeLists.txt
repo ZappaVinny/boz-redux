@@ -16,6 +16,11 @@ message(STATUS "ARM CPU: ${BOZ_CPU}")
 # The game's 4 GiB at an offset in the host (guest_memory.h): required on Android and the Switch,
 # where the low 4 GiB of the process are not ours; on a 64-bit PC it tests that path.
 option(BOZ_GUEST_BASE "Map the game's memory at a base offset (64-bit only)" OFF)
+# 32-bit Android (armeabi-v7a TVs): every host address fits the game's 32 bits, as on 32-bit x86,
+# so Unicorn maps the game where it lives; Gradle passes BOZ_GUEST_BASE=ON for all ABIs.
+if(ANDROID AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(BOZ_GUEST_BASE OFF CACHE BOOL "" FORCE)
+endif()
 if(BOZ_GUEST_BASE AND NOT BOZ_CPU STREQUAL "dynarmic")
   message(FATAL_ERROR "BOZ_GUEST_BASE needs a 64-bit build")
 endif()
@@ -59,7 +64,7 @@ add_subdirectory(third_party/unicorn EXCLUDE_FROM_ALL)
 # Linux: Unicorn and the loader without position-independent code. On 32-bit x86, PIC costs a
 # get_pc_thunk call in every function, and the JIT calls Unicorn's helpers constantly: the game
 # ran 15-20% faster without it (scripts/bench.sh). Windows code is not PIC to begin with.
-if(NOT WIN32)
+if(NOT WIN32 AND NOT ANDROID) # Android's shared libraries must be PIC
   foreach(target unicorn unicorn-common arm-softmmu)
     target_compile_options(${target} PRIVATE -fno-pic -fno-pie)
   endforeach()
@@ -192,9 +197,9 @@ target_link_libraries(boz_common PUBLIC boz_guest_heap)
 
 # Android: the game is libmain.so, which SDL's Java activity loads and runs (SDL_main); the guest
 # base map is required there (packaging/android).
-if(ANDROID)
+if(ANDROID AND CMAKE_SIZEOF_VOID_P EQUAL 8)
   if(NOT BOZ_GUEST_BASE)
-    message(FATAL_ERROR "Android builds need -DBOZ_GUEST_BASE=ON")
+    message(FATAL_ERROR "64-bit Android builds need -DBOZ_GUEST_BASE=ON")
   endif()
 endif()
 if(ANDROID)

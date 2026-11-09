@@ -92,7 +92,9 @@ android {
         versionCode = 1
         versionName = "0.4.0-dev"
         ndk {
-            abiFilters += "arm64-v8a"
+            // arm64: phones and newer TVs (Dynarmic). armeabi-v7a: TVs whose Android is 32-bit
+            // even on 64-bit chips (Unicorn, as on 32-bit PCs).
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
         externalNativeBuild {
             cmake {
@@ -155,7 +157,12 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = false
-            keepDebugSymbols += "**/*.so" // readable native crash dumps while this is in testing
+            // Stripped by default: TVs have little storage (symbols tripled the APK). Crash dumps
+            // name functions with BOZ_ANDROID_DEBUG_SYMBOLS=1, or symbolize them with the
+            // unstripped libraries under app/build/intermediates/merged_native_libs.
+            if (System.getenv("BOZ_ANDROID_DEBUG_SYMBOLS") == "1") {
+                keepDebugSymbols += "**/*.so"
+            }
         }
     }
 }
