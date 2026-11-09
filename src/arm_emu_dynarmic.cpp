@@ -178,7 +178,29 @@ class Env;
 class SystemCoprocessor;
 std::unique_ptr<Dynarmic::ExclusiveMonitor> g_monitor;
 std::array<std::shared_ptr<SystemCoprocessor>, 16> g_coprocs;
-std::atomic<unsigned> g_cpu_count;
+// Processor ids for the exclusive monitor: one per thread running guest code, given back when
+// the thread ends (SDL starts a new thread each time a device opens, e.g. the voice-chat
+// microphone), so a long session never runs out of the MAX_CPUS slots.
+std::mutex g_cpu_ids_mutex;
+bool g_cpu_ids_used[MAX_CPUS];
+std::thread::id g_main_thread;
+
+unsigned take_cpu_id() {
+    std::lock_guard<std::mutex> lock(g_cpu_ids_mutex);
+    for (unsigned i = 0; i < MAX_CPUS; ++i) {
+        if (!g_cpu_ids_used[i]) {
+            g_cpu_ids_used[i] = true;
+            return i;
+        }
+    }
+    std::fprintf(stderr, "[arm] more than %u threads run guest code at once\n", MAX_CPUS);
+    std::abort();
+}
+
+void release_cpu_id(unsigned id) {
+    std::lock_guard<std::mutex> lock(g_cpu_ids_mutex);
+    if (id < MAX_CPUS) g_cpu_ids_used[id] = false;
+}
 
 // Per-thread CPU: one Jit per nesting level, the guest stack, the hook state.
 struct Cpu {
@@ -472,11 +494,7 @@ void check_flush(Cpu *cpu) {
 
 Cpu *cpu_create() {
     auto *cpu = new Cpu();
-    cpu->id = g_cpu_count.fetch_add(1);
-    if (cpu->id >= MAX_CPUS) {
-        std::fprintf(stderr, "[arm] more than %u threads run guest code\n", MAX_CPUS);
-        std::abort();
-    }
+    cpu->id = take_cpu_id();
     cpu->stack = static_cast<std::uint8_t *>(plat_alloc(nullptr, STACK_SIZE, false));
     if (!cpu->stack || reinterpret_cast<uintptr_t>(cpu->stack) + STACK_SIZE > (uint64_t{1} << 32)) {
         std::fprintf(stderr, "[arm] unable to allocate a guest stack below 4 GiB\n");
@@ -492,8 +510,18 @@ Cpu *cpu_create() {
     return cpu;
 }
 
+// Releases the thread's CPU (its Jits, guest stack and processor id) when the thread ends. Not on
+// the main thread: other threads may still run guest code while the process exits.
+struct CpuReaper {
+    ~CpuReaper() { arm_emu_thread_exit(); }
+};
+thread_local CpuReaper t_reaper;
+
 Cpu *this_cpu() {
-    if (!t_cpu) t_cpu = cpu_create();
+    if (!t_cpu) {
+        t_cpu = cpu_create();
+        if (std::this_thread::get_id() != g_main_thread) (void)&t_reaper; // constructs it
+    }
     return t_cpu;
 }
 
@@ -767,6 +795,7 @@ bool arm_emu_init(void) {
     map_identity(g_svc_base, uint64_t{g_svc_base} + SVC_PAGE_SIZE);
 
     g_monitor = std::make_unique<Dynarmic::ExclusiveMonitor>(MAX_CPUS);
+    g_main_thread = std::this_thread::get_id();
     for (unsigned i = 0; i < 16; ++i) {
         if (i != 10 && i != 11) g_coprocs[i] = std::make_shared<SystemCoprocessor>(i);
     }
@@ -915,7 +944,16 @@ void arm_emu_thread_exit(void) {
         }
     }
     for (auto &env : cpu->envs) env.reset();
+    {
+        std::lock_guard<std::mutex> lock(g_map_mutex);
+        for (uint64_t at = reinterpret_cast<uintptr_t>(cpu->stack);
+             at < reinterpret_cast<uintptr_t>(cpu->stack) + STACK_SIZE; at += PAGE_SIZE_EMU) {
+            (*g_pages)[at >> 12] = nullptr; // the stack's pages may be reused for host data
+        }
+    }
     plat_free(cpu->stack, STACK_SIZE);
+    if (g_monitor) g_monitor->ClearProcessor(cpu->id);
+    release_cpu_id(cpu->id);
     delete cpu;
     t_cpu = nullptr;
 }

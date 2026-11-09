@@ -1,4 +1,5 @@
 #include "arm_emu.h"
+#include <pthread.h>
 #include "platform/platform.h"
 
 #include <stdio.h>
@@ -98,6 +99,31 @@ static void hook_at_trap(struct arm_emu_regs *regs, void *user) {
 }
 
 static int g_thumb_hits;
+
+/* Guest code on a short-lived thread, as SDL's device threads do: each thread's CPU has to be
+ * released when it ends, or a long session runs out of CPU slots. */
+static void *guest_on_thread(void *result) {
+    uint32_t args[1] = {41};
+    *(uint32_t *)result = (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[0], 1, args);
+    return NULL;
+}
+
+static int g_thread_failures;
+
+static void run_threads(int count) {
+    for (int i = 0; i < count; ++i) {
+        pthread_t thread;
+        uint32_t result = 0;
+        if (pthread_create(&thread, NULL, guest_on_thread, &result) != 0) {
+            g_thread_failures++;
+            continue;
+        }
+        pthread_join(thread, NULL);
+        if (result != 42) {
+            g_thread_failures++;
+        }
+    }
+}
 
 static void hook_count(struct arm_emu_regs *regs, void *user) {
     (void)user;
@@ -206,6 +232,9 @@ int main(void) {
     expect("hook on a Thumb function", (uint32_t)arm_emu_call(thumb_fn | 1u, 1, args), 12);
     expect("Thumb hook ran once", (uint64_t)g_thumb_hits, 1);
     arm_emu_hook_remove(id);
+
+    run_threads(40);
+    expect("40 short-lived threads run guest code", (uint64_t)g_thread_failures, 0);
 
     return g_failures ? 1 : 0;
 }
