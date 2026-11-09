@@ -912,9 +912,10 @@ static void mod_runtime_present(void) {
         height = g_native_window.height;
     }
     overlay_begin_frame(width, height, dt);
+    int32_t rect[4];
+    present_rect(width, height, rect);
+    overlay_set_game_rect(rect);
     if (touch_controls_visible()) {
-        int32_t rect[4];
-        present_rect(width, height, rect);
         overlay_draw_touch_controls(rect);
     }
     if (active) {
