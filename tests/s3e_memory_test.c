@@ -36,9 +36,9 @@ static void thread_free(void *ptr) {
 
 static struct s3e_user_mem_mgr default_manager(void) {
     return (struct s3e_user_mem_mgr){
-        .alloc = (void *)(uintptr_t)&s3eMallocBase,
-        .realloc = (void *)(uintptr_t)&s3eReallocBase,
-        .free = (void *)(uintptr_t)&s3eFreeBase,
+        .alloc = GUEST_ADDRESS(&s3eMallocBase),
+        .realloc = GUEST_ADDRESS(&s3eReallocBase),
+        .free = GUEST_ADDRESS(&s3eFreeBase),
     };
 }
 
@@ -57,9 +57,9 @@ static void *thread_main(void *unused) {
     assert_manager_equal(&actual, &expected_default);
 
     struct s3e_user_mem_mgr thread_manager = {
-        .alloc = (void *)(uintptr_t)&thread_alloc,
-        .realloc = (void *)(uintptr_t)&thread_realloc,
-        .free = (void *)(uintptr_t)&thread_free,
+        .alloc = GUEST_ADDRESS(&thread_alloc),
+        .realloc = GUEST_ADDRESS(&thread_realloc),
+        .free = GUEST_ADDRESS(&thread_free),
     };
     assert(s3eMemorySetUserMemMgr(&thread_manager) == 0);
     assert(s3eMemoryGetUserMemMgr(&actual) == 0);
@@ -69,9 +69,9 @@ static void *thread_main(void *unused) {
 
 static void test_base_allocator_bypasses_user_manager(void) {
     struct s3e_user_mem_mgr manager = {
-        .alloc = (void *)(uintptr_t)&counting_alloc,
-        .realloc = (void *)(uintptr_t)&counting_realloc,
-        .free = (void *)(uintptr_t)&counting_free,
+        .alloc = GUEST_ADDRESS(&counting_alloc),
+        .realloc = GUEST_ADDRESS(&counting_realloc),
+        .free = GUEST_ADDRESS(&counting_free),
     };
     assert(s3eMemorySetUserMemMgr(&manager) == 0);
 
@@ -107,7 +107,7 @@ static void test_user_manager_validation_and_reset(void) {
     assert(s3eMemoryGetUserMemMgr(&before) == 0);
 
     struct s3e_user_mem_mgr invalid = before;
-    invalid.free = NULL;
+    invalid.free = 0;
     assert(s3eMemorySetUserMemMgr(&invalid) == 1);
     assert(s3eMemoryGetError() == EINVAL);
 

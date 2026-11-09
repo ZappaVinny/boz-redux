@@ -346,8 +346,8 @@ static void free_dns_lookup(struct dns_lookup *lookup) {
     if (!lookup) {
         return;
     }
-    free(lookup->hostname);
-    free(lookup);
+    guest_free(lookup->hostname);
+    guest_free(lookup);
 }
 
 static void pump_dns_lookup(void) {
@@ -467,14 +467,14 @@ int32_t s3eInetLookup(const char *hostname, struct s3e_inet_address *address, vo
         return S3E_RESULT_SUCCESS;
     }
 
-    struct dns_lookup *lookup = calloc(1, sizeof(*lookup));
+    struct dns_lookup *lookup = guest_calloc(1, sizeof(*lookup));
     if (!lookup) {
         set_socket_error(S3E_SOCKET_ERR_UNAVAIL);
         return S3E_RESULT_ERROR;
     }
-    lookup->hostname = strdup(resolved_hostname);
+    lookup->hostname = guest_strdup(resolved_hostname);
     if (!lookup->hostname) {
-        free(lookup);
+        guest_free(lookup);
         set_socket_error(S3E_SOCKET_ERR_UNAVAIL);
         return S3E_RESULT_ERROR;
     }

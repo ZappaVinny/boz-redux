@@ -39,7 +39,7 @@ static size_t timer_count(void) {
 static void reset_timers(void) {
     while (g_timers) {
         struct timer_event *next = g_timers->next;
-        free(g_timers);
+        guest_free(g_timers);
         g_timers = next;
     }
     g_now_ms = 100;

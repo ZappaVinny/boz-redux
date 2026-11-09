@@ -120,6 +120,19 @@ static EGLConfig fallback_config(void) {
     return (EGLConfig)(void *)&g_config_token;
 }
 
+/* What the game gets for the SDL window surface and GL context: tokens in the executable, not
+ * SDL's own pointers, which may lie above 4 GiB on 64-bit hosts. */
+static int g_surface_token;
+static int g_context_token;
+
+static EGLSurface sdl_surface_handle(void) {
+    return (EGLSurface)(void *)&g_surface_token;
+}
+
+static EGLContext sdl_context_handle(void) {
+    return (EGLContext)(void *)&g_context_token;
+}
+
 static const char *sdl_error(void) {
     return g_sdl.api.GetError ? g_sdl.api.GetError() : "unknown SDL error";
 }
@@ -776,7 +789,7 @@ static EGLSurface host_eglCreateWindowSurface(EGLDisplay display, EGLConfig conf
         return NULL;
     }
     g_sdl.surface_valid = 1;
-    return (EGLSurface)g_sdl.window;
+    return sdl_surface_handle();
 }
 
 static EGLContext host_eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext share,
@@ -801,7 +814,7 @@ static EGLContext host_eglCreateContext(EGLDisplay display, EGLConfig config, EG
         return NULL;
     }
     g_sdl.context_valid = 1;
-    return (EGLContext)g_sdl.context;
+    return sdl_context_handle();
 }
 
 static int g_vsync_active;
@@ -848,11 +861,11 @@ static EGLBoolean host_eglMakeCurrent(EGLDisplay display, EGLSurface draw, EGLSu
         destroy_pending_context();
         return 1;
     }
-    if (context != (EGLContext)g_sdl.context || !g_sdl.context_valid) {
+    if (context != sdl_context_handle() || !g_sdl.context_valid) {
         set_error(EGL_BAD_CONTEXT);
         return 0;
     }
-    if (draw != (EGLSurface)g_sdl.window || read != (EGLSurface)g_sdl.window ||
+    if (draw != sdl_surface_handle() || read != sdl_surface_handle() ||
         !g_sdl.surface_valid) {
         set_error(EGL_BAD_SURFACE);
         return 0;
@@ -880,8 +893,8 @@ static EGLBoolean host_eglQuerySurface(EGLDisplay display, EGLSurface surface, E
         }
         return result;
     }
-    if (surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid || !value) {
-        set_error(surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid ? EGL_BAD_SURFACE
+    if (surface != sdl_surface_handle() || !g_sdl.surface_valid || !value) {
+        set_error(surface != sdl_surface_handle() || !g_sdl.surface_valid ? EGL_BAD_SURFACE
                                                                               : EGL_BAD_PARAMETER);
         return 0;
     }
@@ -903,8 +916,8 @@ static EGLBoolean host_eglQueryContext(EGLDisplay display, EGLContext context, E
             lookup_egl("eglQueryContext");
         return native ? native(display, context, attribute, value) : 0;
     }
-    if (context != (EGLContext)g_sdl.context || !g_sdl.context_valid || !value) {
-        set_error(context != (EGLContext)g_sdl.context || !g_sdl.context_valid ? EGL_BAD_CONTEXT
+    if (context != sdl_context_handle() || !g_sdl.context_valid || !value) {
+        set_error(context != sdl_context_handle() || !g_sdl.context_valid ? EGL_BAD_CONTEXT
                                                                                : EGL_BAD_PARAMETER);
         return 0;
     }
@@ -931,7 +944,7 @@ static EGLDisplay host_eglGetCurrentDisplay(void) {
 
 static EGLContext host_eglGetCurrentContext(void) {
     if (g_sdl.active) {
-        return g_sdl.current ? (EGLContext)g_sdl.context : NULL;
+        return g_sdl.current ? sdl_context_handle() : NULL;
     }
     EGLContext (GL_APIENTRY *native)(void) = lookup_egl("eglGetCurrentContext");
     return native ? native() : NULL;
@@ -940,7 +953,7 @@ static EGLContext host_eglGetCurrentContext(void) {
 static EGLSurface host_eglGetCurrentSurface(EGLint readdraw) {
     if (g_sdl.active) {
         (void)readdraw;
-        return g_sdl.current ? (EGLSurface)g_sdl.window : NULL;
+        return g_sdl.current ? sdl_surface_handle() : NULL;
     }
     EGLSurface (GL_APIENTRY *native)(EGLint) = lookup_egl("eglGetCurrentSurface");
     return native ? native(readdraw) : NULL;
@@ -983,7 +996,7 @@ static EGLBoolean host_eglDestroyContext(EGLDisplay display, EGLContext context)
         EGLBoolean (GL_APIENTRY *native)(EGLDisplay, EGLContext) = lookup_egl("eglDestroyContext");
         return native ? native(display, context) : 0;
     }
-    if (context != (EGLContext)g_sdl.context || !g_sdl.context_valid) {
+    if (context != sdl_context_handle() || !g_sdl.context_valid) {
         set_error(EGL_BAD_CONTEXT);
         return 0;
     }
@@ -1003,7 +1016,7 @@ static EGLBoolean host_eglDestroySurface(EGLDisplay display, EGLSurface surface)
         EGLBoolean (GL_APIENTRY *native)(EGLDisplay, EGLSurface) = lookup_egl("eglDestroySurface");
         return native ? native(display, surface) : 0;
     }
-    if (surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid) {
+    if (surface != sdl_surface_handle() || !g_sdl.surface_valid) {
         set_error(EGL_BAD_SURFACE);
         return 0;
     }
@@ -1070,7 +1083,7 @@ EGLBoolean egl_backend_swap_buffers(EGLDisplay display, EGLSurface surface) {
         EGLBoolean (GL_APIENTRY *native)(EGLDisplay, EGLSurface) = lookup_egl("eglSwapBuffers");
         return native ? native(display, surface) : 0;
     }
-    if (surface != (EGLSurface)g_sdl.window || !g_sdl.surface_valid) {
+    if (surface != sdl_surface_handle() || !g_sdl.surface_valid) {
         set_error(EGL_BAD_SURFACE);
         return 0;
     }

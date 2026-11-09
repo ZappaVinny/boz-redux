@@ -54,9 +54,10 @@ struct sdl_audio_spec {
     void *user_data;
 };
 
+/* As the game sees it: samples is a guest address. */
 struct audio_unit_buffer {
     uint32_t sample_count;
-    int16_t *samples;
+    uint32_t samples;
     uint32_t sample_rate;
 };
 
@@ -318,7 +319,7 @@ static uint8_t *create_pcm16_mono_wav(const int16_t *data, uint32_t samples, int
 
     uint32_t data_size = samples * (uint32_t)sizeof(int16_t);
     uint32_t byte_count = WAV_HEADER_BYTES + data_size;
-    uint8_t *buffer = malloc(byte_count);
+    uint8_t *buffer = guest_malloc(byte_count);
     if (!buffer) {
         return NULL;
     }
@@ -341,12 +342,16 @@ static uint8_t *create_pcm16_mono_wav(const int16_t *data, uint32_t samples, int
     return buffer;
 }
 
-static int32_t invoke_callback(const struct sound_callback *callback, void *system_data) {
+static int32_t invoke_callback(const struct sound_callback *callback, void *system_data,
+                               size_t size) {
     if (!callback->function) {
         return 0;
     }
-    return (int32_t)s3e_guest_call(callback->function, 2, S3E_GUEST_ARG(system_data),
-                                   S3E_GUEST_ARG(callback->user_data));
+    uint32_t data = guest_block_in(system_data, size);
+    int32_t result = (int32_t)s3e_guest_call(callback->function, 2, data,
+                                             S3E_GUEST_ARG(callback->user_data));
+    guest_block_out(system_data, data, size);
+    return result;
 }
 
 static int render_generator_audio(int channel, const void *data, uint32_t samples,
@@ -368,7 +373,7 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
     if (capacity > limit) {
         capacity = limit;
     }
-    int16_t *pcm = malloc((size_t)capacity * sizeof(*pcm));
+    int16_t *pcm = guest_malloc((size_t)capacity * sizeof(*pcm));
     if (!pcm) {
         return -1;
     }
@@ -378,12 +383,12 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
         if (capacity == written) {
             uint32_t next = capacity > limit / 2 ? limit : capacity * 2;
             if (next <= capacity) {
-                free(pcm);
+                guest_free(pcm);
                 return -1;
             }
-            int16_t *grown = realloc(pcm, (size_t)next * sizeof(*pcm));
+            int16_t *grown = guest_realloc(pcm, (size_t)next * sizeof(*pcm));
             if (!grown) {
-                free(pcm);
+                guest_free(pcm);
                 return -1;
             }
             pcm = grown;
@@ -395,7 +400,7 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
             requested = SOUND_GENERATOR_CHUNK_SAMPLES;
         }
         if ((uintptr_t)(pcm + written) > UINT32_MAX || (uintptr_t)data > UINT32_MAX) {
-            free(pcm);
+            guest_free(pcm);
             return -1;
         }
         struct s3e_sound_gen_audio_info info = {
@@ -410,10 +415,10 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
         };
 
         slot->generator_decoding = 1;
-        int32_t produced = invoke_callback(callback, &info);
+        int32_t produced = invoke_callback(callback, &info, sizeof(info));
         slot->generator_decoding = 0;
         if (produced < 0 || (uint32_t)produced > requested || (produced == 0 && !info.end_sample)) {
-            free(pcm);
+            guest_free(pcm);
             return -1;
         }
         written += (uint32_t)produced;
@@ -423,7 +428,7 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
     }
 
     if (!written) {
-        free(pcm);
+        guest_free(pcm);
         return -1;
     }
     *out_pcm = pcm;
@@ -503,7 +508,7 @@ static void service_finished_sound(void) {
             .num_samples = source_samples,
         };
         const struct sound_callback *end_callback = &slot->callbacks[S3E_CHANNEL_END_SAMPLE];
-        int32_t keep_playing = end_callback->function ? invoke_callback(end_callback, &info)
+        int32_t keep_playing = end_callback->function ? invoke_callback(end_callback, &info, sizeof(info))
                                                       : repeat_forever || info.reps_remaining > 0;
         if (keep_playing) {
             int new_data = info.new_data != 0;
@@ -516,7 +521,7 @@ static void service_finished_sound(void) {
                 continue;
             }
         }
-        invoke_callback(&slot->callbacks[S3E_CHANNEL_STOP_AUDIO], &info);
+        invoke_callback(&slot->callbacks[S3E_CHANNEL_STOP_AUDIO], &info, sizeof(info));
     }
 }
 
@@ -637,7 +642,7 @@ static int audio_open(void) {
 
 static void notify_audio_stopped(int channel) {
     int32_t system_data = channel;
-    invoke_callback(&g_audio_callbacks[S3E_AUDIO_STOP], &system_data);
+    invoke_callback(&g_audio_callbacks[S3E_AUDIO_STOP], &system_data, sizeof(system_data));
 }
 
 static void stop_audio_channel(int channel, int notify) {
@@ -702,12 +707,16 @@ static void audio_unit_capture(void *user_data, uint8_t *stream, int length) {
         return;
     }
 
+    uint32_t samples = guest_block_in(stream, (size_t)length);
     struct audio_unit_buffer buffer = {
         .sample_count = (uint32_t)length / sizeof(int16_t),
-        .samples = (int16_t *)(void *)stream,
+        .samples = samples,
         .sample_rate = (uint32_t)g_audio_unit_capture_frequency,
     };
-    s3e_guest_call(callback, 1, S3E_GUEST_ARG(&buffer));
+    uint32_t guest_buffer = guest_block_in(&buffer, sizeof(buffer));
+    s3e_guest_call(callback, 1, guest_buffer);
+    guest_block_out(&buffer, guest_buffer, sizeof(buffer));
+    guest_block_out(stream, samples, (size_t)length);
 }
 
 static void audio_unit_postmix(void *user_data, uint8_t *stream, int length) {
@@ -727,12 +736,17 @@ static void audio_unit_postmix(void *user_data, uint8_t *stream, int length) {
             chunk = VOICE_MIX_BUFFER_SAMPLES;
         }
         memset(g_audio_unit_mix_buffer, 0, chunk * sizeof(*g_audio_unit_mix_buffer));
+        size_t mix_bytes = chunk * sizeof(*g_audio_unit_mix_buffer);
+        uint32_t samples = guest_block_in(g_audio_unit_mix_buffer, mix_bytes);
         struct audio_unit_buffer buffer = {
             .sample_count = (uint32_t)chunk,
-            .samples = g_audio_unit_mix_buffer,
+            .samples = samples,
             .sample_rate = (uint32_t)g_audio_unit_output_frequency,
         };
-        s3e_guest_call(callback, 1, S3E_GUEST_ARG(&buffer));
+        uint32_t guest_buffer = guest_block_in(&buffer, sizeof(buffer));
+        s3e_guest_call(callback, 1, guest_buffer);
+        guest_block_out(&buffer, guest_buffer, sizeof(buffer));
+        guest_block_out(g_audio_unit_mix_buffer, samples, mix_bytes);
 
         for (size_t frame = 0; frame < chunk; ++frame) {
             int voice_sample = g_audio_unit_mix_buffer[frame];
@@ -857,7 +871,7 @@ static uint8_t *read_audio_file(const char *path, uint32_t *out_size) {
     }
 
     uint32_t size = (uint32_t)st.st_size;
-    uint8_t *data = malloc(size);
+    uint8_t *data = guest_malloc(size);
     if (!data) {
         close(fd);
         return NULL;
@@ -870,7 +884,7 @@ static uint8_t *read_audio_file(const char *path, uint32_t *out_size) {
             continue;
         }
         if (count <= 0) {
-            free(data);
+            guest_free(data);
             close(fd);
             return NULL;
         }
@@ -1019,7 +1033,7 @@ int32_t s3eAudioPlay(const char *filename, uint32_t repeat) {
     }
     int channel = g_audio_channel;
     int32_t result = play_audio_buffer(data, size, repeat);
-    free(data);
+    guest_free(data);
     if (result == 0) {
         fprintf(stderr, "[audio] stream channel=%d repeat=%u file=%s\n", channel, repeat, filename);
     }
@@ -1163,7 +1177,7 @@ static int play_sound_channel(int channel, const void *data, uint32_t size, uint
     const int16_t *pcm = generated ? decoded : data;
     if (begin_at_loop) {
         if (loop_index >= pcm_samples) {
-            free(decoded);
+            guest_free(decoded);
             return 1;
         }
         pcm += loop_index;
@@ -1172,19 +1186,19 @@ static int play_sound_channel(int channel, const void *data, uint32_t size, uint
 
     uint32_t wav_size = 0;
     uint8_t *wav = create_pcm16_mono_wav(pcm, pcm_samples, SOUND_FREQUENCY, &wav_size);
-    free(decoded);
+    guest_free(decoded);
     if (!wav) {
         return 1;
     }
 
     void *rw = g_sdl_audio.RWFromConstMem(wav, (int)wav_size);
     if (!rw) {
-        free(wav);
+        guest_free(wav);
         return 1;
     }
 
     void *chunk = g_mixer.LoadWAV_RW(rw, 1);
-    free(wav);
+    guest_free(wav);
     if (!chunk) {
         fprintf(stderr, "[audio] sound load failed: %s\n", mixer_error());
         return 1;
@@ -1242,7 +1256,7 @@ int32_t s3eSoundChannelStop(int32_t channel) {
     g_mixer.HaltChannel(channel);
     free_sound_slot(channel);
     if (was_playing) {
-        invoke_callback(&slot->callbacks[S3E_CHANNEL_STOP_AUDIO], &info);
+        invoke_callback(&slot->callbacks[S3E_CHANNEL_STOP_AUDIO], &info, sizeof(info));
     }
     return 0;
 }

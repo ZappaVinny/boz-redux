@@ -72,9 +72,18 @@ static LONG WINAPI report_crash(EXCEPTION_POINTERS *info) {
                 (void *)record->ExceptionInformation[1]);
     }
     const CONTEXT *context = info->ContextRecord;
+#if defined(_WIN64)
+    fprintf(stderr, "[crash] rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n",
+            (unsigned long long)context->Rax, (unsigned long long)context->Rbx,
+            (unsigned long long)context->Rcx, (unsigned long long)context->Rdx);
+    fprintf(stderr, "[crash] rsi=%016llx rdi=%016llx rsp=%016llx rbp=%016llx\n",
+            (unsigned long long)context->Rsi, (unsigned long long)context->Rdi,
+            (unsigned long long)context->Rsp, (unsigned long long)context->Rbp);
+#else
     fprintf(stderr, "[crash] eax=%08lx ebx=%08lx ecx=%08lx edx=%08lx esi=%08lx edi=%08lx esp=%08lx ebp=%08lx\n",
             context->Eax, context->Ebx, context->Ecx, context->Edx, context->Esi, context->Edi,
             context->Esp, context->Ebp);
+#endif
     fflush(stderr);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -205,7 +214,11 @@ static DWORD WINAPI profile_thread(LPVOID unused) {
         CONTEXT context;
         context.ContextFlags = CONTEXT_CONTROL;
         if (GetThreadContext(g_profile_target, &context)) {
+#if defined(_WIN64)
+            profile_record((uintptr_t)context.Rip);
+#else
             profile_record(context.Eip);
+#endif
             g_profile_samples++;
         }
         ResumeThread(g_profile_target);
@@ -312,6 +325,25 @@ void *plat_alloc(void *want, size_t size, bool executable) {
     if (!address) {
         address = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, protect);
     }
+#if UINTPTR_MAX > 0xffffffffu
+    /* 64-bit: the game sees this memory, so it has to sit below 4 GiB. */
+    if (address && (uintptr_t)address + size > ((uint64_t)1 << 32)) {
+        VirtualFree(address, 0, MEM_RELEASE);
+        address = NULL;
+        for (uint64_t at = 0x10000000u; !address && at + size <= ((uint64_t)1 << 32);) {
+            MEMORY_BASIC_INFORMATION info;
+            if (!VirtualQuery((LPCVOID)(uintptr_t)at, &info, sizeof(info))) {
+                break;
+            }
+            uint64_t lo = ((uint64_t)(uintptr_t)info.BaseAddress + 0xffffu) & ~(uint64_t)0xffffu;
+            uint64_t hi = (uint64_t)(uintptr_t)info.BaseAddress + info.RegionSize;
+            if (info.State == MEM_FREE && lo + size <= hi) {
+                address = VirtualAlloc((void *)(uintptr_t)lo, size, MEM_RESERVE | MEM_COMMIT, protect);
+            }
+            at = hi;
+        }
+    }
+#endif
     return address;
 }
 

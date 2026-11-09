@@ -128,13 +128,13 @@ static uint64_t expiry_from_ttl(uint64_t now, uint32_t ttl) {
 }
 
 static struct zero_conf_service_id *allocate_service_id(void) {
-    struct zero_conf_service_id *service_id = malloc(sizeof(*service_id));
+    struct zero_conf_service_id *service_id = guest_malloc(sizeof(*service_id));
     if (!service_id) {
         return NULL;
     }
-    service_id->guest_token = malloc(sizeof(*service_id->guest_token));
+    service_id->guest_token = guest_malloc(sizeof(*service_id->guest_token));
     if (!service_id->guest_token) {
-        free(service_id);
+        guest_free(service_id);
         return NULL;
     }
     *service_id->guest_token = ++g_identity_generation;
@@ -149,8 +149,8 @@ static void free_service_id(struct zero_conf_service_id *service_id) {
     if (!service_id) {
         return;
     }
-    free(service_id->guest_token);
-    free(service_id);
+    guest_free(service_id->guest_token);
+    guest_free(service_id);
 }
 
 static void flush_retired_service_ids(void) {
@@ -509,65 +509,64 @@ static void apply_cached_address(struct zero_conf_search *search,
     entry->has_ipv4 = 1;
 }
 
+/* Copies text (at most max bytes, NUL-terminated or not) into guest scratch space. */
+static uint32_t scratch_string(const char *text, size_t max) {
+    size_t length = strnlen(text, max);
+    char *copy = guest_scratch_push(length + 1);
+    memcpy(copy, text, length);
+    return GUEST_ADDRESS(copy);
+}
+
+/* The TXT records as the game's list of string addresses, in guest scratch space. */
+static uint32_t scratch_txt_records(const struct zero_conf_discovered *entry) {
+    uint32_t *records = guest_scratch_push(sizeof(uint32_t) * ZERO_CONF_MAX_TXT_RECORDS);
+    for (uint16_t i = 0; i < entry->txt_count && i < ZERO_CONF_MAX_TXT_RECORDS; ++i) {
+        records[i] = scratch_string(entry->txt[i], ZERO_CONF_TXT_RECORD_SIZE);
+    }
+    return GUEST_ADDRESS(records);
+}
+
+/* The callbacks get copies in guest memory: they may change the search (and so this entry), and
+ * on 64-bit hosts the entry itself is not memory the game can see. */
 static void dispatch_found(struct zero_conf_search *search, struct zero_conf_discovered *entry) {
     if (!search->found_callback) {
         entry->notified = 1;
         return;
     }
-    char name[sizeof(entry->name)];
-    char service_type[sizeof(search->service_type)];
-    char domain[sizeof(search->domain)];
-    char host[sizeof(entry->host)];
-    char txt[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE];
-    const char *txt_records[ZERO_CONF_MAX_TXT_RECORDS];
-    memcpy(name, entry->name, sizeof(name));
-    memcpy(service_type, search->service_type, sizeof(service_type));
-    memcpy(domain, search->domain, sizeof(domain));
-    memcpy(host, entry->host, sizeof(host));
-    memcpy(txt, entry->txt, sizeof(txt));
-    for (uint16_t i = 0; i < entry->txt_count; ++i) {
-        txt_records[i] = txt[i];
-    }
-    struct s3e_zeroconf_found_data data = {
-        .service_id = discovered_service_id(entry),
-        .name = name,
-        .service_type = service_type,
-        .domain = domain,
-        .host = host,
-        /* BOZ copies this value directly into the network-order address port. */
-        .port = htons(entry->port),
-        .txt_count = entry->txt_count,
-        .txt_records = txt_records,
-    };
-    memcpy(&data.ipv4_address, entry->ipv4, sizeof(data.ipv4_address));
-    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", name, entry->ipv4[0], entry->ipv4[1],
-              entry->ipv4[2], entry->ipv4[3], entry->port);
+    struct s3e_zeroconf_found_data *data = guest_scratch_push(sizeof(*data));
+    data->service_id = GUEST_ADDRESS(discovered_service_id(entry));
+    data->name = scratch_string(entry->name, sizeof(entry->name));
+    data->service_type = scratch_string(search->service_type, sizeof(search->service_type));
+    data->domain = scratch_string(search->domain, sizeof(search->domain));
+    data->host = scratch_string(entry->host, sizeof(entry->host));
+    /* BOZ copies this value directly into the network-order address port. */
+    data->port = htons(entry->port);
+    data->txt_count = entry->txt_count;
+    data->txt_records = scratch_txt_records(entry);
+    memcpy(&data->ipv4_address, entry->ipv4, sizeof(data->ipv4_address));
+    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", (const char *)(uintptr_t)data->name,
+              entry->ipv4[0], entry->ipv4[1], entry->ipv4[2], entry->ipv4[3], entry->port);
     entry->notified = 1;
     callback_enter();
-    s3e_guest_call(search->found_callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(&data),
+    s3e_guest_call(search->found_callback, 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
+    guest_scratch_pop(data);
 }
 
 static void dispatch_update(struct zero_conf_search *search, struct zero_conf_discovered *entry) {
     if (!search->update_callback) {
         return;
     }
-    char txt[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE];
-    const char *txt_records[ZERO_CONF_MAX_TXT_RECORDS];
-    memcpy(txt, entry->txt, sizeof(txt));
-    for (uint16_t i = 0; i < entry->txt_count; ++i) {
-        txt_records[i] = txt[i];
-    }
-    struct s3e_zeroconf_txt_update_data data = {
-        .service_id = discovered_service_id(entry),
-        .txt_count = entry->txt_count,
-        .txt_records = txt_records,
-    };
+    struct s3e_zeroconf_txt_update_data *data = guest_scratch_push(sizeof(*data));
+    data->service_id = GUEST_ADDRESS(discovered_service_id(entry));
+    data->txt_count = entry->txt_count;
+    data->txt_records = scratch_txt_records(entry);
     callback_enter();
-    s3e_guest_call(search->update_callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(&data),
+    s3e_guest_call(search->update_callback, 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
+    guest_scratch_pop(data);
 }
 
 static void dispatch_lost(struct zero_conf_search *search, struct zero_conf_discovered *entry,
@@ -885,13 +884,13 @@ void s3e_zero_conf_process_packet(const uint8_t *data, size_t data_size,
     if (!data || !data_size) {
         return;
     }
-    struct mdns_wire_packet *packet = malloc(sizeof(*packet));
+    struct mdns_wire_packet *packet = guest_malloc(sizeof(*packet));
     if (!packet) {
         return;
     }
     enum mdns_wire_status status = mdns_wire_parse_packet(data, data_size, packet);
     if (status != MDNS_WIRE_OK) {
-        free(packet);
+        guest_free(packet);
         return;
     }
     if (packet->flags & MDNS_WIRE_FLAG_QR) {
@@ -907,7 +906,7 @@ void s3e_zero_conf_process_packet(const uint8_t *data, size_t data_size,
             send_followup_queries(search, now);
             dispatch_search_changes(search);
         }
-        free(packet);
+        guest_free(packet);
         return;
     }
     for (size_t i = 0; i < ZERO_CONF_MAX_PUBLISHERS; ++i) {
@@ -917,7 +916,7 @@ void s3e_zero_conf_process_packet(const uint8_t *data, size_t data_size,
             send_publication(publisher, 0, unicast_response && source ? source : NULL);
         }
     }
-    free(packet);
+    guest_free(packet);
 }
 
 static void expire_discovered(uint64_t now) {

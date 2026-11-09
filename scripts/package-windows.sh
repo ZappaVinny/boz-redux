@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-build="$here/build/windows-x86"
+arch="${BOZ_ARCH:-x86}" # x86, or x64 for the 64-bit build (build/windows-x64)
+export BOZ_ARCH="$arch"
+build="$here/build/windows-$arch"
 stage="$build/package/BOZ-Redux"
 rm -rf "$build/package"
 mkdir -p "$stage"
 cp "$build/bin/boz-redux.exe" "$build/bin/codboz_s3e_loader.exe" "$build/bin/codboz_apk_extract.exe" "$build/bin/SDL2.dll" "$build/bin/SDL2_mixer.dll" "$stage/"
 # Cross toolchains prefix strip; an MSYS2 MINGW32 shell on Windows has it as plain strip.
-strip_tool="$(command -v i686-w64-mingw32-strip || command -v strip)"
+if [ "$arch" = x64 ]; then cross=x86_64-w64-mingw32; else cross=i686-w64-mingw32; fi
+strip_tool="$(command -v $cross-strip || command -v strip)"
 "$strip_tool" "$stage/boz-redux.exe" "$stage/codboz_s3e_loader.exe" "$stage/codboz_apk_extract.exe"
 cp "$here/packaging/windows/README.txt" "$stage/"
 cp "$here/packaging/windows/setup.bat" "$here/packaging/windows/run.bat" "$stage/"
@@ -22,5 +25,5 @@ cp "$build/mesa/"*.dll "$stage/mesa/"
 cp "$here/packaging/THIRD-PARTY.txt" "$stage/"
 mkdir -p "$stage/gamedef" && cp -r "$here/gamedef/"*.toml "$here/gamedef/symbols" "$here/gamedef/console" "$here/gamedef/reflection" "$here/gamedef/events" "$stage/gamedef/"
 for f in "$here/packaging/windows/"*.bat "$here/packaging/windows/README.txt" "$here/packaging/THIRD-PARTY.txt"; do sed -i 's/$/\r/' "$stage/$(basename "$f")"; done
-(cd "$build/package" && rm -f BOZ-Redux-windows-x86.zip && zip -qr BOZ-Redux-windows-x86.zip BOZ-Redux)
-echo "$build/package/BOZ-Redux-windows-x86.zip"
+(cd "$build/package" && rm -f "BOZ-Redux-windows-$arch.zip" && zip -qr "BOZ-Redux-windows-$arch.zip" BOZ-Redux)
+echo "$build/package/BOZ-Redux-windows-$arch.zip"
