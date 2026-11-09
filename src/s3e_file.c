@@ -453,11 +453,11 @@ static void trace_open(const char *name, const char *mode, const char *source) {
  * could not store itself on a 64-bit host (the C library's FILE objects may lie above 4 GiB). */
 enum { FILE_HANDLE_COUNT = 512 };
 
-struct file_handle {
+struct s3e_file_slot {
     FILE *file;
 };
 
-static struct file_handle *g_file_handles;
+static struct s3e_file_slot *g_file_handles;
 static pthread_mutex_t g_file_handles_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *file_handle_open(FILE *file) {
@@ -468,7 +468,7 @@ static void *file_handle_open(FILE *file) {
     if (!g_file_handles) {
         g_file_handles = guest_calloc(FILE_HANDLE_COUNT, sizeof(*g_file_handles));
     }
-    struct file_handle *handle = NULL;
+    struct s3e_file_slot *handle = NULL;
     for (size_t i = 0; g_file_handles && i < FILE_HANDLE_COUNT; ++i) {
         if (!g_file_handles[i].file) {
             handle = &g_file_handles[i];
@@ -486,8 +486,8 @@ static void *file_handle_open(FILE *file) {
     return handle;
 }
 
-static struct file_handle *file_handle(void *value) {
-    struct file_handle *handle = value;
+static struct s3e_file_slot *file_handle(void *value) {
+    struct s3e_file_slot *handle = value;
     if (!handle || !g_file_handles || handle < g_file_handles ||
         handle >= g_file_handles + FILE_HANDLE_COUNT) {
         return NULL;
@@ -496,7 +496,7 @@ static struct file_handle *file_handle(void *value) {
 }
 
 static FILE *file_of(void *value) {
-    struct file_handle *handle = file_handle(value);
+    struct s3e_file_slot *handle = file_handle(value);
     return handle ? handle->file : NULL;
 }
 
@@ -567,7 +567,7 @@ static FILE *open_file(const char *name, const char *mode) {
 }
 
 int32_t s3eFileClose(void *value) {
-    struct file_handle *handle = file_handle(value);
+    struct s3e_file_slot *handle = file_handle(value);
     FILE *file = handle ? handle->file : NULL;
     if (!file) {
         return -1;
