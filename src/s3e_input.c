@@ -235,10 +235,10 @@ static void input_scan_controllers(void) {
     int report = count != g_last_joystick_count;
     g_last_joystick_count = count;
 
-    /* Android TVs list their remote's IR receiver and virtual input devices as controllers too,
-     * and a DualShock 4 comes with separate Touchpad and Motion Sensors devices (also typed
-     * PS4, but without its buttons): gamepads SDL recognises (Xbox, PlayStation, Switch...)
-     * first, then other controllers, remotes and those side devices last. */
+    /* Android TVs list their remote's IR receiver and virtual input devices as controllers too:
+     * gamepads SDL recognises (Xbox, PlayStation, Switch...) first, then other controllers,
+     * remotes and virtual devices last. A DualShock 4 may show up as "Wireless Controller
+     * Touchpad" alone, and that device carries its buttons: it counts as a gamepad. */
     int rank[64];
     for (int i = 0; i < count && i < 64; ++i) {
         const char *name = input_joystick_name(i);
@@ -246,8 +246,7 @@ static void input_scan_controllers(void) {
         bool remote = strstr(name, "IR Receiver") || strstr(name, "Remote") ||
                       strstr(name, "remote") || strstr(name, "Keypad") ||
                       strstr(name, "KEYPAD") || !strncmp(name, "sim-", 4) ||
-                      strstr(name, "virtual") || strstr(name, "Touchpad") ||
-                      strstr(name, "Motion Sensors");
+                      strstr(name, "virtual");
         rank[i] = remote ? 0 : type > 0 ? 2 : 1;
         if (report) {
             fprintf(stderr, "[input] device %d: %s (type %d)%s\n", i, name, type,
