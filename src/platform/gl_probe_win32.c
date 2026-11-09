@@ -71,7 +71,7 @@ static int load_wgl(struct wgl_api *wgl, HMODULE *module_out) {
         return 0;
     }
 #define LOAD(field, name)                                                                          \
-    if (!(*(FARPROC *)&wgl->field = GetProcAddress(module, name))) {                              \
+    if (!(wgl->field = (void *)GetProcAddress(module, name))) {                                   \
         fprintf(stderr, "[gl-probe] opengl32.dll is missing %s\n", name);                         \
         return 0;                                                                                  \
     }

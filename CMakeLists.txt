@@ -5,13 +5,22 @@ if(WIN32)
   enable_language(RC)
 endif()
 
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-  message(FATAL_ERROR "The client must be built as a 32-bit program; use a preset (cmake --preset linux-x86)")
+# The ARM CPU: Unicorn on 32-bit x86 hosts (src/arm_emu.c), the Dynarmic JIT on 64-bit hosts
+# (src/arm_emu_dynarmic.cpp, x86-64 and AArch64). Both run the same client; see docs/runtime.md.
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  set(BOZ_CPU unicorn)
+else()
+  set(BOZ_CPU dynarmic)
 endif()
+message(STATUS "ARM CPU: ${BOZ_CPU}")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
+if(BOZ_CPU STREQUAL "dynarmic")
+  set(CMAKE_CXX_STANDARD 20) # Dynarmic's headers use concepts
+else()
+  set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -19,6 +28,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+if(BOZ_CPU STREQUAL "unicorn")
 file(GLOB BOZ_UNICORN_PATCHES ${CMAKE_SOURCE_DIR}/third_party/patches/unicorn-*.patch)
 foreach(patch IN LISTS BOZ_UNICORN_PATCHES)
   execute_process(COMMAND git apply --reverse --check ${patch}
@@ -47,6 +57,21 @@ if(NOT WIN32)
   foreach(target unicorn unicorn-common arm-softmmu)
     target_compile_options(${target} PRIVATE -fno-pic -fno-pie)
   endforeach()
+endif()
+set(BOZ_CPU_SOURCES src/arm_emu.c)
+set(BOZ_CPU_LIBS unicorn)
+else()
+  # Dynarmic: only the A32 frontend, its bundled externals (fmt, mcl, xbyak/oaknut, zydis) and
+  # Boost's headers (MSYS2: mingw-w64-x86_64-boost; Debian: libboost-dev).
+  set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
+  set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
+  set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_INSTALL OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(third_party/dynarmic EXCLUDE_FROM_ALL)
+  set(BOZ_CPU_SOURCES src/arm_emu_dynarmic.cpp)
+  set(BOZ_CPU_LIBS dynarmic merry::mcl)
 endif()
 
 set(SDL_SHARED ON CACHE BOOL "" FORCE)
@@ -149,10 +174,14 @@ endif()
 
 add_library(boz_common STATIC src/str_util.c)
 target_link_libraries(boz_common PUBLIC boz_project)
+# The guest heap (64-bit hosts: memory the game sees has to sit below 4 GiB).
+add_library(boz_guest_heap STATIC src/guest_heap.c ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(boz_guest_heap PUBLIC boz_project)
+target_link_libraries(boz_common PUBLIC boz_guest_heap)
 
 add_executable(codboz_s3e_loader
   ${BOZ_PLATFORM_SOURCES}
-  src/arm_emu.c
+  ${BOZ_CPU_SOURCES}
   src/client_config.c
   src/game_patches/crash_recovery.c
   src/game_patches/frame_interpolation.c
@@ -195,9 +224,18 @@ else()
   set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
   set(BOZ_SYSTEM_LINK_OPTIONS)
 endif()
-target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding unicorn lua imgui_core ${BOZ_SYSTEM_LIBS})
+target_link_libraries(boz_guest_heap PUBLIC ${BOZ_SYSTEM_LIBS})
+# Programs that run game code on a 64-bit host: guest code calls host functions at their own
+# address, so the executable sits at a fixed base below 4 GiB (Linux: -no-pie, below).
+set(BOZ_GUEST_LINK_OPTIONS)
+if(WIN32 AND BOZ_CPU STREQUAL "dynarmic")
+  set(BOZ_SYSTEM_LINK_OPTIONS -static -static-libgcc -static-libstdc++)
+  set(BOZ_GUEST_LINK_OPTIONS -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase
+      -Wl,--disable-high-entropy-va)
+endif()
+target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding ${BOZ_CPU_LIBS} lua imgui_core ${BOZ_SYSTEM_LIBS})
 boz_windows_resources(codboz_s3e_loader "BOZ Redux game")
-target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
 if(NOT WIN32)
   target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
 endif()
@@ -251,7 +289,7 @@ function(boz_test name)
   cmake_parse_arguments(T "" "" "SOURCES;DEFINES;INCLUDES" ${ARGN})
   add_executable(${name} tests/${name}.c ${T_SOURCES} tests/test_support.c)
   target_link_libraries(${name} PRIVATE boz_project boz_common ${BOZ_SYSTEM_LIBS})
-  target_link_options(${name} PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+  target_link_options(${name} PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
   target_compile_definitions(${name} PRIVATE ${T_DEFINES})
   target_compile_options(${name} PRIVATE -UNDEBUG)
   target_include_directories(${name} PRIVATE ${T_INCLUDES})
@@ -285,23 +323,23 @@ boz_test(s3e_input_test SOURCES src/s3e_input.c src/client_config.c
          DEFINES dlsym=s3e_input_test_dlsym dlclose=s3e_input_test_dlclose
                  plat_lib_symbol=s3e_input_test_dlsym plat_lib_close=s3e_input_test_dlclose)
 
-add_executable(arm_emu_test tests/arm_emu_test.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(arm_emu_test PRIVATE boz_project unicorn ${BOZ_SYSTEM_LIBS})
+add_executable(arm_emu_test tests/arm_emu_test.c ${BOZ_CPU_SOURCES} ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(arm_emu_test PRIVATE boz_project ${BOZ_CPU_LIBS} ${BOZ_SYSTEM_LIBS})
 if(NOT WIN32)
   target_link_options(arm_emu_test PRIVATE -no-pie)  # Unicorn is built without PIC
 endif()
-target_link_options(arm_emu_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+target_link_options(arm_emu_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
 target_compile_options(arm_emu_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(arm_emu_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 add_test(NAME arm_emu_test COMMAND arm_emu_test)
 
-add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c src/arm_emu.c ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common unicorn lua ${BOZ_SYSTEM_LIBS})
+add_executable(lua_hooks_test tests/lua_hooks_test.c src/lua_hooks.c ${BOZ_CPU_SOURCES} ${BOZ_PLATFORM_SOURCES})
+target_link_libraries(lua_hooks_test PRIVATE boz_project boz_common ${BOZ_CPU_LIBS} lua ${BOZ_SYSTEM_LIBS})
 if(NOT WIN32)
   target_link_options(lua_hooks_test PRIVATE -no-pie)  # Unicorn is built without PIC
 endif()
-target_link_options(lua_hooks_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS})
+target_link_options(lua_hooks_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
 target_compile_options(lua_hooks_test PRIVATE -falign-functions=16 -UNDEBUG)
 set_target_properties(lua_hooks_test PROPERTIES ENABLE_EXPORTS ON
                       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)

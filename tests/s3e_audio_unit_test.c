@@ -71,7 +71,7 @@ int32_t s3eAudioGetInt(uint32_t key) {
 }
 
 static void test_interface_shape(void) {
-    void *table[INTERFACE_ENTRIES];
+    uint32_t table[INTERFACE_ENTRIES];
     memset(table, 0, sizeof(table));
 
     assert(is_audio_unit_get_interface(NULL, sizeof(table)) == 1);
@@ -83,7 +83,7 @@ static void test_interface_shape(void) {
 }
 
 static void test_lifecycle_and_callbacks(void) {
-    void *table[INTERFACE_ENTRIES];
+    uint32_t table[INTERFACE_ENTRIES];
     assert(is_audio_unit_get_interface(table, sizeof(table)) == 0);
 
     int32_t (*init_fn)(void) = (int32_t (*)(void))(uintptr_t)table[2];
@@ -105,7 +105,7 @@ static void test_lifecycle_and_callbacks(void) {
 }
 
 static void test_music_delegates(void) {
-    void *table[INTERFACE_ENTRIES];
+    uint32_t table[INTERFACE_ENTRIES];
     assert(is_audio_unit_get_interface(table, sizeof(table)) == 0);
 
     int32_t (*play_fn)(const char *, uint32_t) =

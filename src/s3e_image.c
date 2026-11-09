@@ -1,3 +1,4 @@
+#include "arm_emu.h"
 #include "s3e_image.h"
 #include "platform/platform.h"
 #include "posix_compat.h"
@@ -254,7 +255,7 @@ static bool apply_external_relocs(const struct s3e_image *image, uint8_t *base, 
         }
 
         uint32_t *slot = (uint32_t *)(void *)(base + offset);
-        *slot = (uint32_t)(uintptr_t)addr;
+        *slot = arm_emu_guest_fn(addr); /* addr itself, unless it lies above 4 GiB */
     }
 
     return true;

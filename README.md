@@ -79,6 +79,20 @@ ctest --test-dir build/windows-x86 --output-on-failure
 scripts/package-windows.sh    # the same zip as the cross build
 ```
 
+### Windows 64-bit build (Dynarmic, work in progress)
+
+The 64-bit client runs the game on the Dynarmic JIT instead of Unicorn (issue #1). In the **MSYS2 MINGW64** shell:
+
+```bash
+pacman -S --needed git zip libarchive mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-boost
+cmake --preset windows-x64-msys2
+cmake --build --preset windows-x64-msys2-tests
+ctest --test-dir build/windows-x64 --output-on-failure
+BOZ_ARCH=x64 scripts/package-windows.sh   # build/windows-x64/package/BOZ-Redux-windows-x64.zip
+```
+
+How it differs from the 32-bit client is in [docs/runtime.md](docs/runtime.md) (Design).
+
 The Windows client renders through ANGLE (OpenGL ES on Direct3D 11, as in Chrome), which works on almost every GPU. A bundled Mesa in `mesa\` is the fallback: the launcher's Renderer setting (or `renderer` in `client.ini`) picks Mesa's Direct3D 12, Vulkan or software renderer; software is slow but always works.
 
 ## Controls

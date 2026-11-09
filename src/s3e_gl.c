@@ -4,65 +4,75 @@
 #include "arm_emu.h"
 #include "mod_runtime.h"
 
+/* GL functions with float arguments. The game passes every argument as a 32-bit word (softfp:
+ * a float's bits in a core register), so these take words and give the driver real floats: on
+ * 64-bit hosts the driver expects them in floating-point registers. */
+static inline GLfloat gl_word_float(uint32_t word) {
+    GLfloat value;
+    memcpy(&value, &word, sizeof(value));
+    return value;
+}
+#define GL_ARG(type, word) _Generic((type)0, GLfloat: gl_word_float(word), default: (type)(word))
+
 #define GL_WRAP_FLOAT1(name, t1)                                                                   \
-    static S3E_SOFTFP void host_##name(t1 a) {                                                     \
-        void (GL_APIENTRY *real)(t1) = lookup_gl(#name);                                                       \
+    static S3E_SOFTFP void host_##name(uint32_t a) {                                               \
+        void (GL_APIENTRY *real)(t1) = lookup_gl(#name);                                           \
         if (real)                                                                                  \
-            real(a);                                                                               \
+            real(GL_ARG(t1, a));                                                                   \
     }
 #define GL_WRAP_FLOAT2(name, t1, t2)                                                               \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b) {                                               \
-        void (GL_APIENTRY *real)(t1, t2) = lookup_gl(#name);                                                   \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b) {                                   \
+        void (GL_APIENTRY *real)(t1, t2) = lookup_gl(#name);                                       \
         if (real)                                                                                  \
-            real(a, b);                                                                            \
+            real(GL_ARG(t1, a), GL_ARG(t2, b));                                                    \
     }
 #define GL_WRAP_FLOAT3(name, t1, t2, t3)                                                           \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b, t3 c) {                                         \
-        void (GL_APIENTRY *real)(t1, t2, t3) = lookup_gl(#name);                                               \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b, uint32_t c) {                       \
+        void (GL_APIENTRY *real)(t1, t2, t3) = lookup_gl(#name);                                   \
         if (real)                                                                                  \
-            real(a, b, c);                                                                         \
+            real(GL_ARG(t1, a), GL_ARG(t2, b), GL_ARG(t3, c));                                     \
     }
 #define GL_WRAP_FLOAT4(name, t1, t2, t3, t4)                                                       \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b, t3 c, t4 d) {                                   \
-        void (GL_APIENTRY *real)(t1, t2, t3, t4) = lookup_gl(#name);                                           \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {           \
+        void (GL_APIENTRY *real)(t1, t2, t3, t4) = lookup_gl(#name);                               \
         if (real)                                                                                  \
-            real(a, b, c, d);                                                                      \
+            real(GL_ARG(t1, a), GL_ARG(t2, b), GL_ARG(t3, c), GL_ARG(t4, d));                      \
     }
-#define GL_WRAP_FLOAT5(name, t1, t2, t3, t4, t5)                                                   \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b, t3 c, t4 d, t5 e) {                             \
-        void (GL_APIENTRY *real)(t1, t2, t3, t4, t5) = lookup_gl(#name);                                       \
-        if (real)                                                                                  \
-            real(a, b, c, d, e);                                                                   \
+#define GL_WRAP_FLOAT5(name, t1, t2, t3, t4, t5)                                                     \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) { \
+        void (GL_APIENTRY *real)(t1, t2, t3, t4, t5) = lookup_gl(#name);                             \
+        if (real)                                                                                    \
+            real(GL_ARG(t1, a), GL_ARG(t2, b), GL_ARG(t3, c), GL_ARG(t4, d), GL_ARG(t5, e));         \
     }
-#define GL_WRAP_FLOAT6(name, t1, t2, t3, t4, t5, t6)                                               \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b, t3 c, t4 d, t5 e, t6 f) {                       \
-        void (GL_APIENTRY *real)(t1, t2, t3, t4, t5, t6) = lookup_gl(#name);                                   \
-        if (real)                                                                                  \
-            real(a, b, c, d, e, f);                                                                \
+#define GL_WRAP_FLOAT6(name, t1, t2, t3, t4, t5, t6)                                                             \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f) { \
+        void (GL_APIENTRY *real)(t1, t2, t3, t4, t5, t6) = lookup_gl(#name);                                     \
+        if (real)                                                                                                \
+            real(GL_ARG(t1, a), GL_ARG(t2, b), GL_ARG(t3, c), GL_ARG(t4, d), GL_ARG(t5, e), GL_ARG(t6, f));      \
     }
 #define GL_WRAP_FLOAT1_ALIAS(name, fallback, t1)                                                   \
-    static S3E_SOFTFP void host_##name(t1 a) {                                                     \
-        void (GL_APIENTRY *real)(t1) = lookup_gl(#name);                                                       \
+    static S3E_SOFTFP void host_##name(uint32_t a) {                                               \
+        void (GL_APIENTRY *real)(t1) = lookup_gl(#name);                                           \
         if (!real)                                                                                 \
             real = lookup_gl(#fallback);                                                           \
         if (real)                                                                                  \
-            real(a);                                                                               \
+            real(GL_ARG(t1, a));                                                                   \
     }
 #define GL_WRAP_FLOAT2_ALIAS(name, fallback, t1, t2)                                               \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b) {                                               \
-        void (GL_APIENTRY *real)(t1, t2) = lookup_gl(#name);                                                   \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b) {                                   \
+        void (GL_APIENTRY *real)(t1, t2) = lookup_gl(#name);                                       \
         if (!real)                                                                                 \
             real = lookup_gl(#fallback);                                                           \
         if (real)                                                                                  \
-            real(a, b);                                                                            \
+            real(GL_ARG(t1, a), GL_ARG(t2, b));                                                    \
     }
-#define GL_WRAP_FLOAT6_ALIAS(name, fallback, t1, t2, t3, t4, t5, t6)                               \
-    static S3E_SOFTFP void host_##name(t1 a, t2 b, t3 c, t4 d, t5 e, t6 f) {                       \
-        void (GL_APIENTRY *real)(t1, t2, t3, t4, t5, t6) = lookup_gl(#name);                                   \
-        if (!real)                                                                                 \
-            real = lookup_gl(#fallback);                                                           \
-        if (real)                                                                                  \
-            real(a, b, c, d, e, f);                                                                \
+#define GL_WRAP_FLOAT6_ALIAS(name, fallback, t1, t2, t3, t4, t5, t6)                                             \
+    static S3E_SOFTFP void host_##name(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f) { \
+        void (GL_APIENTRY *real)(t1, t2, t3, t4, t5, t6) = lookup_gl(#name);                                     \
+        if (!real)                                                                                               \
+            real = lookup_gl(#fallback);                                                                         \
+        if (real)                                                                                                \
+            real(GL_ARG(t1, a), GL_ARG(t2, b), GL_ARG(t3, c), GL_ARG(t4, d), GL_ARG(t5, e), GL_ARG(t6, f));      \
     }
 
 enum {
@@ -389,6 +399,15 @@ GL_WRAP_FLOAT3(glTexGenfOES, GLenum, GLenum, GLfloat)
 GL_WRAP_FLOAT3(glTranslatef, GLfloat, GLfloat, GLfloat)
 GL_WRAP_FLOAT2(glUniform1f, GLint, GLfloat)
 GL_WRAP_FLOAT5(glUniform4f, GLint, GLfloat, GLfloat, GLfloat, GLfloat)
+GL_WRAP_FLOAT3(glUniform2f, GLint, GLfloat, GLfloat)
+GL_WRAP_FLOAT4(glUniform3f, GLint, GLfloat, GLfloat, GLfloat)
+GL_WRAP_FLOAT2(glSampleCoverage, GLfloat, GLboolean)
+GL_WRAP_FLOAT3(glTexParameterf, GLenum, GLenum, GLfloat)
+GL_WRAP_FLOAT2(glVertexAttrib1f, GLuint, GLfloat)
+GL_WRAP_FLOAT3(glVertexAttrib2f, GLuint, GLfloat, GLfloat)
+GL_WRAP_FLOAT4(glVertexAttrib3f, GLuint, GLfloat, GLfloat, GLfloat)
+GL_WRAP_FLOAT5(glVertexAttrib4f, GLuint, GLfloat, GLfloat, GLfloat, GLfloat)
+GL_WRAP_FLOAT2(glPointParameterf, GLenum, GLfloat)
 
 static void bind_framebuffer(GLenum target, GLuint framebuffer) {
     if (target == GL_FRAMEBUFFER_VALUE) {
@@ -542,22 +561,150 @@ static GLenum compressed_format(GLenum format) {
 }
 
 /* The game only uses ETC1 textures when the driver lists the extension. */
+/* GL functions whose arguments hold the game's own pointers: arrays of 32-bit guest addresses,
+ * which the driver would read as host pointers (twice as wide on 64-bit hosts). */
+enum { GL_POINTER_ARRAY_MAX = 512 };
+
+static const void *const *host_pointer_array(const uint32_t *guest, GLsizei count,
+                                             const void **out) {
+    if (!guest || count < 0 || count > GL_POINTER_ARRAY_MAX) {
+        return NULL;
+    }
+    for (GLsizei i = 0; i < count; ++i) {
+        out[i] = (const void *)(uintptr_t)guest[i];
+    }
+    return out;
+}
+
+static S3E_SOFTFP void host_glShaderSource(GLuint shader, GLsizei count, const uint32_t *strings,
+                                           const GLint *lengths) {
+    void (GL_APIENTRY *real)(GLuint, GLsizei, const char *const *, const GLint *) =
+        lookup_gl("glShaderSource");
+    const void *pointers[GL_POINTER_ARRAY_MAX];
+    if (real && (count == 0 || host_pointer_array(strings, count, pointers))) {
+        real(shader, count, (const char *const *)pointers, lengths);
+    }
+}
+
+static S3E_SOFTFP void host_glTransformFeedbackVaryings(GLuint program, GLsizei count,
+                                                        const uint32_t *varyings, GLenum mode) {
+    void (GL_APIENTRY *real)(GLuint, GLsizei, const char *const *, GLenum) =
+        lookup_gl("glTransformFeedbackVaryings");
+    const void *pointers[GL_POINTER_ARRAY_MAX];
+    if (real && (count == 0 || host_pointer_array(varyings, count, pointers))) {
+        real(program, count, (const char *const *)pointers, mode);
+    }
+}
+
+static S3E_SOFTFP void host_glMultiDrawElementsEXT(GLenum mode, const GLsizei *count, GLenum type,
+                                                   const uint32_t *indices, GLsizei draw_count) {
+    void (GL_APIENTRY *real)(GLenum, const GLsizei *, GLenum, const void *const *, GLsizei) =
+        lookup_gl("glMultiDrawElementsEXT");
+    const void *pointers[GL_POINTER_ARRAY_MAX];
+    if (real && (draw_count == 0 || host_pointer_array(indices, draw_count, pointers))) {
+        real(mode, count, type, pointers, draw_count);
+    }
+}
+
+/* The driver would call the game's debug callback as host code: never pass it on. */
+static S3E_SOFTFP void host_glDebugMessageCallbackKHR(uint32_t callback, uint32_t user_data) {
+    (void)callback;
+    (void)user_data;
+}
+
+/* Pointers the driver hands out live in its own memory, which the game may not be able to
+ * address: report none. */
+static S3E_SOFTFP void host_glGetPointervKHR(GLenum name, uint32_t *value) {
+    (void)name;
+    if (value) {
+        *value = 0;
+    }
+}
+
+static S3E_SOFTFP void host_glGetBufferPointervOES(GLenum target, GLenum name, uint32_t *value) {
+    (void)target;
+    (void)name;
+    if (value) {
+        *value = 0;
+    }
+}
+
+/* glMapBufferOES: the game writes into a copy in guest memory, uploaded on unmap (the extension
+ * only allows write access). */
+enum { GL_BUFFER_SIZE_VALUE = 0x8764, GL_ARRAY_BUFFER_VALUE = 0x8892 };
+
+static struct {
+    GLenum target;
+    void *copy;
+    GLint size;
+} g_mapped_buffers[2];
+
+static S3E_SOFTFP void *host_glMapBufferOES(GLenum target, GLenum access) {
+    (void)access;
+    void (GL_APIENTRY *get_parameter)(GLenum, GLenum, GLint *) = lookup_gl("glGetBufferParameteriv");
+    GLint size = 0;
+    if (get_parameter) {
+        get_parameter(target, GL_BUFFER_SIZE_VALUE, &size);
+    }
+    unsigned slot = target == GL_ARRAY_BUFFER_VALUE ? 0 : 1;
+    if (size <= 0 || g_mapped_buffers[slot].copy) {
+        return NULL;
+    }
+    g_mapped_buffers[slot].target = target;
+    g_mapped_buffers[slot].size = size;
+    g_mapped_buffers[slot].copy = guest_calloc(1, (size_t)size);
+    return g_mapped_buffers[slot].copy;
+}
+
+static S3E_SOFTFP GLboolean host_glUnmapBufferOES(GLenum target) {
+    unsigned slot = target == GL_ARRAY_BUFFER_VALUE ? 0 : 1;
+    if (!g_mapped_buffers[slot].copy) {
+        return 0;
+    }
+    void (GL_APIENTRY *sub_data)(GLenum, GLintptr, GLsizeiptr, const void *) =
+        lookup_gl("glBufferSubData");
+    if (sub_data) {
+        sub_data(target, 0, g_mapped_buffers[slot].size, g_mapped_buffers[slot].copy);
+    }
+    guest_free(g_mapped_buffers[slot].copy);
+    g_mapped_buffers[slot].copy = NULL;
+    return 1;
+}
+
 static S3E_SOFTFP const char *host_glGetString(GLenum name) {
     const char *(GL_APIENTRY *real)(GLenum) = lookup_gl("glGetString");
     const char *value = real ? real(name) : NULL;
-    if (name != GL_EXTENSIONS_VALUE || !value || driver_has_etc1()) {
-        return value;
+    if (!value) {
+        return NULL;
     }
-    static char *extended;
-    if (!extended) {
-        size_t length = strlen(value) + sizeof(ETC1_EXTENSION) + 2;
-        extended = malloc(length);
-        if (!extended) {
-            return value;
+    /* A copy in guest memory: the driver's own string may lie above 4 GiB on 64-bit hosts. The
+     * extension list also gets ETC1 when the driver lacks it (uploaded as ETC2). */
+    static struct {
+        GLenum name;
+        char *copy;
+    } copies[8];
+    for (size_t i = 0; i < sizeof(copies) / sizeof(copies[0]); ++i) {
+        if (copies[i].copy && copies[i].name == name) {
+            return copies[i].copy;
         }
-        snprintf(extended, length, "%s %s", value, ETC1_EXTENSION);
+        if (!copies[i].copy) {
+            bool add_etc1 = name == GL_EXTENSIONS_VALUE && !driver_has_etc1();
+            size_t length = strlen(value) + sizeof(ETC1_EXTENSION) + 2;
+            char *copy = guest_malloc(length);
+            if (!copy) {
+                return value;
+            }
+            if (add_etc1) {
+                snprintf(copy, length, "%s %s", value, ETC1_EXTENSION);
+            } else {
+                snprintf(copy, length, "%s", value);
+            }
+            copies[i].name = name;
+            copies[i].copy = copy;
+            return copy;
+        }
     }
-    return extended;
+    return value;
 }
 
 static S3E_SOFTFP void host_glCompressedTexImage2D(GLenum target, GLint level, GLenum format,
@@ -620,7 +767,8 @@ static void *host_eglGetProcAddress(const char *procname) {
         return wrapped;
     }
     void *egl = egl_backend_resolve(procname);
-    return egl ? egl : egl_backend_get_proc_address(procname);
+    void *fn = egl ? egl : egl_backend_get_proc_address(procname);
+    return (void *)(uintptr_t)arm_emu_guest_fn(fn);
 }
 
 static void cursor_clear_rect(GLint x, GLint y, GLsizei w, GLsizei h,
@@ -790,9 +938,9 @@ static void debug_screenshot(void) {
     }
     void (GL_APIENTRY *read)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *) =
         lookup_gl("glReadPixels");
-    unsigned char *pixels = malloc((size_t)width * height * 4);
+    unsigned char *pixels = guest_malloc((size_t)width * height * 4);
     if (!read || !pixels) {
-        free(pixels);
+        guest_free(pixels);
         return;
     }
     raw_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, 0);
@@ -809,7 +957,7 @@ static void debug_screenshot(void) {
         }
         fclose(out);
     }
-    free(pixels);
+    guest_free(pixels);
 }
 
 static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {
@@ -880,6 +1028,23 @@ static const struct host_symbol WRAPPED_SYMBOLS[] = {
     WRAPPED(glTranslatef),
     WRAPPED(glUniform1f),
     WRAPPED(glUniform4f),
+    WRAPPED(glShaderSource),
+    WRAPPED(glTransformFeedbackVaryings),
+    WRAPPED(glMultiDrawElementsEXT),
+    WRAPPED(glDebugMessageCallbackKHR),
+    WRAPPED(glGetPointervKHR),
+    WRAPPED(glGetBufferPointervOES),
+    WRAPPED(glMapBufferOES),
+    WRAPPED(glUnmapBufferOES),
+    WRAPPED(glUniform2f),
+    WRAPPED(glUniform3f),
+    WRAPPED(glSampleCoverage),
+    WRAPPED(glTexParameterf),
+    WRAPPED(glVertexAttrib1f),
+    WRAPPED(glVertexAttrib2f),
+    WRAPPED(glVertexAttrib3f),
+    WRAPPED(glVertexAttrib4f),
+    WRAPPED(glPointParameterf),
     WRAPPED(glViewport),
     WRAPPED(eglGetProcAddress),
     WRAPPED(eglSwapBuffers),

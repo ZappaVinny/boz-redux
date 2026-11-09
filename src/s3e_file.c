@@ -204,10 +204,10 @@ static int dtrz_prefer_entry(const char *name) {
 }
 
 static void track_memory_file(FILE *file, void *buffer) {
-    struct memory_file *item = malloc(sizeof(*item));
+    struct memory_file *item = guest_malloc(sizeof(*item));
     if (!item) {
         fclose(file);
-        free(buffer);
+        guest_free(buffer);
         return;
     }
     item->file = file;
@@ -223,8 +223,8 @@ static int close_memory_file(FILE *file) {
         if (item->file == file) {
             *link = item->next;
             fclose(item->file);
-            free(item->buffer);
-            free(item);
+            guest_free(item->buffer);
+            guest_free(item);
             return 1;
         }
         link = &item->next;
@@ -242,7 +242,7 @@ static FILE *open_dtrz_entry(const char *name, char *opened_path, size_t opened_
         return NULL;
     }
     size_t alloc_size = entry->size ? entry->size : 1;
-    void *buffer = malloc(alloc_size);
+    void *buffer = guest_malloc(alloc_size);
     if (!buffer) {
         fclose(archive);
         return NULL;
@@ -250,13 +250,13 @@ static FILE *open_dtrz_entry(const char *name, char *opened_path, size_t opened_
     if (fseek(archive, (long)entry->offset, SEEK_SET) != 0 ||
         fread(buffer, 1, entry->size, archive) != entry->size) {
         fclose(archive);
-        free(buffer);
+        guest_free(buffer);
         return NULL;
     }
     fclose(archive);
     FILE *file = plat_memfile(buffer, alloc_size);
     if (!file) {
-        free(buffer);
+        guest_free(buffer);
         return NULL;
     }
     track_memory_file(file, buffer);
@@ -408,9 +408,9 @@ static FILE *serve_patched(const char *name, FILE *file) {
         return file;
     }
     long size = file_size_for_seek(file);
-    uint8_t *data = size > 0 ? malloc((size_t)size) : NULL;
+    uint8_t *data = size > 0 ? guest_malloc((size_t)size) : NULL;
     if (!data || fseek(file, 0, SEEK_SET) != 0 || fread(data, 1, (size_t)size, file) != (size_t)size) {
-        free(data);
+        guest_free(data);
         fseek(file, 0, SEEK_SET);
         return file;
     }
@@ -420,7 +420,7 @@ static FILE *serve_patched(const char *name, FILE *file) {
         void *patched = NULL;
         size_t patched_size = 0;
         if (lua_runtime_patch_asset(name, data, data_size, &patched, &patched_size)) {
-            free(data);
+            guest_free(data);
             data = patched;
             data_size = patched_size;
             changed = true;
@@ -428,7 +428,7 @@ static FILE *serve_patched(const char *name, FILE *file) {
     }
     FILE *memory = changed ? plat_memfile(data, data_size) : NULL;
     if (!memory) {
-        free(data);
+        guest_free(data);
         fseek(file, 0, SEEK_SET);
         return file;
     }
@@ -449,7 +449,64 @@ static void trace_open(const char *name, const char *mode, const char *source) {
     }
 }
 
+/* The game's s3eFile handles: slots in guest memory holding the host FILE *, which the game
+ * could not store itself on a 64-bit host (the C library's FILE objects may lie above 4 GiB). */
+enum { FILE_HANDLE_COUNT = 512 };
+
+struct s3e_file_slot {
+    FILE *file;
+};
+
+static struct s3e_file_slot *g_file_handles;
+static pthread_mutex_t g_file_handles_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void *file_handle_open(FILE *file) {
+    if (!file) {
+        return NULL;
+    }
+    pthread_mutex_lock(&g_file_handles_lock);
+    if (!g_file_handles) {
+        g_file_handles = guest_calloc(FILE_HANDLE_COUNT, sizeof(*g_file_handles));
+    }
+    struct s3e_file_slot *handle = NULL;
+    for (size_t i = 0; g_file_handles && i < FILE_HANDLE_COUNT; ++i) {
+        if (!g_file_handles[i].file) {
+            handle = &g_file_handles[i];
+            handle->file = file;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_file_handles_lock);
+    if (!handle) {
+        fprintf(stderr, "[file] more than %d files open\n", FILE_HANDLE_COUNT);
+        if (!close_memory_file(file)) {
+            fclose(file);
+        }
+    }
+    return handle;
+}
+
+static struct s3e_file_slot *file_handle(void *value) {
+    struct s3e_file_slot *handle = value;
+    if (!handle || !g_file_handles || handle < g_file_handles ||
+        handle >= g_file_handles + FILE_HANDLE_COUNT) {
+        return NULL;
+    }
+    return handle;
+}
+
+static FILE *file_of(void *value) {
+    struct s3e_file_slot *handle = file_handle(value);
+    return handle ? handle->file : NULL;
+}
+
+static FILE *open_file(const char *name, const char *mode);
+
 void *s3eFileOpen(const char *name, const char *mode) {
+    return file_handle_open(open_file(name, mode));
+}
+
+static FILE *open_file(const char *name, const char *mode) {
     char path[1200];
     char opened_path[1200] = "";
     const char *safe_name = name ? name : "";
@@ -509,46 +566,59 @@ void *s3eFileOpen(const char *name, const char *mode) {
     return file;
 }
 
-int32_t s3eFileClose(void *file) {
+int32_t s3eFileClose(void *value) {
+    struct s3e_file_slot *handle = file_handle(value);
+    FILE *file = handle ? handle->file : NULL;
     if (!file) {
         return -1;
     }
-    if (close_memory_file((FILE *)file)) {
+    pthread_mutex_lock(&g_file_handles_lock);
+    handle->file = NULL;
+    pthread_mutex_unlock(&g_file_handles_lock);
+    if (close_memory_file(file)) {
         return 0;
     }
-    return fclose((FILE *)file);
+    return fclose(file);
 }
 
-uint32_t s3eFileRead(void *buffer, uint32_t elem_size, uint32_t count, void *file) {
-    return file ? (uint32_t)fread(buffer, elem_size, count, (FILE *)file) : 0;
+uint32_t s3eFileRead(void *buffer, uint32_t elem_size, uint32_t count, void *handle) {
+    FILE *file = file_of(handle);
+    return file ? (uint32_t)fread(buffer, elem_size, count, file) : 0;
 }
 
-uint32_t s3eFileWrite(const void *buffer, uint32_t elem_size, uint32_t count, void *file) {
-    return file ? (uint32_t)fwrite(buffer, elem_size, count, (FILE *)file) : 0;
+uint32_t s3eFileWrite(const void *buffer, uint32_t elem_size, uint32_t count, void *handle) {
+    FILE *file = file_of(handle);
+    return file ? (uint32_t)fwrite(buffer, elem_size, count, file) : 0;
 }
 
-int32_t s3eFileGetChar(void *file) {
-    return file ? fgetc((FILE *)file) : -1;
+int32_t s3eFileGetChar(void *handle) {
+    FILE *file = file_of(handle);
+    return file ? fgetc(file) : -1;
 }
 
-int32_t s3eFilePutChar(int32_t c, void *file) {
-    return file ? fputc(c, (FILE *)file) : -1;
+int32_t s3eFilePutChar(int32_t c, void *handle) {
+    FILE *file = file_of(handle);
+    return file ? fputc(c, file) : -1;
 }
 
-int32_t s3eFileFlush(void *file) {
-    return file ? fflush((FILE *)file) : -1;
+int32_t s3eFileFlush(void *handle) {
+    FILE *file = file_of(handle);
+    return file ? fflush(file) : -1;
 }
 
-int32_t s3eFileSeek(void *file, int32_t offset, int32_t origin) {
-    return file ? fseek((FILE *)file, offset, origin) : -1;
+int32_t s3eFileSeek(void *handle, int32_t offset, int32_t origin) {
+    FILE *file = file_of(handle);
+    return file ? fseek(file, offset, origin) : -1;
 }
 
-int32_t s3eFileTell(void *file) {
-    return file ? (int32_t)ftell((FILE *)file) : -1;
+int32_t s3eFileTell(void *handle) {
+    FILE *file = file_of(handle);
+    return file ? (int32_t)ftell(file) : -1;
 }
 
-int32_t s3eFileGetSize(void *file) {
-    return file ? (int32_t)file_size_for_seek((FILE *)file) : -1;
+int32_t s3eFileGetSize(void *handle) {
+    FILE *file = file_of(handle);
+    return file ? (int32_t)file_size_for_seek(file) : -1;
 }
 
 int32_t s3eFileCheckExists(const char *name) {
@@ -583,7 +653,7 @@ const char *s3eFileGetErrorString(void) {
 }
 
 void *s3eFileOpenFromMemory(void *buffer, uint32_t size) {
-    return buffer && size ? plat_memfile(buffer, size) : NULL;
+    return buffer && size ? file_handle_open(plat_memfile(buffer, size)) : NULL;
 }
 
 int32_t s3eFileGetFileInt(void *file, uint32_t key) {

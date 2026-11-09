@@ -2,6 +2,7 @@
 #define CODBOZ_S3E_HOST_INTERNAL_H
 
 #include "s3e_host.h"
+#include "guest_memory.h"
 #include "platform/platform.h"
 #include "socket_compat.h"
 #include "posix_compat.h"
@@ -39,7 +40,7 @@
 #define BOZ_LIB_GLES2 "libGLESv2.so.2", "libGLESv2.so"
 #endif
 
-#define S3E_GUEST_ARG(value) ((uint32_t)(uintptr_t)(value))
+#define S3E_GUEST_ARG(value) GUEST_ADDRESS(value)
 uint32_t s3e_guest_call(const void *fn, int argc, ...);
 
 typedef int32_t(S3E_SOFTFP *s3e_callback_fn)(void *system_data, void *user_data);
@@ -145,10 +146,11 @@ struct keyboard_callback_slot {
     void *user_data;
 };
 
+/* As the game sees it: guest addresses of its allocator functions. */
 struct s3e_user_mem_mgr {
-    void *alloc;
-    void *realloc;
-    void *free;
+    uint32_t alloc;
+    uint32_t realloc;
+    uint32_t free;
 };
 
 struct s3e_heap {
@@ -278,28 +280,28 @@ _Static_assert(offsetof(struct s3e_inet_address, next) == 0x120,
                "s3eInetAddress next offset changed");
 _Static_assert(sizeof(struct s3e_inet_address) == 0x124, "s3eInetAddress size changed");
 
+/* As the game sees them: pointers are 32-bit guest addresses (strings, the TXT record list). */
 struct s3e_zeroconf_found_data {
-    void *service_id;
+    uint32_t service_id;
     uint32_t reserved_04;
-    const char *name;
-    const char *service_type;
-    const char *domain;
-    const char *host;
+    uint32_t name;
+    uint32_t service_type;
+    uint32_t domain;
+    uint32_t host;
     uint16_t port;
     uint16_t txt_count;
-    const char **txt_records;
+    uint32_t txt_records;
     uint32_t ipv4_address;
     uint8_t reserved_24[0x14];
 };
 
 struct s3e_zeroconf_txt_update_data {
-    void *service_id;
+    uint32_t service_id;
     uint16_t reserved_04;
     uint16_t txt_count;
-    const char **txt_records;
+    uint32_t txt_records;
 };
 
-#if UINTPTR_MAX == UINT32_MAX
 _Static_assert(offsetof(struct s3e_zeroconf_found_data, name) == 0x08,
                "s3eZeroConf found name offset changed");
 _Static_assert(offsetof(struct s3e_zeroconf_found_data, port) == 0x18,
@@ -316,7 +318,6 @@ _Static_assert(offsetof(struct s3e_zeroconf_txt_update_data, txt_records) == 0x0
                "s3eZeroConf TXT pointer offset changed");
 _Static_assert(sizeof(struct s3e_zeroconf_txt_update_data) == 0x0c,
                "s3eZeroConf TXT update size changed");
-#endif
 
 extern char g_root[1024];
 extern void *g_egl;
