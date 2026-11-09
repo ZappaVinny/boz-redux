@@ -138,3 +138,8 @@ __attribute__((weak)) bool native_input_action_down(enum native_action action) {
 __attribute__((weak)) bool native_input_aiming(void) {
     return false;
 }
+
+/* No CPU in these tests: host functions are called directly, at their own address. */
+uint32_t arm_emu_guest_fn(const void *fn) {
+    return (uint32_t)(uintptr_t)fn;
+}

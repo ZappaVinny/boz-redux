@@ -8,9 +8,9 @@ static pthread_mutex_t g_heap_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static struct s3e_user_mem_mgr default_user_mem_mgr(void) {
     return (struct s3e_user_mem_mgr){
-        .alloc = GUEST_ADDRESS(&s3eMallocBase),
-        .realloc = GUEST_ADDRESS(&s3eReallocBase),
-        .free = GUEST_ADDRESS(&s3eFreeBase),
+        .alloc = S3E_GUEST_FN(&s3eMallocBase),
+        .realloc = S3E_GUEST_FN(&s3eReallocBase),
+        .free = S3E_GUEST_FN(&s3eFreeBase),
     };
 }
 

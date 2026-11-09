@@ -367,11 +367,11 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
     }
     if (hash == IS_DEVICE_HASH) {
         uint32_t device_table[5] = {
-            GUEST_ADDRESS(&isDeviceCallbackRegister),
-            GUEST_ADDRESS(&isDeviceCallbackUnregister),
-            GUEST_ADDRESS(&isDeviceSetTabletThreshold),
-            GUEST_ADDRESS(&isDeviceGetDisplayType),
-            GUEST_ADDRESS(&isDeviceGetExternalResources),
+            S3E_GUEST_FN(&isDeviceCallbackRegister),
+            S3E_GUEST_FN(&isDeviceCallbackUnregister),
+            S3E_GUEST_FN(&isDeviceSetTabletThreshold),
+            S3E_GUEST_FN(&isDeviceGetDisplayType),
+            S3E_GUEST_FN(&isDeviceGetExternalResources),
         };
         if (iface && size == sizeof(device_table)) {
             memcpy(iface, device_table, size);
@@ -381,9 +381,9 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
     }
     if (hash == S3E_TOUCHPAD_HASH) {
         uint32_t touchpad_table[5] = {
-            GUEST_ADDRESS(&s3eTouchpadRegister), GUEST_ADDRESS(&s3eTouchpadUnRegister),
-            GUEST_ADDRESS(&s3eReturn0),          GUEST_ADDRESS(&s3eReturn0),
-            GUEST_ADDRESS(&s3eTouchpadGetInt),
+            S3E_GUEST_FN(&s3eTouchpadRegister), S3E_GUEST_FN(&s3eTouchpadUnRegister),
+            S3E_GUEST_FN(&s3eReturn0),          S3E_GUEST_FN(&s3eReturn0),
+            S3E_GUEST_FN(&s3eTouchpadGetInt),
         };
         if (iface && size == sizeof(touchpad_table)) {
             memcpy(iface, touchpad_table, size);
@@ -393,11 +393,11 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
     }
     if (hash == S3E_ZERO_CONF_HASH) {
         uint32_t zero_conf_table[5] = {
-            GUEST_ADDRESS(&s3eZeroConfStartSearch),
-            GUEST_ADDRESS(&s3eZeroConfStopSearch),
-            GUEST_ADDRESS(&s3eZeroConfPublish),
-            GUEST_ADDRESS(&s3eZeroConfUpdateTxtRecord),
-            GUEST_ADDRESS(&s3eZeroConfUnpublish),
+            S3E_GUEST_FN(&s3eZeroConfStartSearch),
+            S3E_GUEST_FN(&s3eZeroConfStopSearch),
+            S3E_GUEST_FN(&s3eZeroConfPublish),
+            S3E_GUEST_FN(&s3eZeroConfUpdateTxtRecord),
+            S3E_GUEST_FN(&s3eZeroConfUnpublish),
         };
         if (iface && size == sizeof(zero_conf_table)) {
             memcpy(iface, zero_conf_table, size);

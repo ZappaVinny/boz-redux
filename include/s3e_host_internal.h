@@ -41,6 +41,10 @@
 #endif
 
 #define S3E_GUEST_ARG(value) GUEST_ADDRESS(value)
+/* A host function the game calls through a table it reads: its guest address (a slot in the
+ * emulator's code page when the function lies above 4 GiB). */
+uint32_t arm_emu_guest_fn(const void *fn);
+#define S3E_GUEST_FN(fn) arm_emu_guest_fn((const void *)(uintptr_t)(fn))
 uint32_t s3e_guest_call(const void *fn, int argc, ...);
 
 typedef int32_t(S3E_SOFTFP *s3e_callback_fn)(void *system_data, void *user_data);
