@@ -135,7 +135,9 @@ static void assert_sent_txt(size_t index, const char *expected) {
 
 static void test_discovery_lifecycle(void) {
     zeroconf_platform_fake_reset();
-    struct callback_state state = {0};
+    /* static: the game sees its address, and a 64-bit host's stack is above 4 GiB */
+    static struct callback_state state;
+    state = (struct callback_state){0};
     state.search = s3eZeroConfStartSearch("_PROJECT_KIWI._tcp", NULL, found_callback,
                                           update_callback, lost_callback, &state);
     assert(state.search);
@@ -182,7 +184,9 @@ static void test_discovery_lifecycle(void) {
 
 static void test_discovery_ttl_expiry(void) {
     zeroconf_platform_fake_reset();
-    struct callback_state state = {0};
+    /* static: the game sees its address, and a 64-bit host's stack is above 4 GiB */
+    static struct callback_state state;
+    state = (struct callback_state){0};
     state.search = s3eZeroConfStartSearch("_PROJECT_KIWI._tcp", NULL, found_callback,
                                           update_callback, lost_callback, &state);
     assert(state.search);

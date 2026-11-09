@@ -236,6 +236,10 @@ if(WIN32 AND BOZ_CPU STREQUAL "dynarmic")
   set(BOZ_GUEST_LINK_OPTIONS -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase
       -Wl,--disable-high-entropy-va)
 endif()
+if(NOT WIN32 AND BOZ_CPU STREQUAL "dynarmic")
+  # Tests hand the guest their own code and data, like the loader: keep them below 4 GiB too.
+  set(BOZ_GUEST_LINK_OPTIONS -no-pie)
+endif()
 target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding ${BOZ_CPU_LIBS} lua imgui_core ${BOZ_SYSTEM_LIBS})
 boz_windows_resources(codboz_s3e_loader "BOZ Redux game")
 target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})

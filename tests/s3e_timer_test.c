@@ -148,7 +148,9 @@ static void test_callback_can_cancel_pending_timer(void) {
     reset_timers();
     void *target_callback = callback_pointer(record_callback);
     void *target_data = (void *)(uintptr_t)7;
-    struct cancel_context context = {
+    /* static: the game sees its address, and a 64-bit host's stack is above 4 GiB */
+    static struct cancel_context context;
+    context = (struct cancel_context){
         .target_callback = target_callback,
         .target_user_data = target_data,
         .result = TEST_RESULT_ERROR,
@@ -182,7 +184,9 @@ static int32_t reschedule_callback(void *system_data, void *user_data) {
 
 static void test_callback_can_reschedule_itself(void) {
     reset_timers();
-    struct reschedule_context context = {0};
+    /* static: the game sees its address, and a 64-bit host's stack is above 4 GiB */
+    static struct reschedule_context context;
+    context = (struct reschedule_context){0};
     assert(s3eTimerSetTimer(0, callback_pointer(reschedule_callback), &context) ==
            TEST_RESULT_SUCCESS);
 
@@ -210,7 +214,9 @@ static int32_t immediate_reschedule_callback(void *system_data, void *user_data)
 
 static void test_immediate_reschedule_waits_for_next_dispatch(void) {
     reset_timers();
-    struct reschedule_context context = {0};
+    /* static: the game sees its address, and a 64-bit host's stack is above 4 GiB */
+    static struct reschedule_context context;
+    context = (struct reschedule_context){0};
     assert(s3eTimerSetTimer(0, callback_pointer(immediate_reschedule_callback), &context) ==
            TEST_RESULT_SUCCESS);
 

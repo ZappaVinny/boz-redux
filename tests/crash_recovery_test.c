@@ -25,7 +25,8 @@ static struct arm_emu_fault fault_at(uint32_t offset) {
 
 static void test_return_from_frame(void) {
     /* 0xcb8ee pushed r4-r6 and lr: the handler restores them and returns 0 to the caller. */
-    uint32_t stack[5] = {0x44, 0x55, 0x66, 0x4a001235, 0xdead};
+    static uint32_t stack[5];
+    memcpy(stack, (uint32_t[]){0x44, 0x55, 0x66, 0x4a001235, 0xdead}, sizeof(stack));
     struct arm_emu_fault f = fault_at(0xcb8ee);
     f.r[SP] = (uint32_t)(uintptr_t)stack;
     f.r[R0] = 0;
@@ -37,7 +38,8 @@ static void test_return_from_frame(void) {
     assert(f.r[PC] == 0x4a001234 && f.thumb);
 
     /* 0xd291c pushed r3-r7 and lr; an ARM return address leaves Thumb off. */
-    uint32_t wide[7] = {3, 4, 5, 6, 7, 0x4a002000, 0};
+    static uint32_t wide[7];
+    memcpy(wide, (uint32_t[]){3, 4, 5, 6, 7, 0x4a002000, 0}, sizeof(wide));
     f = fault_at(0xd291c);
     f.r[SP] = (uint32_t)(uintptr_t)wide;
     f.thumb = true;

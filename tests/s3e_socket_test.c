@@ -158,7 +158,8 @@ static void test_udp(void) {
     assert(receiver_address.type == S3E_SOCKET_ADDR_IPV4);
     assert(receiver_address.port != 0);
 
-    int marker = 17;
+    static int marker; /* static: the game sees its address (a 64-bit stack is above 4 GiB) */
+    marker = 17;
     g_expected_readable_socket = receiver;
     g_expected_readable_user_data = &marker;
     g_readable_count = 0;
@@ -207,14 +208,16 @@ static void test_tcp(void) {
     assert(s3eSocketGetLocalName(listener, &address) == TEST_RESULT_SUCCESS);
     assert(s3eSocketListen(listener, 1) == TEST_RESULT_SUCCESS);
 
-    int accept_marker = 23;
+    static int accept_marker; /* static: the game sees its address (a 64-bit stack is above 4 GiB) */
+    accept_marker = 23;
     g_expected_accept_socket = listener;
     g_expected_accept_user_data = &accept_marker;
     g_accept_count = 0;
     assert(s3eSocketAccept(listener, NULL, accept_callback, &accept_marker) == NULL);
     assert(s3eSocketGetError() == S3E_SOCKET_ERR_WOULDBLOCK);
 
-    int connect_marker = 29;
+    static int connect_marker; /* static: the game sees its address (a 64-bit stack is above 4 GiB) */
+    connect_marker = 29;
     g_expected_connect_socket = client;
     g_expected_connect_user_data = &connect_marker;
     g_connect_count = 0;
@@ -251,7 +254,9 @@ static void test_tcp(void) {
 }
 
 static void test_dns_redirect_and_callback(void) {
-    struct s3e_inet_address resolved = {.port = htons(3074)};
+    /* static: the game sees its address (a 64-bit host's stack is above 4 GiB) */
+    static struct s3e_inet_address resolved;
+    resolved = (struct s3e_inet_address){.port = htons(3074)};
     assert(s3eInetLookup("unresolvable.invalid.demonware.net", &resolved, NULL, NULL) ==
            TEST_RESULT_SUCCESS);
     struct s3e_inet_address loopback = ipv4_address("127.0.0.1", 3074);
@@ -259,7 +264,8 @@ static void test_dns_redirect_and_callback(void) {
     assert(resolved.ip_address == loopback.ip_address);
     assert(resolved.port == loopback.port);
 
-    int marker = 41;
+    static int marker; /* static: the game sees its address (a 64-bit stack is above 4 GiB) */
+    marker = 41;
     memset(&resolved, 0, sizeof(resolved));
     resolved.port = htons(3478);
     g_expected_dns_address = &resolved;
