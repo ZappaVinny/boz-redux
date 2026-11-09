@@ -39,7 +39,7 @@ static void load_game_definition(const char *root) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "usage: %s [--run] [--root DIR] [--display-size WIDTHxHEIGHT] "
+            "usage: %s [--run] [--root DIR] [--display-size WIDTHxHEIGHT] [--log FILE] "
             "IMAGE.s3e.unpacked\n",
             argv0);
 }
@@ -64,6 +64,41 @@ static void install_terminate_handlers(void) {
 #endif
 }
 
+#if defined(__ANDROID__)
+#include <pthread.h>
+
+/* SDL's Java activity loads libmain.so and calls SDL_main on its own thread, whose stack is small
+ * for the JIT: run the game on a thread with a 16 MB stack instead. */
+static int game_main(int argc, char **argv);
+
+struct main_args {
+    int argc;
+    char **argv;
+    int result;
+};
+
+static void *main_thread(void *data) {
+    struct main_args *args = data;
+    args->result = game_main(args->argc, args->argv);
+    return NULL;
+}
+
+__attribute__((visibility("default"))) int SDL_main(int argc, char **argv) {
+    struct main_args args = {argc, argv, 1};
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 16u << 20);
+    pthread_t thread;
+    if (pthread_create(&thread, &attr, main_thread, &args) == 0) {
+        pthread_join(thread, NULL);
+    }
+    pthread_attr_destroy(&attr);
+    return args.result;
+}
+
+#define main game_main
+#endif
+
 int main(int argc, char **argv) {
 #if defined(_WIN32)
     if (argc >= 2 && strcmp(argv[1], "--gl-probe") == 0) {
@@ -86,6 +121,15 @@ int main(int argc, char **argv) {
                 return 2;
             }
             root = argv[++i];
+        } else if (strcmp(argv[i], "--log") == 0) {
+            /* Where stderr goes when nothing collects it (Android). */
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            if (freopen(argv[++i], "w", stderr)) {
+                setvbuf(stderr, NULL, _IOLBF, 0);
+            }
         } else if (strcmp(argv[i], "--display-size") == 0) {
             if (i + 1 >= argc) {
                 usage(argv[0]);
