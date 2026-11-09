@@ -80,6 +80,25 @@ static void *commit(uint32_t address, size_t size) {
     return host;
 }
 
+/* Pages given back (thread stacks): reused by the next request of the same size, so threads that
+ * come and go (an audio device opened again) do not use up the page area. */
+enum { FREED_MAX = 64 };
+static struct {
+    uint32_t address, size;
+} g_freed[FREED_MAX];
+
+/* Called with g_space_lock held. */
+static uint32_t take_freed(size_t size) {
+    for (int i = 0; i < FREED_MAX; ++i) {
+        if (g_freed[i].size == size) {
+            uint32_t address = g_freed[i].address;
+            g_freed[i].size = 0;
+            return address;
+        }
+    }
+    return 0;
+}
+
 void *guest_pages_alloc(uint32_t want, size_t size) {
     if (!guest_space_init()) {
         return NULL;
@@ -87,6 +106,9 @@ void *guest_pages_alloc(uint32_t want, size_t size) {
     size = (size + 0xffffu) & ~(size_t)0xffffu;
     pthread_mutex_lock(&g_space_lock);
     uint32_t address = want;
+    if (!address) {
+        address = take_freed(size);
+    }
     if (!address) {
         if (size > PAGES_END - g_pages_next) {
             pthread_mutex_unlock(&g_space_lock);
@@ -96,17 +118,26 @@ void *guest_pages_alloc(uint32_t want, size_t size) {
         address = g_pages_next;
         g_pages_next += (uint32_t)size;
     }
-    void *host = commit(address, size);
+    void *host = commit(address, size); /* fresh pages: already zero */
     pthread_mutex_unlock(&g_space_lock);
-    if (host) {
-        memset(host, 0, size);
-    }
     return host;
 }
 
 void guest_pages_free(void *pages, size_t size) {
-    (void)pages; /* bump allocated: stays reserved */
-    (void)size;
+    if (!pages) {
+        return;
+    }
+    size = (size + 0xffffu) & ~(size_t)0xffffu;
+    plat_discard(pages, size); /* zero again, and no longer resident */
+    pthread_mutex_lock(&g_space_lock);
+    for (int i = 0; i < FREED_MAX; ++i) {
+        if (!g_freed[i].size) {
+            g_freed[i].address = GUEST_ADDRESS(pages);
+            g_freed[i].size = (uint32_t)size;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_space_lock); /* past FREED_MAX the span stays reserved, unused */
 }
 
 uint32_t guest_address_checked(const void *ptr, const char *file, int line) {

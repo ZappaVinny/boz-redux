@@ -911,10 +911,11 @@ static int slot_matches(uint32_t index, uint32_t generation) {
            g_socket_slots[index].generation == generation;
 }
 
-static void invoke_socket_callback(s3e_socket_callback_fn callback, void *socket, void *system_data,
+/* system_data is already a guest address (guest_block_in), or 0. */
+static void invoke_socket_callback(s3e_socket_callback_fn callback, void *socket, uint32_t system_data,
                                    void *user_data) {
     if (callback) {
-        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(socket), S3E_GUEST_ARG(system_data),
+        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(socket), system_data,
                        S3E_GUEST_ARG(user_data));
     }
 }
@@ -951,7 +952,7 @@ static void dispatch_socket_event(const struct socket_poll_entry *entry) {
         /* The game reads the result through system_data: hand it a guest copy (a 64-bit host's
          * stack is above 4 GiB). */
         uint32_t guest_result = guest_block_in(&result, sizeof(result));
-        invoke_socket_callback(callback, handle, (void *)(uintptr_t)guest_result, user_data);
+        invoke_socket_callback(callback, handle, guest_result, user_data);
         guest_block_out(&result, guest_result, sizeof(result));
         if (!slot_matches(index, entry->generation)) {
             return;
@@ -965,7 +966,7 @@ static void dispatch_socket_event(const struct socket_poll_entry *entry) {
         slot->accept_callback = NULL;
         slot->accept_user_data = NULL;
         set_socket_error(S3E_SOCKET_ERR_NONE);
-        invoke_socket_callback(callback, handle, NULL, user_data);
+        invoke_socket_callback(callback, handle, 0, user_data);
         if (!slot_matches(index, entry->generation)) {
             return;
         }
@@ -978,7 +979,7 @@ static void dispatch_socket_event(const struct socket_poll_entry *entry) {
         slot->readable_callback = NULL;
         slot->readable_user_data = NULL;
         set_socket_error(S3E_SOCKET_ERR_NONE);
-        invoke_socket_callback(callback, handle, NULL, user_data);
+        invoke_socket_callback(callback, handle, 0, user_data);
         if (!slot_matches(index, entry->generation)) {
             return;
         }
@@ -991,7 +992,7 @@ static void dispatch_socket_event(const struct socket_poll_entry *entry) {
         slot->writable_callback = NULL;
         slot->writable_user_data = NULL;
         set_socket_error(S3E_SOCKET_ERR_NONE);
-        invoke_socket_callback(callback, handle, NULL, user_data);
+        invoke_socket_callback(callback, handle, 0, user_data);
     }
 }
 
