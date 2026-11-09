@@ -97,6 +97,12 @@ struct block {
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_bins[BIN_COUNT];
 static uint32_t g_base, g_top, g_limit;
+/* Everything from g_zero up to g_limit is zero (never touched, or given back with plat_discard):
+ * calloc only clears what lies below it. g_zero >= g_top. */
+static uint32_t g_zero;
+/* Free blocks this large give their inner pages back to the system, so the heap does not stay at
+ * its high-water mark (level loads); smaller ones are reused too often to pay a system call. */
+#define DISCARD_MIN ((uint32_t)1 << 20)
 static size_t g_used;
 
 static struct block *B(uint32_t addr) {
@@ -165,6 +171,40 @@ static void heap_ready(void) {
     g_base = (uint32_t)(uintptr_t)region;
     g_top = g_base + 0x1000u; /* a guard gap: no block at the region's first byte */
     g_limit = g_base + (uint32_t)HEAP_SIZE;
+    g_zero = g_top;
+}
+
+static uint32_t page_up(uint32_t addr) {
+    return (addr + 0xfffu) & ~0xfffu;
+}
+
+static uint32_t page_down(uint32_t addr) {
+    return addr & ~0xfffu;
+}
+
+/* Gives the whole pages inside [lo, hi) back to the system. */
+static void discard_range(uint32_t lo, uint32_t hi) {
+    lo = page_up(lo);
+    hi = page_down(hi);
+    if (hi > lo) {
+        plat_discard((void *)(uintptr_t)lo, hi - lo);
+    }
+}
+
+/* g_top moved up to top: what lies above it is still zero. */
+static void grew_to(uint32_t top) {
+    if (top > g_zero) {
+        g_zero = top;
+    }
+}
+
+/* The tail from addr up was freed: it becomes zero again (whole pages; the partial first page
+ * stays below g_zero). */
+static void shrink_to(uint32_t addr) {
+    uint32_t old_top = g_top;
+    g_top = addr;
+    discard_range(addr, page_up(old_top));
+    g_zero = page_up(addr) > g_top ? page_up(addr) : g_top;
 }
 
 static uint32_t take_from_top(uint32_t need) {
@@ -173,6 +213,7 @@ static uint32_t take_from_top(uint32_t need) {
     }
     uint32_t addr = g_top;
     g_top += need;
+    grew_to(g_top);
     B(addr)->size = need | FLAG_USED | FLAG_PREV_USED;
     return addr;
 }
@@ -196,7 +237,8 @@ static uint32_t need_for(size_t size) {
     return need < MIN_BLOCK ? MIN_BLOCK : need;
 }
 
-static uint32_t alloc_locked(size_t size) {
+/* zero_from (optional): the payload is zero from there on (its end when nothing is known). */
+static uint32_t alloc_locked(size_t size, uint32_t *zero_from) {
     uint32_t need = need_for(size);
     if (!need) {
         return 0;
@@ -209,6 +251,9 @@ static uint32_t alloc_locked(size_t size) {
                 set_next_prev_used(addr);
                 split(addr, need);
                 g_used += bsize(addr);
+                if (zero_from) {
+                    *zero_from = addr + bsize(addr);
+                }
                 return addr + HDR;
             }
             if (bin < 30) {
@@ -216,12 +261,16 @@ static uint32_t alloc_locked(size_t size) {
             }
         }
     }
+    uint32_t zero = g_zero;
     uint32_t addr = take_from_top(need);
     if (!addr) {
         fprintf(stderr, "[memory] guest heap exhausted (%zu bytes requested)\n", size);
         return 0;
     }
     g_used += need;
+    if (zero_from) {
+        *zero_from = zero > addr + HDR ? zero : addr + HDR;
+    }
     return addr + HDR;
 }
 
@@ -254,17 +303,20 @@ static void free_locked(uint32_t ptr) {
         flags = B(prev)->size & FLAG_PREV_USED;
     }
     if (addr + size == g_top) {
-        g_top = addr; /* give the tail back */
+        shrink_to(addr); /* give the tail back */
         return;
     }
     B(addr)->size = size | flags;
     link_free(addr);
+    if (size >= DISCARD_MIN) {
+        discard_range(addr + HDR, addr + size); /* keeps the header and its free-list links */
+    }
 }
 
 void *guest_malloc(size_t size) {
     pthread_mutex_lock(&g_lock);
     heap_ready();
-    uint32_t p = alloc_locked(size);
+    uint32_t p = alloc_locked(size, NULL);
     pthread_mutex_unlock(&g_lock);
     return (void *)(uintptr_t)p;
 }
@@ -273,11 +325,18 @@ void *guest_calloc(size_t count, size_t size) {
     if (size && count > SIZE_MAX / size) {
         return NULL;
     }
-    void *p = guest_malloc(count * size);
+    size_t bytes = count * size;
+    pthread_mutex_lock(&g_lock);
+    heap_ready();
+    uint32_t zero_from = 0;
+    uint32_t p = alloc_locked(bytes, &zero_from);
+    pthread_mutex_unlock(&g_lock);
     if (p) {
-        memset(p, 0, count * size);
+        /* Only what may hold old data: fresh memory from the top is already zero. */
+        size_t dirty = zero_from > p ? zero_from - p : 0;
+        memset((void *)(uintptr_t)p, 0, dirty < bytes ? dirty : bytes);
     }
-    return p;
+    return (void *)(uintptr_t)p;
 }
 
 void guest_free(void *ptr) {
@@ -313,6 +372,7 @@ void *guest_realloc(void *ptr, size_t size) {
     uint32_t next = addr + have;
     if (next == g_top && need - have <= g_limit - g_top) {
         g_top = addr + need;
+        grew_to(g_top);
         B(addr)->size = need | (B(addr)->size & 15u);
         g_used += need - have;
         pthread_mutex_unlock(&g_lock);
@@ -327,7 +387,7 @@ void *guest_realloc(void *ptr, size_t size) {
         pthread_mutex_unlock(&g_lock);
         return ptr;
     }
-    uint32_t fresh = alloc_locked(size);
+    uint32_t fresh = alloc_locked(size, NULL);
     if (fresh) {
         memcpy((void *)(uintptr_t)fresh, ptr, have - HDR);
         free_locked(p);

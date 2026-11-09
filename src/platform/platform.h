@@ -23,6 +23,9 @@ const char *plat_symbol_name(const void *address);
 
 void *plat_alloc(void *want, size_t size, bool executable);
 void plat_free(void *address, size_t size);
+/* Gives the pages of [address, address + size) back to the system; they stay mapped, and read as
+ * zero the next time they are touched. address and size are page-aligned. */
+void plat_discard(void *address, size_t size);
 size_t plat_page_size(void);
 bool plat_region(uintptr_t address, uint64_t *start, uint64_t *end);
 /* A range around address that is safe to identity-map for guest data access: never part of a

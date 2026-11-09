@@ -211,6 +211,12 @@ void plat_free(void *address, size_t size) {
     }
 }
 
+void plat_discard(void *address, size_t size) {
+    if (address && size) {
+        madvise(address, size, MADV_DONTNEED); /* private anonymous memory: zero-filled again */
+    }
+}
+
 size_t plat_page_size(void) {
     long page = sysconf(_SC_PAGESIZE);
     return page > 0 ? (size_t)page : 4096;

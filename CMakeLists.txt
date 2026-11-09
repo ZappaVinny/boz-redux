@@ -321,6 +321,7 @@ boz_test(lua_runtime_test SOURCES src/lua_runtime.c src/lua_settings.c src/lua_a
          src/game_image.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(lua_runtime_test PRIVATE lua ${CMAKE_DL_LIBS})
 boz_test(s3e_memory_test SOURCES src/s3e_memory.c)
+boz_test(guest_heap_test)
 boz_test(device_id_test SOURCES src/device_id.c ${BOZ_PLATFORM_SOURCES})
 boz_test(s3e_audio_test SOURCES src/s3e_audio.c
          DEFINES dlsym=s3e_audio_test_dlsym dlclose=s3e_audio_test_dlclose

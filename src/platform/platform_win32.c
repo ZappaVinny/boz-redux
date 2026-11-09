@@ -354,6 +354,13 @@ void plat_free(void *address, size_t size) {
     }
 }
 
+void plat_discard(void *address, size_t size) {
+    /* Decommit drops the pages; committing again gives zero-filled pages on first touch. */
+    if (address && size && VirtualFree(address, size, MEM_DECOMMIT)) {
+        VirtualAlloc(address, size, MEM_COMMIT, PAGE_READWRITE);
+    }
+}
+
 size_t plat_page_size(void) {
     SYSTEM_INFO info;
     GetSystemInfo(&info);
