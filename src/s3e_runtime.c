@@ -366,12 +366,12 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
         return is_audio_unit_get_interface(iface, size);
     }
     if (hash == IS_DEVICE_HASH) {
-        void *device_table[5] = {
-            (void *)(uintptr_t)&isDeviceCallbackRegister,
-            (void *)(uintptr_t)&isDeviceCallbackUnregister,
-            (void *)(uintptr_t)&isDeviceSetTabletThreshold,
-            (void *)(uintptr_t)&isDeviceGetDisplayType,
-            (void *)(uintptr_t)&isDeviceGetExternalResources,
+        uint32_t device_table[5] = {
+            GUEST_ADDRESS(&isDeviceCallbackRegister),
+            GUEST_ADDRESS(&isDeviceCallbackUnregister),
+            GUEST_ADDRESS(&isDeviceSetTabletThreshold),
+            GUEST_ADDRESS(&isDeviceGetDisplayType),
+            GUEST_ADDRESS(&isDeviceGetExternalResources),
         };
         if (iface && size == sizeof(device_table)) {
             memcpy(iface, device_table, size);
@@ -380,10 +380,10 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
         return 1;
     }
     if (hash == S3E_TOUCHPAD_HASH) {
-        void *touchpad_table[5] = {
-            (void *)(uintptr_t)&s3eTouchpadRegister, (void *)(uintptr_t)&s3eTouchpadUnRegister,
-            (void *)(uintptr_t)&s3eReturn0,          (void *)(uintptr_t)&s3eReturn0,
-            (void *)(uintptr_t)&s3eTouchpadGetInt,
+        uint32_t touchpad_table[5] = {
+            GUEST_ADDRESS(&s3eTouchpadRegister), GUEST_ADDRESS(&s3eTouchpadUnRegister),
+            GUEST_ADDRESS(&s3eReturn0),          GUEST_ADDRESS(&s3eReturn0),
+            GUEST_ADDRESS(&s3eTouchpadGetInt),
         };
         if (iface && size == sizeof(touchpad_table)) {
             memcpy(iface, touchpad_table, size);
@@ -392,12 +392,12 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
         return 1;
     }
     if (hash == S3E_ZERO_CONF_HASH) {
-        void *zero_conf_table[5] = {
-            (void *)(uintptr_t)&s3eZeroConfStartSearch,
-            (void *)(uintptr_t)&s3eZeroConfStopSearch,
-            (void *)(uintptr_t)&s3eZeroConfPublish,
-            (void *)(uintptr_t)&s3eZeroConfUpdateTxtRecord,
-            (void *)(uintptr_t)&s3eZeroConfUnpublish,
+        uint32_t zero_conf_table[5] = {
+            GUEST_ADDRESS(&s3eZeroConfStartSearch),
+            GUEST_ADDRESS(&s3eZeroConfStopSearch),
+            GUEST_ADDRESS(&s3eZeroConfPublish),
+            GUEST_ADDRESS(&s3eZeroConfUpdateTxtRecord),
+            GUEST_ADDRESS(&s3eZeroConfUnpublish),
         };
         if (iface && size == sizeof(zero_conf_table)) {
             memcpy(iface, zero_conf_table, size);
@@ -433,13 +433,13 @@ void *make_stub(const char *symbol) {
         return (void *)(uintptr_t)&s3eStub;
     }
     size_t index = g_stub_count++;
-    g_stub_names[index] = strdup(symbol ? symbol : "unknown");
+    g_stub_names[index] = guest_strdup(symbol ? symbol : "unknown");
     uint32_t *code = (uint32_t *)(void *)(g_stub_code + index * STUB_SIZE);
     code[0] = 0xe59f0004u;
     code[1] = 0xe59ff004u;
     code[2] = 0xe1a00000u;
     code[3] = (uint32_t)index;
-    code[4] = (uint32_t)(uintptr_t)&s3e_trampoline_dispatch;
+    code[4] = arm_emu_guest_fn((const void *)(uintptr_t)&s3e_trampoline_dispatch);
     __builtin___clear_cache((char *)code, (char *)(code + 5));
     return code;
 }
@@ -473,9 +473,9 @@ static uint64_t lazy_gl_resolve(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t 
         }
         return 0;
     }
-    import->stub[4] = (uint32_t)(uintptr_t)fn;
+    import->stub[4] = arm_emu_guest_fn(fn);
     uint32_t args[16] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
-    return arm_emu_call_host((uint32_t)(uintptr_t)fn, args);
+    return arm_emu_call_host(arm_emu_guest_fn(fn), args);
 }
 
 void *make_lazy_gl_stub(const char *symbol) {
@@ -496,8 +496,8 @@ void *make_lazy_gl_stub(const char *symbol) {
     code[1] = 0xe59ff004u;
     code[2] = 0xe1a00000u;
     code[3] = (uint32_t)index;
-    code[4] = (uint32_t)(uintptr_t)&lazy_gl_resolve;
-    g_lazy_gl[index].name = strdup(symbol);
+    code[4] = arm_emu_guest_fn((const void *)(uintptr_t)&lazy_gl_resolve);
+    g_lazy_gl[index].name = guest_strdup(symbol);
     g_lazy_gl[index].stub = code;
     return code;
 }

@@ -392,7 +392,7 @@ static int api_game_call(lua_State *state) {
                 return luaL_error(state, "at most %d string arguments", STRING_SLOTS);
             }
             snprintf(strings[string_slot], STRING_SLOT_BYTES, "%s", lua_tostring(state, index));
-            args[i] = (uint32_t)(uintptr_t)strings[string_slot++];
+            args[i] = GUEST_ADDRESS(strings[string_slot++]);
             break;
         default:
             return luaL_error(state, "argument %d: unsupported type %s", i + 1,
@@ -410,7 +410,7 @@ static int api_game_alloc(lua_State *state) {
     if (size < 1 || size > 16 * 1024 * 1024) {
         return luaL_error(state, "game.alloc: size must be 1 byte to 16 MB");
     }
-    void *block = calloc(1, (size_t)size);
+    void *block = guest_calloc(1, (size_t)size);
     if (!block) {
         return luaL_error(state, "game.alloc: out of memory");
     }
@@ -419,7 +419,7 @@ static int api_game_alloc(lua_State *state) {
 }
 
 static int api_game_free(lua_State *state) {
-    free((void *)(uintptr_t)luaL_checkinteger(state, 1));
+    guest_free((void *)(uintptr_t)luaL_checkinteger(state, 1));
     return 0;
 }
 

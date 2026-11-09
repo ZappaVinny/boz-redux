@@ -39,20 +39,20 @@ static int32_t is_audio_unit_stop(void) {
 }
 
 int32_t is_audio_unit_get_interface(void *iface, uint32_t size) {
-    void *table[IS_AUDIO_UNIT_INTERFACE_ENTRIES] = {
-        (void *)(uintptr_t)&is_audio_unit_register,
-        (void *)(uintptr_t)&is_audio_unit_unregister,
-        (void *)(uintptr_t)&is_audio_unit_init,
-        (void *)(uintptr_t)&is_audio_unit_terminate,
-        (void *)(uintptr_t)&is_audio_unit_set_callbacks,
-        (void *)(uintptr_t)&is_audio_unit_start,
-        (void *)(uintptr_t)&is_audio_unit_stop,
-        (void *)(uintptr_t)&s3eAudioPlay,
-        (void *)(uintptr_t)&s3eAudioStop,
-        (void *)(uintptr_t)&s3eAudioResume,
-        (void *)(uintptr_t)&s3eAudioPause,
-        (void *)(uintptr_t)&s3eAudioSetInt,
-        (void *)(uintptr_t)&s3eAudioGetInt,
+    uint32_t table[IS_AUDIO_UNIT_INTERFACE_ENTRIES] = {
+        GUEST_ADDRESS(&is_audio_unit_register),
+        GUEST_ADDRESS(&is_audio_unit_unregister),
+        GUEST_ADDRESS(&is_audio_unit_init),
+        GUEST_ADDRESS(&is_audio_unit_terminate),
+        GUEST_ADDRESS(&is_audio_unit_set_callbacks),
+        GUEST_ADDRESS(&is_audio_unit_start),
+        GUEST_ADDRESS(&is_audio_unit_stop),
+        GUEST_ADDRESS(&s3eAudioPlay),
+        GUEST_ADDRESS(&s3eAudioStop),
+        GUEST_ADDRESS(&s3eAudioResume),
+        GUEST_ADDRESS(&s3eAudioPause),
+        GUEST_ADDRESS(&s3eAudioSetInt),
+        GUEST_ADDRESS(&s3eAudioGetInt),
     };
 
     if (!iface || size != sizeof(table)) {

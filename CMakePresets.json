@@ -20,6 +20,18 @@
       }
     },
     {
+      "name": "windows-x64-msys2",
+      "displayName": "Windows 64-bit (x86-64, Dynarmic), built on Windows in an MSYS2 MINGW64 shell",
+      "binaryDir": "${sourceDir}/build/windows-x64",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_RC_COMPILER": "windres"
+      }
+    },
+    {
       "name": "windows-x86-msys2",
       "displayName": "Windows 32-bit (x86), built on Windows in an MSYS2 MINGW32 shell",
       "binaryDir": "${sourceDir}/build/windows-x86",
@@ -73,6 +85,21 @@
     {
       "name": "windows-x86-msys2-tests",
       "configurePreset": "windows-x86-msys2"
+    },
+    {
+      "name": "windows-x64-msys2",
+      "configurePreset": "windows-x64-msys2",
+      "targets": [
+        "codboz_s3e_loader",
+        "codboz_apk_extract",
+        "boz-redux",
+        "SDL2",
+        "SDL2_mixer"
+      ]
+    },
+    {
+      "name": "windows-x64-msys2-tests",
+      "configurePreset": "windows-x64-msys2"
     }
   ],
   "testPresets": [

@@ -732,6 +732,10 @@ uint32_t arm_emu_trap_address(void) {
     return g_svc_page ? (uint32_t)(uintptr_t)g_svc_page + PAGE_SIZE_EMU - 8 : 0;
 }
 
+uint32_t arm_emu_guest_fn(const void *fn) {
+    return (uint32_t)(uintptr_t)fn;
+}
+
 uint32_t arm_emu_call_scratch(void) {
     return t_call_scratch;
 }

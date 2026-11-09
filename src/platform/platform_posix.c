@@ -195,7 +195,12 @@ void *plat_alloc(void *want, size_t size, bool executable) {
         }
     }
     if (address == MAP_FAILED) {
+#if UINTPTR_MAX > 0xffffffffu && defined(MAP_32BIT)
+        /* 64-bit: the game sees this memory, so it has to sit below 4 GiB. */
+        address = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+#else
         address = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
     }
     return address == MAP_FAILED ? NULL : address;
 }

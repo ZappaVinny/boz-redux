@@ -414,7 +414,7 @@ static int32_t clamp_pointer_y(int32_t y) {
     return clamp_value(y, window_height());
 }
 
-static void pointer_dispatch(uint32_t id, void *event) {
+static void pointer_dispatch(uint32_t id, void *event, size_t size) {
     if (id >= ARRAY_SIZE(g_pointer_callbacks)) {
         return;
     }
@@ -422,10 +422,12 @@ static void pointer_dispatch(uint32_t id, void *event) {
     if (!slot->callback) {
         return;
     }
-    s3e_guest_call(slot->callback, 2, S3E_GUEST_ARG(event), S3E_GUEST_ARG(slot->user_data));
+    uint32_t data = guest_block_in(event, size);
+    s3e_guest_call(slot->callback, 2, data, S3E_GUEST_ARG(slot->user_data));
+    guest_block_out(event, data, size);
 }
 
-static void touchpad_dispatch(uint32_t id, void *event) {
+static void touchpad_dispatch(uint32_t id, void *event, size_t size) {
     if (id >= ARRAY_SIZE(g_touchpad_callbacks)) {
         return;
     }
@@ -433,7 +435,9 @@ static void touchpad_dispatch(uint32_t id, void *event) {
     if (!slot->callback) {
         return;
     }
-    s3e_guest_call(slot->callback, 2, S3E_GUEST_ARG(event), S3E_GUEST_ARG(slot->user_data));
+    uint32_t data = guest_block_in(event, size);
+    s3e_guest_call(slot->callback, 2, data, S3E_GUEST_ARG(slot->user_data));
+    guest_block_out(event, data, size);
 }
 
 static void pointer_set_down(int down) {
@@ -476,8 +480,8 @@ static void pointer_dispatch_button(uint32_t button, int32_t pressed) {
         .x = g_pointer_x,
         .y = g_pointer_y,
     };
-    pointer_dispatch(0, &event);
-    pointer_dispatch(2, &touch_event);
+    pointer_dispatch(0, &event, sizeof(event));
+    pointer_dispatch(2, &touch_event, sizeof(touch_event));
 }
 
 static void pointer_dispatch_motion(void) {
@@ -490,8 +494,8 @@ static void pointer_dispatch_motion(void) {
         .x = g_pointer_x,
         .y = g_pointer_y,
     };
-    pointer_dispatch(1, &event);
-    pointer_dispatch(3, &touch_event);
+    pointer_dispatch(1, &event, sizeof(event));
+    pointer_dispatch(3, &touch_event, sizeof(touch_event));
 }
 
 static void input_release_pointer(void) {
@@ -510,7 +514,9 @@ static void keyboard_dispatch_event(uint32_t key, int32_t pressed) {
     for (size_t i = 0; i < ARRAY_SIZE(g_keyboard_callbacks); ++i) {
         struct keyboard_callback_slot *slot = &g_keyboard_callbacks[i];
         if (slot->callback && slot->id == 0) {
-            s3e_guest_call(slot->callback, 2, S3E_GUEST_ARG(&event), S3E_GUEST_ARG(slot->user_data));
+            uint32_t data = guest_block_in(&event, sizeof(event));
+            s3e_guest_call(slot->callback, 2, data, S3E_GUEST_ARG(slot->user_data));
+            guest_block_out(&event, data, sizeof(event));
         }
     }
 }
@@ -601,7 +607,7 @@ static void touchpad_dispatch_button(uint32_t id, int32_t pressed, int32_t x, in
         .x = x,
         .y = y,
     };
-    touchpad_dispatch(0, &event);
+    touchpad_dispatch(0, &event, sizeof(event));
 }
 
 static void touchpad_dispatch_motion(uint32_t id, int32_t x, int32_t y) {
@@ -610,7 +616,7 @@ static void touchpad_dispatch_motion(uint32_t id, int32_t x, int32_t y) {
         .x = x,
         .y = y,
     };
-    touchpad_dispatch(1, &event);
+    touchpad_dispatch(1, &event, sizeof(event));
 }
 
 static void touchpad_release(uint32_t id) {
