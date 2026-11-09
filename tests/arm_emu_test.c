@@ -1,12 +1,15 @@
 #include "arm_emu.h"
 #include <pthread.h>
+#include "guest_memory.h"
 #include "platform/platform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* Code and the data it reads, in memory the game could see. */
 static uint32_t *g_code;
+enum { RECOVERED_WORD = 60, STORE_WORD = 62 };
 static int g_failures;
 
 static void expect(const char *name, uint64_t got, uint64_t want) {
@@ -37,7 +40,6 @@ static uint64_t host_wide(void) {
     return 0x1122334455667788ull;
 }
 
-static uint32_t g_recovered_value = 0x5eed;
 static int g_recoveries;
 
 /* Repairs "ldr r0, [r0]" with r0 = 0 by pointing r0 at a valid word and retrying. */
@@ -45,12 +47,11 @@ static bool recover_null_load(struct arm_emu_fault *fault) {
     if (fault->write || fault->address != 0 || fault->r[0] != 0) {
         return false;
     }
-    fault->r[0] = (uint32_t)(uintptr_t)&g_recovered_value;
+    fault->r[0] = GUEST_ADDRESS(&g_code[RECOVERED_WORD]);
     g_recoveries++;
     return true;
 }
 
-static uint32_t g_store_target;
 static uint32_t g_store_pc;
 
 /* Repairs "str r1, [r0]" with r0 = 0. The fault must stop at the store itself: the next
@@ -59,14 +60,14 @@ static bool recover_null_store(struct arm_emu_fault *fault) {
     if (!fault->write || fault->address != 0 || fault->r[0] != 0 || fault->r[15] != g_store_pc) {
         return false;
     }
-    fault->r[0] = (uint32_t)(uintptr_t)&g_store_target;
+    fault->r[0] = GUEST_ADDRESS(&g_code[STORE_WORD]);
     g_recoveries++;
     return true;
 }
 
 static uint32_t host_reenter(uint32_t x) {
     uint32_t arg = x * 2;
-    return (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[0], 1, &arg);
+    return (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[0]), 1, &arg);
 }
 
 /* Code hooks. */
@@ -104,7 +105,7 @@ static int g_thumb_hits;
  * released when it ends, or a long session runs out of CPU slots. */
 static void *guest_on_thread(void *result) {
     uint32_t args[1] = {41};
-    *(uint32_t *)result = (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[0], 1, args);
+    *(uint32_t *)result = (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[0]), 1, args);
     return NULL;
 }
 
@@ -135,7 +136,8 @@ int main(void) {
     if (!arm_emu_init()) {
         return 1;
     }
-    g_code = plat_alloc(NULL, 4096, false);
+    g_code = guest_pages_alloc(0, 4096);
+    g_code[RECOVERED_WORD] = 0x5eed;
     uint32_t c[] = {
         /* 0: r0 + 1 */
         0xe2800001u, 0xe12fff1eu,
@@ -150,36 +152,36 @@ int main(void) {
 
     uint32_t args[6];
     args[0] = 41;
-    expect("guest arithmetic", (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[0], 1, args),
+    expect("guest arithmetic", (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[0]), 1, args),
            42);
 
     args[0] = 1;
-    args[1] = (uint32_t)(uintptr_t)&host_add;
+    args[1] = arm_emu_guest_fn((const void *)&host_add);
     expect("guest calls host with stack args",
-           (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[2], 2, args), 1 + 2 + 3 + 4 + 5 + 6 + 100);
+           (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[2]), 2, args), 1 + 2 + 3 + 4 + 5 + 6 + 100);
 
     args[0] = 1;
-    args[1] = (uint32_t)(uintptr_t)&host_stdcall;
+    args[1] = arm_emu_guest_fn((const void *)&host_stdcall);
     expect("guest calls stdcall host (callee pops args)",
-           (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[2], 2, args),
+           (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[2]), 2, args),
            1 * 1000 + 2 * 100 + 3 * 10 + 4 + 5 + 6 + 100);
 
-    args[0] = (uint32_t)(uintptr_t)&host_wide;
-    expect("64-bit host return", arm_emu_call((uint32_t)(uintptr_t)&g_code[16], 1, args),
+    args[0] = arm_emu_guest_fn((const void *)&host_wide);
+    expect("64-bit host return", arm_emu_call(GUEST_ADDRESS(&g_code[16]), 1, args),
            0x1122334455667788ull);
 
     args[0] = 10;
-    args[1] = (uint32_t)(uintptr_t)&host_reenter;
-    expect("host re-enters guest", (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[2], 2, args),
+    args[1] = arm_emu_guest_fn((const void *)&host_reenter);
+    expect("host re-enters guest", (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[2]), 2, args),
            10 * 2 + 1 + 100);
 
-    static const char text[] = "host string";
-    args[0] = (uint32_t)(uintptr_t)text;
-    args[1] = arm_emu_guest_fn((const void *)&strlen); /* libc may lie above 4 GiB */
+    const char *text = guest_strdup("host string");
+    args[0] = GUEST_ADDRESS(text);
+    args[1] = arm_emu_guest_fn_sig((const void *)&strlen, "i:p"); /* libc may lie above 4 GiB */
     uint32_t tail[] = {0xe12fff11u};
     memcpy(&g_code[20], tail, sizeof(tail));
     expect("guest passes host pointer to libc",
-           (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[20], 2, args), strlen(text));
+           (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[20]), 2, args), strlen(text));
 
     /* 24: ldr r0, [r0]; bx lr */
     uint32_t load[] = {0xe5900000u, 0xe12fff1eu};
@@ -187,24 +189,24 @@ int main(void) {
     arm_emu_set_fault_handler(recover_null_load);
     args[0] = 0;
     expect("fault handler repairs a null load",
-           (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[24], 1, args), 0x5eed);
+           (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[24]), 1, args), 0x5eed);
     expect("fault handler ran once", (uint64_t)g_recoveries, 1);
 
     /* 28: str r1, [r0]; add r0, r1, #1; bx lr */
     uint32_t store[] = {0xe5801000u, 0xe2810001u, 0xe12fff1eu};
     memcpy(&g_code[28], store, sizeof(store));
-    g_store_pc = (uint32_t)(uintptr_t)&g_code[28];
+    g_store_pc = GUEST_ADDRESS(&g_code[28]);
     arm_emu_set_fault_handler(recover_null_store);
     args[0] = 0;
     args[1] = 0x77;
     expect("fault handler repairs a null store at the store",
-           (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[28], 2, args), 0x78);
-    expect("repaired store wrote its value", g_store_target, 0x77);
+           (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[28]), 2, args), 0x78);
+    expect("repaired store wrote its value", g_code[STORE_WORD], 0x77);
     expect("fault handlers ran twice in all", (uint64_t)g_recoveries, 2);
     arm_emu_set_fault_handler(NULL);
 
     /* Hooks on code that already ran (cached translation) must still fire. */
-    uint32_t add_one = (uint32_t)(uintptr_t)&g_code[0];
+    uint32_t add_one = GUEST_ADDRESS(&g_code[0]);
     int id = arm_emu_hook_add(add_one, hook_double_r0, NULL);
     args[0] = 41;
     expect("hook changes an argument", (uint32_t)arm_emu_call(add_one, 1, args), 83);
@@ -215,7 +217,7 @@ int main(void) {
     expect("hook skips the function", (uint32_t)arm_emu_call(add_one, 1, args), 7);
     arm_emu_hook_remove(id);
 
-    g_trap = (uint32_t)(uintptr_t)&g_code[40];
+    g_trap = GUEST_ADDRESS(&g_code[40]);
     g_code[40] = 0xe12fff1eu; /* never runs: the trap hook moves on first */
     int entry = arm_emu_hook_add(add_one, hook_redirect_return, NULL);
     int trap = arm_emu_hook_add(g_trap, hook_at_trap, NULL);
@@ -226,7 +228,7 @@ int main(void) {
     /* 48: Thumb "adds r0, #1; bx lr", called with the Thumb bit, hooked without it. */
     uint16_t thumb[] = {0x3001u, 0x4770u};
     memcpy(&g_code[48], thumb, sizeof(thumb));
-    uint32_t thumb_fn = (uint32_t)(uintptr_t)&g_code[48];
+    uint32_t thumb_fn = GUEST_ADDRESS(&g_code[48]);
     id = arm_emu_hook_add(thumb_fn | 1u, hook_count, NULL);
     args[0] = 1;
     expect("hook on a Thumb function", (uint32_t)arm_emu_call(thumb_fn | 1u, 1, args), 12);

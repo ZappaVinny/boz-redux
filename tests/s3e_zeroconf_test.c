@@ -3,6 +3,8 @@
 #include "zeroconf_platform.h"
 #include "zeroconf_platform_fake.h"
 
+#include "guest_memory.h"
+
 #include <assert.h>
 
 enum {
@@ -31,16 +33,16 @@ static int32_t found_callback(void *search, void *system_data, void *user_data) 
     const struct s3e_zeroconf_found_data *found = system_data;
     assert(search == state->search);
     assert(found && found->service_id && found->name && found->host);
-    state->service_id = (void *)(uintptr_t)found->service_id;
+    state->service_id = GUEST_POINTER(found->service_id);
     state->ipv4_address = found->ipv4_address;
     state->port = found->port;
     state->txt_count = found->txt_count;
-    snprintf(state->name, sizeof(state->name), "%s", (const char *)(uintptr_t)found->name);
+    snprintf(state->name, sizeof(state->name), "%s", (const char *)GUEST_POINTER(found->name));
     state->txt[0] = 0;
     if (found->txt_count) {
-        const uint32_t *records = (const uint32_t *)(uintptr_t)found->txt_records;
+        const uint32_t *records = (const uint32_t *)GUEST_POINTER(found->txt_records);
         assert(records && records[0]);
-        snprintf(state->txt, sizeof(state->txt), "%s", (const char *)(uintptr_t)records[0]);
+        snprintf(state->txt, sizeof(state->txt), "%s", (const char *)GUEST_POINTER(records[0]));
     }
     ++state->found_count;
     return 0;
@@ -50,13 +52,13 @@ static int32_t update_callback(void *search, void *system_data, void *user_data)
     struct callback_state *state = user_data;
     const struct s3e_zeroconf_txt_update_data *update = system_data;
     assert(search == state->search);
-    assert(update && (void *)(uintptr_t)update->service_id == state->service_id);
+    assert(update && GUEST_POINTER(update->service_id) == state->service_id);
     state->txt_count = update->txt_count;
     state->txt[0] = 0;
     if (update->txt_count) {
-        const uint32_t *records = (const uint32_t *)(uintptr_t)update->txt_records;
+        const uint32_t *records = (const uint32_t *)GUEST_POINTER(update->txt_records);
         assert(records && records[0]);
-        snprintf(state->txt, sizeof(state->txt), "%s", (const char *)(uintptr_t)records[0]);
+        snprintf(state->txt, sizeof(state->txt), "%s", (const char *)GUEST_POINTER(records[0]));
     }
     ++state->update_count;
     if (state->reentrant_packet_size) {

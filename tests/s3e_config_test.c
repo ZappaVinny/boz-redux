@@ -3,6 +3,8 @@
 #include "game_patches.h"
 #include "s3e_image.h"
 
+#include "guest_memory.h"
+
 #include <assert.h>
 
 char g_root[1024];
@@ -95,7 +97,7 @@ static void test_player_name_patch(void) {
         format_offset = 0x3af131,
     };
     size_t size = format_offset + sizeof("Player-%d");
-    uint8_t *memory = calloc(1, size);
+    uint8_t *memory = guest_calloc(1, size); /* the game image: memory the game sees */
     assert(memory);
     memcpy(memory + format_offset, "Player-%d", sizeof("Player-%d"));
     uint32_t original = format_offset - reference_pc_offset;
@@ -111,8 +113,8 @@ static void test_player_name_patch(void) {
     assert(player_name_install(&loaded, name_address));
     uint32_t patched;
     memcpy(&patched, memory + reference_offset, sizeof(patched));
-    assert(patched == name_address - ((uint32_t)(uintptr_t)memory + reference_pc_offset));
-    free(memory);
+    assert(patched == name_address - (GUEST_ADDRESS(memory) + reference_pc_offset));
+    guest_free(memory);
 }
 
 int main(void) {

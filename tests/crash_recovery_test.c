@@ -1,7 +1,7 @@
-/* Feeds faults to the crash-recovery handler with the guest stack in host memory (the loader is
- * 32-bit, so host pointers are guest addresses). */
+/* Feeds faults to the crash-recovery handler with the guest stack in guest memory. */
 #include "arm_emu.h"
 #include "game_patches.h"
+#include "guest_memory.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -25,27 +25,27 @@ static struct arm_emu_fault fault_at(uint32_t offset) {
 
 static void test_return_from_frame(void) {
     /* 0xcb8ee pushed r4-r6 and lr: the handler restores them and returns 0 to the caller. */
-    static uint32_t stack[5];
-    memcpy(stack, (uint32_t[]){0x44, 0x55, 0x66, 0x4a001235, 0xdead}, sizeof(stack));
+    uint32_t *stack = guest_calloc(5, sizeof(uint32_t));
+    memcpy(stack, (uint32_t[]){0x44, 0x55, 0x66, 0x4a001235, 0xdead}, 5 * sizeof(uint32_t));
     struct arm_emu_fault f = fault_at(0xcb8ee);
-    f.r[SP] = (uint32_t)(uintptr_t)stack;
+    f.r[SP] = GUEST_ADDRESS(stack);
     f.r[R0] = 0;
     f.r[R4] = 1;
     assert(g_handler(&f));
     assert(f.r[R4] == 0x44 && f.r[R5] == 0x55 && f.r[R6] == 0x66);
     assert(f.r[R0] == 0);
-    assert(f.r[SP] == (uint32_t)(uintptr_t)&stack[4]);
+    assert(f.r[SP] == GUEST_ADDRESS(&stack[4]));
     assert(f.r[PC] == 0x4a001234 && f.thumb);
 
     /* 0xd291c pushed r3-r7 and lr; an ARM return address leaves Thumb off. */
-    static uint32_t wide[7];
-    memcpy(wide, (uint32_t[]){3, 4, 5, 6, 7, 0x4a002000, 0}, sizeof(wide));
+    uint32_t *wide = guest_calloc(7, sizeof(uint32_t));
+    memcpy(wide, (uint32_t[]){3, 4, 5, 6, 7, 0x4a002000, 0}, 7 * sizeof(uint32_t));
     f = fault_at(0xd291c);
-    f.r[SP] = (uint32_t)(uintptr_t)wide;
+    f.r[SP] = GUEST_ADDRESS(wide);
     f.thumb = true;
     assert(g_handler(&f));
     assert(f.r[R3] == 3 && f.r[R7] == 7);
-    assert(f.r[SP] == (uint32_t)(uintptr_t)&wide[6]);
+    assert(f.r[SP] == GUEST_ADDRESS(&wide[6]));
     assert(f.r[PC] == 0x4a002000 && !f.thumb);
 }
 
@@ -56,7 +56,7 @@ static void test_register_conditions(void) {
 
     f = fault_at(0x368ddc);
     assert(g_handler(&f));
-    assert(f.r[R1] != 0 && *(const char *)(uintptr_t)f.r[R1] == '\0');
+    assert(f.r[R1] != 0 && *(const char *)GUEST_POINTER(f.r[R1]) == '\0');
 
     f = fault_at(0x368fa4);
     assert(g_handler(&f));

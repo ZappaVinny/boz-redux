@@ -3,6 +3,7 @@
 #include "arm_emu.h"
 #include "lua_runtime_internal.h"
 #include "mod_runtime.h"
+#include "guest_memory.h"
 #include "platform/platform.h"
 
 #include "lauxlib.h"
@@ -17,7 +18,7 @@ static int g_failures;
 
 /* The runtime pieces lua_hooks.c uses, reduced to what a test needs. */
 uint32_t game_symbol_address(const char *name) {
-    return strcmp(name, "AddOne") == 0 ? (uint32_t)(uintptr_t)&g_code[0] : 0;
+    return strcmp(name, "AddOne") == 0 ? GUEST_ADDRESS(&g_code[0]) : 0;
 }
 
 int lua_runtime_current_mod(void) {
@@ -64,14 +65,14 @@ int main(void) {
     if (!arm_emu_init()) {
         return 1;
     }
-    g_code = plat_alloc(NULL, 4096, false);
+    g_code = guest_pages_alloc(0, 4096);
     uint32_t code[] = {
         0xe2800001u, 0xe12fff1eu, /* 0: AddOne: r0 + 1 */
         0xe0800001u, 0xe12fff1eu, /* 2: r0 + r1 */
         0xe2400001u, 0xe12fff1eu, /* 4: r0 - 1 */
     };
     memcpy(g_code, code, sizeof(code));
-    uint32_t add_one = (uint32_t)(uintptr_t)&g_code[0];
+    uint32_t add_one = GUEST_ADDRESS(&g_code[0]);
 
     L = luaL_newstate();
     luaL_openlibs(L);
@@ -106,14 +107,14 @@ int main(void) {
     char chunk[256];
     snprintf(chunk, sizeof(chunk),
              "hook.add(%u, {after = function(c) c:set_result(c:result() * 2) end})",
-             (unsigned)(uintptr_t)&g_code[2]);
+             (unsigned)GUEST_ADDRESS(&g_code[2]));
     run(chunk);
     uint32_t args[2] = {20, 1};
-    expect("hook by address", (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[2], 2, args), 42);
+    expect("hook by address", (uint32_t)arm_emu_call(GUEST_ADDRESS(&g_code[2]), 2, args), 42);
 
     /* A handler hooks another function that already ran (cached): the flush is deferred until
      * the handler returns, and the new hook works on the next call. */
-    uint32_t sub_one = (uint32_t)(uintptr_t)&g_code[4];
+    uint32_t sub_one = GUEST_ADDRESS(&g_code[4]);
     expect("sub_one before", call1(sub_one, 10), 9);
     snprintf(chunk, sizeof(chunk),
              "h5 = hook.add('AddOne', {before = function(c) if not inner then "

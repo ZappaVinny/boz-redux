@@ -3,6 +3,7 @@
 #include "native_input.h"
 
 #include "test_support.h"
+#include "guest_memory.h"
 
 #include <dirent.h>
 #include <stdarg.h>
@@ -42,16 +43,19 @@ void test_remove_tree(const char *path) {
     rmdir(path);
 }
 
+/* Tests call the "guest" callbacks natively. In guest-base builds the client hands them guest
+ * addresses (offsets into the guest space): turn those back into host pointers, as the game's
+ * own code would read them through the space. Small values (handles, flags) pass unchanged. */
 uint32_t s3e_guest_call(uint32_t fn, int argc, ...) {
-    uint32_t a[6] = {0};
+    uintptr_t a[6] = {0};
     va_list ap;
     va_start(ap, argc);
     for (int i = 0; i < argc && i < 6; ++i) {
-        a[i] = va_arg(ap, uint32_t);
+        a[i] = (uintptr_t)GUEST_POINTER(va_arg(ap, uint32_t));
     }
     va_end(ap);
-    typedef uint32_t (*native6_fn)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
-    return ((native6_fn)(uintptr_t)fn)(a[0], a[1], a[2], a[3], a[4], a[5]);
+    typedef uint32_t (*native6_fn)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+    return ((native6_fn)GUEST_POINTER(fn))(a[0], a[1], a[2], a[3], a[4], a[5]);
 }
 
 __attribute__((weak)) void present_rect(int32_t width, int32_t height, int32_t *rect) {
