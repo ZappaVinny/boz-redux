@@ -364,7 +364,11 @@ static int api_game_write(lua_State *state) {
 }
 
 static int api_game_call(lua_State *state) {
-    static char strings[STRING_SLOTS][STRING_SLOT_BYTES];
+    /* String arguments: copies the game can read (guest memory). */
+    static char (*strings)[STRING_SLOT_BYTES];
+    if (!strings && !(strings = guest_calloc(STRING_SLOTS, STRING_SLOT_BYTES))) {
+        return luaL_error(state, "game.call: out of guest memory");
+    }
     uint32_t target = check_address(state, 1);
     int argc = lua_gettop(state) - 1;
     if (argc > MAX_CALL_ARGS) {
