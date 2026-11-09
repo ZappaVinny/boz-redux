@@ -44,4 +44,20 @@ void open_path(const std::string &path);
 
 std::string getenv_str(const char *name);
 
+#if defined(__ANDROID__)
+// Android (os_android.cpp, calling packaging/android LauncherActivity): there are no child
+// processes or desktop file dialogs. Picked files are content:// URIs that only Java can read.
+// The calls block; the copies and the download belong on a worker thread.
+
+// The system picker, for any file; empty when cancelled or unavailable (has_file_dialogs()).
+std::vector<std::string> pick_documents(bool multiple);
+int64_t document_size(const std::string &uri);  // -1 when unknown
+bool copy_document(const std::string &uri, const std::string &to);
+// A mod's .zip unpacked into mods_dir; returns the folder name, or "" with *error set.
+std::string import_mod_zip(const std::string &uri, const std::string &mods_dir, std::string *error);
+bool download(const std::string &url, const std::string &to);
+// Starts the game's activity (its own process) with these arguments; env sets HOME and BOZ_*.
+bool start_game(const std::vector<std::string> &args, const std::map<std::string, std::string> &env);
+#endif
+
 }  // namespace os
