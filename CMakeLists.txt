@@ -233,6 +233,8 @@ target_link_libraries(boz_guest_heap PUBLIC ${BOZ_SYSTEM_LIBS})
 set(BOZ_GUEST_LINK_OPTIONS)
 if(WIN32 AND BOZ_CPU STREQUAL "dynarmic")
   set(BOZ_SYSTEM_LINK_OPTIONS -static -static-libgcc -static-libstdc++)
+  # A fixed low image base: guest code calls host functions at their own address. That rules out
+  # ASLR for the executable (--disable-dynamicbase, --disable-high-entropy-va).
   set(BOZ_GUEST_LINK_OPTIONS -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase
       -Wl,--disable-high-entropy-va)
 endif()

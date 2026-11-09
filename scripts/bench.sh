@@ -83,7 +83,7 @@ EOF
 summarize() {
     gawk -v settle="$settle" -v seconds="$seconds" '
         /\[input\] game/ && !match_t { match_t = $1 }
-        /\[arm\]/ && !/recovered/ { faults++ }
+        /\[arm\]/ && !/recovered|Dynarmic A32 JIT/ { faults++ }
         match_t && /\[perf\]/ && $1 >= match_t + settle && $1 <= match_t + settle + seconds {
             for (i = 1; i <= NF; i++) {
                 if ($i == "frames") f = $(i + 1)
