@@ -16,8 +16,8 @@ extern "C" {
 
 /* --- Game image (game_image.c) ------------------------------------------------------------- */
 
-void game_set_image_base(uintptr_t base);
-uintptr_t game_image_base(void);
+void game_set_image_base(uint32_t base);
+uint32_t game_image_base(void);
 /* Address of a gamedef symbol (functions carry the Thumb bit), or 0. */
 uint32_t game_symbol_address(const char *name);
 

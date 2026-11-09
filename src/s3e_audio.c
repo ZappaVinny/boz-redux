@@ -348,7 +348,7 @@ static int32_t invoke_callback(const struct sound_callback *callback, void *syst
         return 0;
     }
     uint32_t data = guest_block_in(system_data, size);
-    int32_t result = (int32_t)s3e_guest_call(callback->function, 2, data,
+    int32_t result = (int32_t)s3e_guest_call(GUEST_ADDRESS(callback->function), 2, data,
                                              S3E_GUEST_ARG(callback->user_data));
     guest_block_out(system_data, data, size);
     return result;
@@ -405,10 +405,10 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
         }
         struct s3e_sound_gen_audio_info info = {
             .channel = channel,
-            .target = (uint32_t)(uintptr_t)(pcm + written),
+            .target = GUEST_ADDRESS(pcm + written),
             .num_samples = requested,
             .mix = 0,
-            .orig_start = (uint32_t)(uintptr_t)data,
+            .orig_start = GUEST_ADDRESS(data),
             .orig_num_samples = samples,
             .reps_remaining = 0,
             .end_sample = 0,
@@ -512,7 +512,7 @@ static void service_finished_sound(void) {
                                                       : repeat_forever || info.reps_remaining > 0;
         if (keep_playing) {
             int new_data = info.new_data != 0;
-            const void *next_data = new_data ? (const void *)(uintptr_t)info.new_data : source_data;
+            const void *next_data = new_data ? GUEST_POINTER(info.new_data) : source_data;
             uint32_t next_samples = new_data ? info.num_samples : source_samples;
             uint32_t next_repeat = info.reps_remaining > 0 ? (uint32_t)info.reps_remaining : 0;
             if (next_data && next_samples &&
@@ -714,7 +714,7 @@ static void audio_unit_capture(void *user_data, uint8_t *stream, int length) {
         .sample_rate = (uint32_t)g_audio_unit_capture_frequency,
     };
     uint32_t guest_buffer = guest_block_in(&buffer, sizeof(buffer));
-    s3e_guest_call(callback, 1, guest_buffer);
+    s3e_guest_call(GUEST_ADDRESS(callback), 1, guest_buffer);
     guest_block_out(&buffer, guest_buffer, sizeof(buffer));
     guest_block_out(stream, samples, (size_t)length);
 }
@@ -744,7 +744,7 @@ static void audio_unit_postmix(void *user_data, uint8_t *stream, int length) {
             .sample_rate = (uint32_t)g_audio_unit_output_frequency,
         };
         uint32_t guest_buffer = guest_block_in(&buffer, sizeof(buffer));
-        s3e_guest_call(callback, 1, guest_buffer);
+        s3e_guest_call(GUEST_ADDRESS(callback), 1, guest_buffer);
         guest_block_out(&buffer, guest_buffer, sizeof(buffer));
         guest_block_out(g_audio_unit_mix_buffer, samples, mix_bytes);
 

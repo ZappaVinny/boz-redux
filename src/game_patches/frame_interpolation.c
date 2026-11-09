@@ -1,6 +1,7 @@
 #include "game_patches.h"
 #include "mod_runtime.h"
 #include "s3e_host_internal.h"
+#include "arm_emu.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -15,19 +16,17 @@ enum {
     FIXED_FACTOR_ONE = 4096,
 };
 
-typedef uint32_t(S3E_SOFTFP *director_callback_fn)(void *director, uint32_t channel, uint32_t step,
-                                                   uint32_t value, uint32_t argument4,
-                                                   uint32_t argument5);
-typedef void(S3E_SOFTFP *capture_transforms_fn)(void *active_set);
-typedef void(S3E_SOFTFP *apply_factor_fn)(void *active_set, int32_t factor);
+/* Guest addresses of the game's functions and data. */
+static uint32_t g_active_set_pointer;
+static uint32_t g_original_fixed_callback;
+static uint32_t g_capture_transforms;
+static uint32_t g_apply_factor;
 
-static uint8_t *g_active_set_pointer;
-static director_callback_fn g_original_fixed_callback;
-static capture_transforms_fn g_capture_transforms;
-static apply_factor_fn g_apply_factor;
+/* The callbacks' signature for guest-base builds: the director is a pointer. */
+#define DIRECTOR_CALLBACK_SIGNATURE "i:piiiii"
 
 static bool code_matches(uint32_t address, const uint8_t *expected, size_t size) {
-    return address && memcmp((const void *)(uintptr_t)(address & ~1u), expected, size) == 0;
+    return address && memcmp(GUEST_POINTER(address & ~1u), expected, size) == 0;
 }
 
 static uint32_t read32(const void *address) {
@@ -41,7 +40,7 @@ static void write32(void *address, uint32_t value) {
 }
 
 static void *active_transform_set(void) {
-    return (void *)(uintptr_t)read32(g_active_set_pointer);
+    return GUEST_POINTER(read32(GUEST_POINTER(g_active_set_pointer)));
 }
 
 static int32_t interpolation_factor(uint32_t bits) {
@@ -82,7 +81,7 @@ static S3E_SOFTFP uint32_t director_interpolate_callback(void *director, uint32_
                            (uint32_t)interpolation_factor(factor_bits));
         }
     }
-    return (uint32_t)(uintptr_t)director;
+    return GUEST_ADDRESS(director);
 }
 
 bool frame_interpolation_install(void) {
@@ -112,16 +111,20 @@ bool frame_interpolation_install(void) {
         !code_matches(interpolate, interpolate_signature, sizeof(interpolate_signature)) ||
         !code_matches(capture, capture_signature, sizeof(capture_signature)) ||
         !code_matches(apply, apply_signature, sizeof(apply_signature)) ||
-        read32((void *)(uintptr_t)fixed_slot) != fixed ||
-        read32((void *)(uintptr_t)interpolate_slot) != interpolate) {
+        read32(GUEST_POINTER(fixed_slot)) != fixed ||
+        read32(GUEST_POINTER(interpolate_slot)) != interpolate) {
         return false;
     }
 
-    g_active_set_pointer = (uint8_t *)(uintptr_t)active_set;
-    g_original_fixed_callback = (director_callback_fn)(uintptr_t)fixed;
-    g_capture_transforms = (capture_transforms_fn)(uintptr_t)capture;
-    g_apply_factor = (apply_factor_fn)(uintptr_t)apply;
-    write32((void *)(uintptr_t)fixed_slot, (uint32_t)(uintptr_t)director_fixed_callback);
-    write32((void *)(uintptr_t)interpolate_slot, (uint32_t)(uintptr_t)director_interpolate_callback);
+    g_active_set_pointer = active_set;
+    g_original_fixed_callback = fixed;
+    g_capture_transforms = capture;
+    g_apply_factor = apply;
+    write32(GUEST_POINTER(fixed_slot),
+            arm_emu_guest_fn_sig((const void *)(uintptr_t)director_fixed_callback,
+                                 DIRECTOR_CALLBACK_SIGNATURE));
+    write32(GUEST_POINTER(interpolate_slot),
+            arm_emu_guest_fn_sig((const void *)(uintptr_t)director_interpolate_callback,
+                                 DIRECTOR_CALLBACK_SIGNATURE));
     return true;
 }

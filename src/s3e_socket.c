@@ -372,7 +372,7 @@ static void pump_dns_lookup(void) {
         } else {
             set_socket_error(S3E_SOCKET_ERR_UNKNOWN_HOST);
         }
-        s3e_guest_call(lookup->callback, 2, S3E_GUEST_ARG(system_data),
+        s3e_guest_call(GUEST_ADDRESS(lookup->callback), 2, S3E_GUEST_ARG(system_data),
                        S3E_GUEST_ARG(lookup->user_data));
     }
     free_dns_lookup(lookup);
@@ -914,7 +914,7 @@ static int slot_matches(uint32_t index, uint32_t generation) {
 static void invoke_socket_callback(s3e_socket_callback_fn callback, void *socket, void *system_data,
                                    void *user_data) {
     if (callback) {
-        s3e_guest_call(callback, 3, S3E_GUEST_ARG(socket), S3E_GUEST_ARG(system_data),
+        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(socket), S3E_GUEST_ARG(system_data),
                        S3E_GUEST_ARG(user_data));
     }
 }

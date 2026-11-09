@@ -2,6 +2,7 @@
 #include "platform/platform.h"
 
 #include "arm_emu.h"
+#include "host_signatures.h"
 #include "mod_runtime.h"
 
 /* GL functions with float arguments. The game passes every argument as a 32-bit word (softfp:
@@ -571,7 +572,7 @@ static const void *const *host_pointer_array(const uint32_t *guest, GLsizei coun
         return NULL;
     }
     for (GLsizei i = 0; i < count; ++i) {
-        out[i] = (const void *)(uintptr_t)guest[i];
+        out[i] = GUEST_POINTER(guest[i]);
     }
     return out;
 }
@@ -758,17 +759,16 @@ static S3E_SOFTFP void host_glCopyTexSubImage2D(GLenum target, GLint level, GLin
 
 
 
-static void *host_eglGetProcAddress(const char *procname) {
+static uint32_t host_eglGetProcAddress(const char *procname) {
     if (!procname) {
-        return NULL;
+        return 0;
     }
-    void *wrapped = s3e_gl_wrapped_proc(procname);
-    if (wrapped) {
-        return wrapped;
+    void *fn = s3e_gl_wrapped_proc(procname);
+    if (!fn) {
+        void *egl = egl_backend_resolve(procname);
+        fn = egl ? egl : egl_backend_get_proc_address(procname);
     }
-    void *egl = egl_backend_resolve(procname);
-    void *fn = egl ? egl : egl_backend_get_proc_address(procname);
-    return (void *)(uintptr_t)arm_emu_guest_fn(fn);
+    return arm_emu_guest_fn_sig(fn, host_signature(procname));
 }
 
 static void cursor_clear_rect(GLint x, GLint y, GLsizei w, GLsizei h,

@@ -66,7 +66,7 @@ void dispatch_due_timers(void) {
         timer->next = NULL;
         pthread_mutex_unlock(&g_timer_mutex);
 
-        s3e_guest_call(timer->callback, 2, 0u, S3E_GUEST_ARG(timer->user_data));
+        s3e_guest_call(GUEST_ADDRESS(timer->callback), 2, 0u, S3E_GUEST_ARG(timer->user_data));
         guest_free(timer);
     }
 }

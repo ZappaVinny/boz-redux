@@ -1,4 +1,6 @@
 #include "s3e_host_internal.h"
+#include "arm_emu.h"
+#include "host_signatures.h"
 
 static _Thread_local int g_memory_error;
 static _Thread_local struct s3e_user_mem_mgr g_user_mem_mgr;
@@ -8,9 +10,9 @@ static pthread_mutex_t g_heap_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static struct s3e_user_mem_mgr default_user_mem_mgr(void) {
     return (struct s3e_user_mem_mgr){
-        .alloc = S3E_GUEST_FN(&s3eMallocBase),
-        .realloc = S3E_GUEST_FN(&s3eReallocBase),
-        .free = S3E_GUEST_FN(&s3eFreeBase),
+        .alloc = GUEST_FN(s3eMallocBase),
+        .realloc = GUEST_FN(s3eReallocBase),
+        .free = GUEST_FN(s3eFreeBase),
     };
 }
 

@@ -28,7 +28,7 @@ int g_cursor_active = 1;
 uint8_t g_is_device_resources[IS_DEVICE_RESOURCES_SIZE];
 uint64_t g_host_start_us;
 
-uint32_t s3e_guest_call(const void *fn, int argc, ...) {
+uint32_t s3e_guest_call(uint32_t fn, int argc, ...) {
     uint32_t a[6] = {0};
     va_list ap;
     va_start(ap, argc);
@@ -36,7 +36,7 @@ uint32_t s3e_guest_call(const void *fn, int argc, ...) {
         a[i] = va_arg(ap, uint32_t);
     }
     va_end(ap);
-    return (uint32_t)arm_emu_call(S3E_GUEST_ARG(fn), argc, a);
+    return (uint32_t)arm_emu_call(fn, argc, a);
 }
 
 uint64_t monotonic_us(void) {

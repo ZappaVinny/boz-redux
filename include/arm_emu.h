@@ -15,6 +15,9 @@ uint64_t arm_emu_call_host(uint32_t fn, const uint32_t *args);
 /* The address the guest calls to run host function fn: fn itself when it lies below 4 GiB (always
  * on 32-bit hosts), else a slot in the emulator's code page that calls it. */
 uint32_t arm_emu_guest_fn(const void *fn);
+/* The same, with fn's argument kinds (host_signatures.h) so guest-base builds can translate its
+ * pointer arguments and result. */
+uint32_t arm_emu_guest_fn_sig(const void *fn, const char *signature);
 
 /* A guest memory fault. r[15] is the faulting instruction (no Thumb bit); thumb is its mode. */
 struct arm_emu_fault {

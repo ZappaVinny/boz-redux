@@ -5,6 +5,7 @@
  * result. after(call) runs when the function returns: on entry the return address is swapped for
  * a trap page, whose own code hook runs the after handlers and continues at the real caller.
  * Hooks fire on the game thread only (the thread the Lua state runs on). */
+#include "guest_memory.h"
 #include "lua_runtime_internal.h"
 
 #include "arm_emu.h"
@@ -95,7 +96,7 @@ static uint32_t read_arg(const struct call *call, int index) {
     if (index <= 4) {
         return call->after ? call->args[index - 1] : call->regs->r[index - 1];
     }
-    return *(const volatile uint32_t *)(uintptr_t)(call->sp + (uint32_t)(index - 5) * 4u);
+    return *(const volatile uint32_t *)GUEST_POINTER(call->sp + (uint32_t)(index - 5) * 4u);
 }
 
 static void write_arg(lua_State *L, struct call *call, int index, uint32_t value) {
@@ -105,7 +106,7 @@ static void write_arg(lua_State *L, struct call *call, int index, uint32_t value
     if (index <= 4) {
         call->regs->r[index - 1] = value;
     } else {
-        *(volatile uint32_t *)(uintptr_t)(call->sp + (uint32_t)(index - 5) * 4u) = value;
+        *(volatile uint32_t *)GUEST_POINTER(call->sp + (uint32_t)(index - 5) * 4u) = value;
     }
 }
 

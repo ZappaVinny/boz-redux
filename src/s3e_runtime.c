@@ -1,6 +1,7 @@
 #include "s3e_host_internal.h"
 
 #include "arm_emu.h"
+#include "host_signatures.h"
 
 static int g_device_quit_requested;
 
@@ -288,7 +289,15 @@ int32_t s3eGLGetInt(uint32_t key) {
 }
 
 void *s3eGLGetNativeWindow(void) {
-    return &g_native_window;
+    /* A copy the game can read (g_native_window is host memory). */
+    static struct fbdev_window *window;
+    if (!window) {
+        window = guest_malloc(sizeof(*window));
+    }
+    if (window) {
+        *window = g_native_window;
+    }
+    return window;
 }
 
 uintptr_t s3eReturn0(void) {
@@ -367,11 +376,11 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
     }
     if (hash == IS_DEVICE_HASH) {
         uint32_t device_table[5] = {
-            S3E_GUEST_FN(&isDeviceCallbackRegister),
-            S3E_GUEST_FN(&isDeviceCallbackUnregister),
-            S3E_GUEST_FN(&isDeviceSetTabletThreshold),
-            S3E_GUEST_FN(&isDeviceGetDisplayType),
-            S3E_GUEST_FN(&isDeviceGetExternalResources),
+            GUEST_FN(isDeviceCallbackRegister),
+            GUEST_FN(isDeviceCallbackUnregister),
+            GUEST_FN(isDeviceSetTabletThreshold),
+            GUEST_FN(isDeviceGetDisplayType),
+            GUEST_FN(isDeviceGetExternalResources),
         };
         if (iface && size == sizeof(device_table)) {
             memcpy(iface, device_table, size);
@@ -381,9 +390,9 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
     }
     if (hash == S3E_TOUCHPAD_HASH) {
         uint32_t touchpad_table[5] = {
-            S3E_GUEST_FN(&s3eTouchpadRegister), S3E_GUEST_FN(&s3eTouchpadUnRegister),
-            S3E_GUEST_FN(&s3eReturn0),          S3E_GUEST_FN(&s3eReturn0),
-            S3E_GUEST_FN(&s3eTouchpadGetInt),
+            GUEST_FN(s3eTouchpadRegister), GUEST_FN(s3eTouchpadUnRegister),
+            GUEST_FN(s3eReturn0),          GUEST_FN(s3eReturn0),
+            GUEST_FN(s3eTouchpadGetInt),
         };
         if (iface && size == sizeof(touchpad_table)) {
             memcpy(iface, touchpad_table, size);
@@ -393,11 +402,11 @@ int32_t s3eExtGetHash(uint32_t hash, void *iface, uint32_t size) {
     }
     if (hash == S3E_ZERO_CONF_HASH) {
         uint32_t zero_conf_table[5] = {
-            S3E_GUEST_FN(&s3eZeroConfStartSearch),
-            S3E_GUEST_FN(&s3eZeroConfStopSearch),
-            S3E_GUEST_FN(&s3eZeroConfPublish),
-            S3E_GUEST_FN(&s3eZeroConfUpdateTxtRecord),
-            S3E_GUEST_FN(&s3eZeroConfUnpublish),
+            GUEST_FN(s3eZeroConfStartSearch),
+            GUEST_FN(s3eZeroConfStopSearch),
+            GUEST_FN(s3eZeroConfPublish),
+            GUEST_FN(s3eZeroConfUpdateTxtRecord),
+            GUEST_FN(s3eZeroConfUnpublish),
         };
         if (iface && size == sizeof(zero_conf_table)) {
             memcpy(iface, zero_conf_table, size);
@@ -420,9 +429,9 @@ void *make_stub(const char *symbol) {
     enum { STUB_SIZE = 20 };
     if (!g_stub_code) {
         g_stub_code_size = 16384;
-        g_stub_code = plat_alloc(NULL, g_stub_code_size, true);
+        g_stub_code = guest_pages_alloc(0, g_stub_code_size);
         if (g_stub_code) {
-            arm_emu_register_code((uint32_t)(uintptr_t)g_stub_code, (uint32_t)g_stub_code_size);
+            arm_emu_register_code(GUEST_ADDRESS(g_stub_code), (uint32_t)g_stub_code_size);
         }
         if (!g_stub_code) {
             return (void *)(uintptr_t)&s3eStub;
@@ -473,18 +482,18 @@ static uint64_t lazy_gl_resolve(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t 
         }
         return 0;
     }
-    import->stub[4] = arm_emu_guest_fn(fn);
+    import->stub[4] = arm_emu_guest_fn_sig(fn, host_signature(import->name));
     uint32_t args[16] = {a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15};
-    return arm_emu_call_host(arm_emu_guest_fn(fn), args);
+    return arm_emu_call_host(import->stub[4], args);
 }
 
 void *make_lazy_gl_stub(const char *symbol) {
     if (!g_lazy_gl_code) {
-        g_lazy_gl_code = plat_alloc(NULL, LAZY_GL_MAX * LAZY_GL_STUB_WORDS * sizeof(uint32_t), true);
+        g_lazy_gl_code = guest_pages_alloc(0, LAZY_GL_MAX * LAZY_GL_STUB_WORDS * sizeof(uint32_t));
         if (!g_lazy_gl_code) {
             return make_stub(symbol);
         }
-        arm_emu_register_code((uint32_t)(uintptr_t)g_lazy_gl_code,
+        arm_emu_register_code(GUEST_ADDRESS(g_lazy_gl_code),
                               LAZY_GL_MAX * LAZY_GL_STUB_WORDS * sizeof(uint32_t));
     }
     if (g_lazy_gl_count >= LAZY_GL_MAX) {

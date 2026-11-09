@@ -42,7 +42,7 @@ void test_remove_tree(const char *path) {
     rmdir(path);
 }
 
-uint32_t s3e_guest_call(const void *fn, int argc, ...) {
+uint32_t s3e_guest_call(uint32_t fn, int argc, ...) {
     uint32_t a[6] = {0};
     va_list ap;
     va_start(ap, argc);

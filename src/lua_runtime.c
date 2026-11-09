@@ -309,7 +309,7 @@ static int api_game_base(lua_State *state) {
 static int api_game_read(lua_State *state) {
     const char *type = luaL_checkstring(state, 1);
     uint32_t address = check_address(state, 2);
-    const volatile void *p = (const volatile void *)(uintptr_t)address;
+    const volatile void *p = GUEST_POINTER(address);
     if (!strcmp(type, "u8")) {
         lua_pushinteger(state, *(const volatile uint8_t *)p);
     } else if (!strcmp(type, "i8")) {
@@ -328,7 +328,7 @@ static int api_game_read(lua_State *state) {
         lua_pushboolean(state, *(const volatile uint8_t *)p != 0);
     } else if (!strcmp(type, "string")) {
         lua_Integer limit = luaL_optinteger(state, 3, 256);
-        const char *text = (const char *)(uintptr_t)address;
+        const char *text = GUEST_POINTER(address);
         size_t length = 0;
         while ((lua_Integer)length < limit && text[length]) {
             ++length;
@@ -343,7 +343,7 @@ static int api_game_read(lua_State *state) {
 static int api_game_write(lua_State *state) {
     const char *type = luaL_checkstring(state, 1);
     uint32_t address = check_address(state, 2);
-    volatile void *p = (volatile void *)(uintptr_t)address;
+    volatile void *p = GUEST_POINTER(address);
     if (!strcmp(type, "f32")) {
         *(volatile float *)p = (float)luaL_checknumber(state, 3);
     } else if (!strcmp(type, "bool")) {
@@ -399,7 +399,7 @@ static int api_game_call(lua_State *state) {
                               luaL_typename(state, index));
         }
     }
-    uint32_t result = s3e_guest_call((const void *)(uintptr_t)target, MAX_CALL_ARGS, args[0],
+    uint32_t result = s3e_guest_call(target, MAX_CALL_ARGS, args[0],
                                      args[1], args[2], args[3], args[4], args[5]);
     lua_pushinteger(state, result);
     return 1;
@@ -414,12 +414,12 @@ static int api_game_alloc(lua_State *state) {
     if (!block) {
         return luaL_error(state, "game.alloc: out of memory");
     }
-    lua_pushinteger(state, (lua_Integer)(uintptr_t)block);
+    lua_pushinteger(state, (lua_Integer)GUEST_ADDRESS(block));
     return 1;
 }
 
 static int api_game_free(lua_State *state) {
-    guest_free((void *)(uintptr_t)luaL_checkinteger(state, 1));
+    guest_free(GUEST_POINTER((uint32_t)luaL_checkinteger(state, 1)));
     return 0;
 }
 

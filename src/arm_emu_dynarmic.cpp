@@ -49,6 +49,7 @@ extern "C" {
 #include "arm_emu.h"
 #include "platform/platform.h"
 }
+#include "guest_memory.h"
 
 namespace {
 
@@ -90,14 +91,31 @@ using HostFn16 = uint64_t (*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, 
 
 // Integer and pointer arguments only: every 64-bit ABI we build for (x86-64 SysV and Windows,
 // AArch64) then passes the n-th argument in the same place whatever the callee's prototype.
-uint64_t call_host16(uintptr_t fn, const uint32_t *a) {
+uint64_t call_host16(uintptr_t fn, const uint64_t *a) {
     return reinterpret_cast<HostFn16>(fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8],
                                           a[9], a[10], a[11], a[12], a[13], a[14], a[15]);
 }
 
+// Where guest address va lives in the host (see guest_memory.h).
+inline std::uint8_t *host_of(uint32_t va) {
+#ifdef BOZ_GUEST_BASE
+    return g_guest_base + va;
+#else
+    return reinterpret_cast<std::uint8_t *>(static_cast<uintptr_t>(va));
+#endif
+}
+
 uint32_t *g_svc_page;
 uint32_t g_svc_base;
-std::atomic<uintptr_t> g_far[FAR_MAX];
+// A host function the guest calls through a slot of the code page, with its argument kinds:
+// bit n of pointers set = argument n is a guest address to translate; result 'p' = translate
+// the result back (guest-base builds; see host_signatures.h).
+struct Slot {
+    std::atomic<uintptr_t> fn{0};
+    uint32_t pointers = 0;
+    char result = 'i';
+};
+Slot g_far[FAR_MAX];
 std::atomic<uint32_t> g_far_count;
 std::mutex g_far_mutex;
 
@@ -111,12 +129,17 @@ unsigned g_trace_ignored_count;
 std::atomic<unsigned long> g_host_calls, g_traced, g_hook_calls, g_flushes;
 std::atomic<uint64_t> g_hook_us, g_host_us;
 std::atomic<uint32_t> g_last_target;
+std::atomic<unsigned long> g_slow_accesses; // memory accesses outside the page table fast path
 
 // Pages already confirmed as host code (plat_address_in_module is slow; see arm_emu.c).
 constexpr unsigned HOST_PAGE_SLOTS = 1024;
 std::atomic<uint32_t> g_host_pages[HOST_PAGE_SLOTS];
 
 bool host_code_address(uint32_t address) {
+#ifdef BOZ_GUEST_BASE
+    (void)address; // host code never lies in the guest space: every host call uses a slot
+    return false;
+#endif
     uint32_t page = (address >> 12) + 1;
     auto &slot = g_host_pages[page % HOST_PAGE_SLOTS];
     if (slot.load(std::memory_order_relaxed) == page) return true;
@@ -132,11 +155,12 @@ bool host_code_address(uint32_t address) {
 PageTable *g_pages; // what the JIT reads through; null = not yet mapped
 std::mutex g_map_mutex;
 
-void map_identity(uint64_t lo, uint64_t hi) {
+// Enters guest pages [lo, hi) into the page table.
+void map_range(uint64_t lo, uint64_t hi) {
     lo &= ~uint64_t{PAGE_SIZE_EMU - 1};
     if (hi > (uint64_t{1} << 32)) hi = uint64_t{1} << 32;
     for (uint64_t at = lo; at < hi; at += PAGE_SIZE_EMU) {
-        (*g_pages)[at >> 12] = reinterpret_cast<std::uint8_t *>(static_cast<uintptr_t>(at));
+        (*g_pages)[at >> 12] = host_of(static_cast<uint32_t>(at));
     }
 }
 
@@ -148,8 +172,17 @@ bool map_on_demand(uint32_t va) {
     // Module images too (the executable's data): the JIT only fetches code through
     // MemoryReadCode, which never reads a host module's code.
     uint64_t lo, hi;
-    if (!plat_data_window(va, &lo, &hi) || lo > va || hi <= va) return false;
-    map_identity(lo, hi);
+    uintptr_t host = reinterpret_cast<uintptr_t>(host_of(va));
+#ifdef BOZ_GUEST_BASE
+    // Only committed pages of the reservation: the rest of it is reserved, not readable.
+    if (!plat_region(host, &lo, &hi) || lo > host || hi <= host) return false;
+    uint64_t base = reinterpret_cast<uintptr_t>(g_guest_base);
+    lo = lo < base + GUEST_LOWEST_ADDRESS ? GUEST_LOWEST_ADDRESS : lo - base;
+    hi = hi - base > (uint64_t{1} << 32) ? (uint64_t{1} << 32) : hi - base;
+#else
+    if (!plat_data_window(host, &lo, &hi) || lo > host || hi <= host) return false;
+#endif
+    map_range(lo, hi);
     return true;
 }
 
@@ -284,19 +317,21 @@ public:
     }
 
     template <typename T> T read(uint32_t va) {
+        g_slow_accesses.fetch_add(1, std::memory_order_relaxed);
         std::uint8_t *page = page_of(va);
         if (page && ((va & 0xfffu) + sizeof(T) <= PAGE_SIZE_EMU || page_of(va + sizeof(T) - 1))) {
             T v;
-            std::memcpy(&v, reinterpret_cast<void *>(static_cast<uintptr_t>(va)), sizeof v);
+            std::memcpy(&v, host_of(va), sizeof v);
             return v;
         }
         fault("read", va, false);
         return T{};
     }
     template <typename T> void write(uint32_t va, T v) {
+        g_slow_accesses.fetch_add(1, std::memory_order_relaxed);
         std::uint8_t *page = page_of(va);
         if (page && ((va & 0xfffu) + sizeof(T) <= PAGE_SIZE_EMU || page_of(va + sizeof(T) - 1))) {
-            std::memcpy(reinterpret_cast<void *>(static_cast<uintptr_t>(va)), &v, sizeof v);
+            std::memcpy(host_of(va), &v, sizeof v);
             return;
         }
         fault("write", va, true);
@@ -306,7 +341,7 @@ public:
             fault("write", va, true);
             return false;
         }
-        T *target = reinterpret_cast<T *>(static_cast<uintptr_t>(va));
+        T *target = reinterpret_cast<T *>(host_of(va));
         return __atomic_compare_exchange_n(target, &expected, v, false, __ATOMIC_SEQ_CST,
                                            __ATOMIC_SEQ_CST);
     }
@@ -520,17 +555,17 @@ void check_flush(Cpu *cpu) {
 Cpu *cpu_create() {
     auto *cpu = new Cpu();
     cpu->id = take_cpu_id();
-    cpu->stack = static_cast<std::uint8_t *>(plat_alloc(nullptr, STACK_SIZE, false));
-    if (!cpu->stack || reinterpret_cast<uintptr_t>(cpu->stack) + STACK_SIZE > (uint64_t{1} << 32)) {
-        std::fprintf(stderr, "[arm] unable to allocate a guest stack below 4 GiB\n");
+    cpu->stack = static_cast<std::uint8_t *>(guest_pages_alloc(0, STACK_SIZE));
+    uint32_t stack = cpu->stack ? GUEST_ADDRESS(cpu->stack) : 0;
+    if (!stack) {
+        std::fprintf(stderr, "[arm] unable to allocate a guest stack\n");
         std::abort();
     }
     {
         std::lock_guard<std::mutex> lock(g_map_mutex);
-        map_identity(reinterpret_cast<uintptr_t>(cpu->stack),
-                     reinterpret_cast<uintptr_t>(cpu->stack) + STACK_SIZE);
+        map_range(stack, uint64_t{stack} + STACK_SIZE);
     }
-    cpu->initial_sp = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(cpu->stack) + STACK_SIZE - 64);
+    cpu->initial_sp = stack + STACK_SIZE - 64;
     cpu->env(0).jit->Regs()[13] = cpu->initial_sp;
     return cpu;
 }
@@ -569,7 +604,7 @@ void report_registers(const char *what, uint32_t address, const uint32_t *r) {
     }
     if (std::uint8_t *page = (*g_pages)[r[13] >> 12]) {
         (void)page;
-        const uint32_t *stack = reinterpret_cast<const uint32_t *>(static_cast<uintptr_t>(r[13]));
+        const uint32_t *stack = reinterpret_cast<const uint32_t *>(host_of(r[13]));
         if ((r[13] & 0xfffu) <= PAGE_SIZE_EMU - 64) {
             for (int i = 0; i < 16; i += 8) {
                 std::fprintf(stderr, "[arm]   sp+%02x: %08x %08x %08x %08x %08x %08x %08x %08x\n",
@@ -593,6 +628,8 @@ bool trace_call(uint32_t target) {
 void Env::host_call(uint32_t target) {
     auto &r = jit->Regs();
     uintptr_t fn = target;
+    uint32_t pointers = 0;
+    char result_kind = 'i';
     if (target - g_svc_base < SVC_PAGE_SIZE) {
         uint32_t index = (target - g_svc_base) / 4;
         if (target == sentinel_address()) {
@@ -600,19 +637,25 @@ void Env::host_call(uint32_t target) {
             return;
         }
         if (index < FAR_FIRST || index - FAR_FIRST >= g_far_count.load() ||
-            !(fn = g_far[index - FAR_FIRST].load())) {
+            !(fn = g_far[index - FAR_FIRST].fn.load())) {
             report_registers("jump into the emulator's code page", target, r.data());
             fatal();
             return;
         }
+        pointers = g_far[index - FAR_FIRST].pointers;
+        result_kind = g_far[index - FAR_FIRST].result;
     }
-    uint32_t a[HOST_ARG_WORDS];
-    std::memcpy(a, r.data(), 4 * sizeof(uint32_t));
+    uint64_t a[HOST_ARG_WORDS];
+    for (int i = 0; i < 4; ++i) a[i] = r[i];
     uint32_t sp = r[13];
     for (int i = 4; i < HOST_ARG_WORDS; ++i) {
         // Twelve words whatever the callee takes: past the top of the stack they read as 0.
         uint32_t at = sp + static_cast<uint32_t>(i - 4) * 4u;
-        a[i] = page_of(at) ? *reinterpret_cast<const uint32_t *>(static_cast<uintptr_t>(at)) : 0;
+        a[i] = page_of(at) ? *reinterpret_cast<const uint32_t *>(host_of(at)) : 0;
+    }
+    for (uint32_t bits = pointers; bits; bits &= bits - 1) {
+        int i = __builtin_ctz(bits);
+        a[i] = reinterpret_cast<uintptr_t>(GUEST_POINTER(static_cast<uint32_t>(a[i])));
     }
     cpu->call_scratch = r[12];
     uint32_t lr = r[14];
@@ -628,11 +671,18 @@ void Env::host_call(uint32_t target) {
     } else {
         result = call_host16(fn, a);
     }
+    if (result_kind == 'p') {
+        result = GUEST_ADDRESS(reinterpret_cast<const void *>(static_cast<uintptr_t>(result)));
+    } else if (result_kind == 's') {
+        result = guest_string_address(reinterpret_cast<const char *>(static_cast<uintptr_t>(result)));
+    }
     if (traced) {
         const char *name = plat_symbol_name(reinterpret_cast<void *>(fn));
-        std::fprintf(stderr, "[call %lu] %s@%08x(%08x, %08x, %08x, %08x) from %08x -> %08x\n",
-                     g_traced.load(), name ? name : "?", target, a[0], a[1], a[2], a[3], lr,
-                     static_cast<uint32_t>(result));
+        std::fprintf(stderr, "[call %lu] %s@%08x=%p(%08x, %08x, %08x, %08x) from %08x -> %08x\n",
+                     g_traced.load(), name ? name : "?", target, reinterpret_cast<void *>(fn),
+                     static_cast<uint32_t>(a[0]),
+                     static_cast<uint32_t>(a[1]), static_cast<uint32_t>(a[2]),
+                     static_cast<uint32_t>(a[3]), lr, static_cast<uint32_t>(result));
     }
     check_flush(cpu);
     auto &regs = jit->Regs(); // the host call may have run nested guest code on other Jits
@@ -776,7 +826,7 @@ void arm_emu_set_fault_handler(arm_emu_fault_handler handler) { g_fault_handler 
 void arm_emu_register_code(uint32_t start, uint32_t size) {
     if (!size || !g_pages) return;
     std::lock_guard<std::mutex> lock(g_map_mutex);
-    map_identity(start, uint64_t{start} + size + PAGE_SIZE_EMU - 1);
+    map_range(start, uint64_t{start} + size + PAGE_SIZE_EMU - 1);
 }
 
 void arm_emu_set_image(uint32_t start, uint32_t end) {
@@ -799,8 +849,10 @@ static void *status_thread(void *) {
         unsigned long now = g_host_calls;
         uint32_t last = g_last_target;
         const char *name = plat_symbol_name(reinterpret_cast<void *>(static_cast<uintptr_t>(last)));
-        std::fprintf(stderr, "[status] host calls %lu (+%lu/2s) last=%s@%08x jit flushes %lu\n", now,
-                     now - previous, name ? name : "?", last, g_flushes.load());
+        std::fprintf(stderr,
+                     "[status] host calls %lu (+%lu/2s) last=%s@%08x jit flushes %lu slow accesses %lu\n",
+                     now, now - previous, name ? name : "?", last, g_flushes.load(),
+                     g_slow_accesses.exchange(0));
         previous = now;
     }
     return nullptr;
@@ -808,16 +860,18 @@ static void *status_thread(void *) {
 
 bool arm_emu_init(void) {
     if (g_svc_page) return true;
+    if (!guest_space_init()) return false;
     g_pages = new PageTable{};
-    void *page = plat_alloc(nullptr, SVC_PAGE_SIZE, false);
-    if (!page || reinterpret_cast<uintptr_t>(page) + SVC_PAGE_SIZE > (uint64_t{1} << 32)) {
-        std::fprintf(stderr, "[arm] unable to allocate the svc page below 4 GiB\n");
+    void *page = guest_pages_alloc(0, SVC_PAGE_SIZE);
+    uint32_t base = page ? GUEST_ADDRESS(page) : 0;
+    if (!base) {
+        std::fprintf(stderr, "[arm] unable to allocate the emulator's code page\n");
         return false;
     }
     g_svc_page = static_cast<uint32_t *>(page);
-    g_svc_base = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(page));
+    g_svc_base = base;
     for (size_t i = 0; i < SVC_PAGE_SIZE / sizeof(uint32_t); ++i) g_svc_page[i] = SVC_ARM_WORD;
-    map_identity(g_svc_base, uint64_t{g_svc_base} + SVC_PAGE_SIZE);
+    map_range(g_svc_base, uint64_t{g_svc_base} + SVC_PAGE_SIZE);
 
     g_monitor = std::make_unique<Dynarmic::ExclusiveMonitor>(MAX_CPUS);
     g_main_thread = std::this_thread::get_id();
@@ -838,23 +892,39 @@ bool arm_emu_init(void) {
     return true;
 }
 
-uint32_t arm_emu_guest_fn(const void *fn) {
+uint32_t arm_emu_guest_fn_sig(const void *fn, const char *signature) {
     uintptr_t address = reinterpret_cast<uintptr_t>(fn);
-    if (!fn || address + 4 <= (uint64_t{1} << 32)) return static_cast<uint32_t>(address);
+    if (!fn) return 0;
+#ifndef BOZ_GUEST_BASE
+    // Identity map: a function below 4 GiB is called at its own address (arguments as words,
+    // which equal the host pointers).
+    if (address + 4 <= (uint64_t{1} << 32)) return static_cast<uint32_t>(address);
+#endif
     if (!g_svc_page && !arm_emu_init()) return 0;
     std::lock_guard<std::mutex> lock(g_far_mutex);
     uint32_t count = g_far_count.load();
     for (uint32_t i = 0; i < count; ++i) {
-        if (g_far[i].load() == address) return g_svc_base + (FAR_FIRST + i) * 4;
+        if (g_far[i].fn.load() == address) return g_svc_base + (FAR_FIRST + i) * 4;
     }
-    if (!g_svc_page || count >= FAR_MAX) {
+    if (count >= FAR_MAX) {
         std::fprintf(stderr, "[arm] no slot for host function %p\n", fn);
         return 0;
     }
-    g_far[count].store(address);
+    Slot &slot = g_far[count];
+    slot.pointers = 0;
+    slot.result = 'i';
+    if (signature && signature[0] && signature[1] == ':') {
+        slot.result = signature[0];
+        for (int i = 0; signature[2 + i] && i < HOST_ARG_WORDS; ++i) {
+            if (signature[2 + i] == 'p') slot.pointers |= 1u << i;
+        }
+    }
+    slot.fn.store(address);
     g_far_count.store(count + 1);
     return g_svc_base + (FAR_FIRST + count) * 4;
 }
+
+uint32_t arm_emu_guest_fn(const void *fn) { return arm_emu_guest_fn_sig(fn, nullptr); }
 
 uint64_t arm_emu_call(uint32_t fn, int argc, const uint32_t *argv) {
     Cpu *cpu = this_cpu();
@@ -879,7 +949,7 @@ uint64_t arm_emu_call(uint32_t fn, int argc, const uint32_t *argv) {
         if (i < 4) {
             jit.Regs()[i] = argv[i];
         } else {
-            std::memcpy(reinterpret_cast<void *>(static_cast<uintptr_t>(sp + (i - 4) * 4u)), &argv[i], 4);
+            std::memcpy(host_of(sp + (i - 4) * 4u), &argv[i], 4);
         }
     }
     jit.Regs()[13] = sp;
@@ -954,11 +1024,27 @@ uint32_t arm_emu_call_scratch(void) { return t_cpu ? t_cpu->call_scratch : 0; }
 
 uint64_t arm_emu_call_host(uint32_t fn, const uint32_t *args) {
     uintptr_t target = fn;
+    uint32_t pointers = 0;
+    char result_kind = 'i';
     if (g_svc_page && fn - g_svc_base >= FAR_FIRST * 4 && fn - g_svc_base < SVC_PAGE_SIZE) {
         uint32_t index = (fn - g_svc_base) / 4 - FAR_FIRST;
-        if (index < g_far_count.load()) target = g_far[index].load();
+        if (index < g_far_count.load()) {
+            target = g_far[index].fn.load();
+            pointers = g_far[index].pointers;
+            result_kind = g_far[index].result;
+        }
     }
-    return call_host16(target, args);
+    uint64_t a[HOST_ARG_WORDS];
+    for (int i = 0; i < HOST_ARG_WORDS; ++i) {
+        a[i] = (pointers >> i) & 1u ? reinterpret_cast<uintptr_t>(GUEST_POINTER(args[i])) : args[i];
+    }
+    uint64_t result = call_host16(target, a);
+    if (result_kind == 'p') {
+        result = GUEST_ADDRESS(reinterpret_cast<const void *>(static_cast<uintptr_t>(result)));
+    } else if (result_kind == 's') {
+        result = guest_string_address(reinterpret_cast<const char *>(static_cast<uintptr_t>(result)));
+    }
+    return result;
 }
 
 void arm_emu_thread_exit(void) {
@@ -973,12 +1059,12 @@ void arm_emu_thread_exit(void) {
     for (auto &env : cpu->envs) env.reset();
     {
         std::lock_guard<std::mutex> lock(g_map_mutex);
-        for (uint64_t at = reinterpret_cast<uintptr_t>(cpu->stack);
-             at < reinterpret_cast<uintptr_t>(cpu->stack) + STACK_SIZE; at += PAGE_SIZE_EMU) {
+        uint32_t stack = GUEST_ADDRESS(cpu->stack);
+        for (uint64_t at = stack; at < uint64_t{stack} + STACK_SIZE; at += PAGE_SIZE_EMU) {
             (*g_pages)[at >> 12] = nullptr; // the stack's pages may be reused for host data
         }
     }
-    plat_free(cpu->stack, STACK_SIZE);
+    guest_pages_free(cpu->stack, STACK_SIZE);
     if (g_monitor) g_monitor->ClearProcessor(cpu->id);
     release_cpu_id(cpu->id);
     delete cpu;

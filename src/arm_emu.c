@@ -736,6 +736,11 @@ uint32_t arm_emu_guest_fn(const void *fn) {
     return (uint32_t)(uintptr_t)fn;
 }
 
+uint32_t arm_emu_guest_fn_sig(const void *fn, const char *signature) {
+    (void)signature;
+    return (uint32_t)(uintptr_t)fn;
+}
+
 uint32_t arm_emu_call_scratch(void) {
     return t_call_scratch;
 }

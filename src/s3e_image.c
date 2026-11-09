@@ -1,4 +1,6 @@
 #include "arm_emu.h"
+#include "guest_memory.h"
+#include "host_signatures.h"
 #include "s3e_image.h"
 #include "platform/platform.h"
 #include "posix_compat.h"
@@ -255,7 +257,15 @@ static bool apply_external_relocs(const struct s3e_image *image, uint8_t *base, 
         }
 
         uint32_t *slot = (uint32_t *)(void *)(base + offset);
-        *slot = arm_emu_guest_fn(addr); /* addr itself, unless it lies above 4 GiB */
+        /* addr itself where the guest can call it there, else a slot in the code page. */
+        const char *signature = host_signature(symbol);
+#ifdef BOZ_GUEST_BASE
+        if (!signature) {
+            fprintf(stderr, "[image] no signature for import %s: its arguments pass as words\n",
+                    symbol);
+        }
+#endif
+        *slot = arm_emu_guest_fn_sig(addr, signature);
     }
 
     return true;
@@ -266,8 +276,7 @@ bool s3e_image_map_and_relocate(const struct s3e_image *image, void *(*resolve)(
     memset(loaded, 0, sizeof(*loaded));
     const struct s3e_header *h = &image->header;
     size_t map_size = page_round(h->code_mem_size);
-    void *want = (void *)(uintptr_t)h->base_addr_orig;
-    uint8_t *base = plat_alloc(want, map_size, true);
+    uint8_t *base = guest_pages_alloc(h->base_addr_orig, map_size);
     if (!base) {
         fprintf(stderr, "unable to allocate %zu bytes for the S3E image\n", map_size);
         return false;
@@ -278,12 +287,12 @@ bool s3e_image_map_and_relocate(const struct s3e_image *image, void *(*resolve)(
 
     uint32_t pos = h->fixup_offset;
     uint32_t end = h->fixup_offset + h->fixup_size;
-    int32_t load_delta = (int32_t)((uint32_t)(uintptr_t)base - h->base_addr_orig);
+    int32_t load_delta = (int32_t)(GUEST_ADDRESS(base) - h->base_addr_orig);
     while (pos < end) {
         uint32_t type = rd32(image->file_data + pos);
         uint32_t size = rd32(image->file_data + pos + 4);
         if (size < 8 || size > end - pos) {
-            plat_free(base, map_size);
+            guest_pages_free(base, map_size);
             return false;
         }
 
@@ -295,7 +304,7 @@ bool s3e_image_map_and_relocate(const struct s3e_image *image, void *(*resolve)(
         }
 
         if (!ok) {
-            plat_free(base, map_size);
+            guest_pages_free(base, map_size);
             return false;
         }
 
@@ -310,7 +319,7 @@ bool s3e_image_map_and_relocate(const struct s3e_image *image, void *(*resolve)(
 
 void s3e_loaded_image_unmap(struct s3e_loaded_image *loaded) {
     if (loaded && loaded->base) {
-        plat_free(loaded->base, loaded->map_size);
+        guest_pages_free(loaded->base, loaded->map_size);
         memset(loaded, 0, sizeof(*loaded));
     }
 }
