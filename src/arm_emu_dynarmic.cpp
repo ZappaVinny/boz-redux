@@ -42,6 +42,7 @@
 #include <pthread.h>
 #include <string>
 #include <thread>
+#include <vector>
 #include <time.h>
 
 extern "C" {
@@ -187,6 +188,11 @@ struct Cpu {
     std::uint8_t *stack = nullptr;
     uint32_t initial_sp = 0;
     std::atomic<bool> flush_pending{false};
+    // Addresses whose hooks changed: only the blocks holding them are retranslated (a full
+    // ClearCache retranslates everything, a stall of up to ~200 ms on Kino).
+    std::mutex pending_mutex;
+    std::vector<uint32_t> pending_addresses;
+    bool pending_everything = false;
     bool stepping = false;
     bool in_host = false;
     uint64_t nested_guest_us = 0;
@@ -432,10 +438,32 @@ Env &Cpu::env(int at) {
 }
 
 void Cpu::flush_all() {
+    std::vector<uint32_t> addresses;
+    bool everything;
+    {
+        std::lock_guard<std::mutex> lock(pending_mutex);
+        addresses.swap(pending_addresses);
+        everything = pending_everything || addresses.empty();
+        pending_everything = false;
+    }
     for (auto &env : envs) {
-        if (env) env->jit->ClearCache();
+        if (!env) continue;
+        if (everything) {
+            env->jit->ClearCache();
+        } else {
+            for (uint32_t address : addresses) env->jit->InvalidateCacheRange(address, 4);
+        }
     }
     g_flushes++;
+}
+
+void invalidate_later(Cpu *cpu, uint32_t address) {
+    std::lock_guard<std::mutex> lock(cpu->pending_mutex);
+    if (cpu->pending_addresses.size() < 256) {
+        cpu->pending_addresses.push_back(address);
+    } else {
+        cpu->pending_everything = true;
+    }
 }
 
 void check_flush(Cpu *cpu) {
@@ -837,6 +865,7 @@ int arm_emu_hook_add(uint32_t address, arm_emu_code_hook fn, void *user) {
         hook.fn = fn;
         hook.user = user;
         hook.used.store(true, std::memory_order_release);
+        invalidate_later(cpu, address);
         cpu->flush_pending = true;
         if (cpu->level == 0) check_flush(cpu);
         return id;
@@ -850,6 +879,7 @@ void arm_emu_hook_remove(int id) {
     CodeHook &hook = g_code_hooks[id];
     if (!hook.used.load()) return;
     hook.used.store(false, std::memory_order_release);
+    invalidate_later(hook.owner, hook.address);
     hook.owner->flush_pending = true;
     if (hook.owner == t_cpu && t_cpu->level == 0) check_flush(t_cpu);
 }
