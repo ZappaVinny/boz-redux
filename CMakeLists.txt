@@ -282,7 +282,30 @@ set_target_properties(codboz_s3e_loader PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH
 add_dependencies(codboz_s3e_loader SDL2 SDL2_mixer)
 
 if(ANDROID)
-  return() # the launcher, the extractor and the tests are desktop programs
+  # The launcher on phones and TVs: the desktop launcher as libboz_launcher.so, run by its own
+  # SDL activity (packaging/android LauncherActivity) in the app's main process; the game keeps
+  # its own process. Android starts no programs, so the APK extractor is built in.
+  add_library(boz_launcher SHARED
+    src/launcher/main.cpp
+    src/branding/brand_imgui.cpp
+    src/launcher/game_files.cpp
+    src/launcher/ini_file.cpp
+    src/launcher/os.cpp
+    src/launcher/os_android.cpp
+    src/launcher/sha256.cpp
+    src/client_config.c
+    src/mods.c
+    tools/apk_extract/codboz_apk_extract.c
+    tools/apk_extract/apk_extract_inprocess.c
+    third_party/lzma/LzmaDec.c
+    third_party/imgui/backends/imgui_impl_sdl2.cpp
+    third_party/imgui/backends/imgui_impl_sdlrenderer2.cpp)
+  set_source_files_properties(tools/apk_extract/codboz_apk_extract.c PROPERTIES
+    COMPILE_DEFINITIONS "main=boz_apk_extract_main;exit=boz_apk_extract_exit")
+  target_include_directories(boz_launcher PRIVATE include third_party/imgui/backends)
+  target_compile_definitions(boz_launcher PRIVATE BOZ_VERSION="${BOZ_VERSION}")
+  target_link_libraries(boz_launcher PRIVATE imgui_core boz_common boz_branding SDL2::SDL2 log)
+  return() # the desktop launcher, the extractor program and the tests are desktop programs
 endif()
 
 # Launcher: Dear ImGui on SDL's 2D renderer (Direct3D on Windows, OpenGL or software on Linux).

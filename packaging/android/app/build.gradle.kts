@@ -70,6 +70,15 @@ run {
     }
 }
 
+val gamedefAssets = layout.buildDirectory.dir("generated/boz-assets").get().asFile
+val copyGamedef = tasks.register<Sync>("copyGamedef") {
+    from(File(repo, "gamedef")) {
+        exclude(".git", ".git/**")
+    }
+    into(File(gamedefAssets, "gamedef"))
+}
+tasks.named("preBuild") { dependsOn(copyGamedef) }
+
 android {
     namespace = "org.bozredux.client"
     compileSdk = 35
@@ -96,7 +105,7 @@ android {
                     "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
                     "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
                 )
-                targets += listOf("codboz_s3e_loader", "SDL2", "SDL2_mixer")
+                targets += listOf("codboz_s3e_loader", "boz_launcher", "SDL2", "SDL2_mixer")
             }
         }
     }
@@ -110,6 +119,9 @@ android {
 
     sourceSets["main"].java.srcDir(File(repo, "third_party/SDL2/android-project/app/src/main/java"))
     sourceSets["main"].res.srcDir(iconRes)
+    // The game definition (gamedef/ submodule) ships in the APK; the launcher copies it into
+    // the game folder on the first start of each version.
+    sourceSets["main"].assets.srcDir(gamedefAssets)
 
     // A fixed key from the environment keeps updates installable over the previous build (so the
     // imported game files survive); without it the machine's debug key is used.

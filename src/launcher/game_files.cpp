@@ -6,6 +6,11 @@
 #include <chrono>
 #include <cstdio>
 
+#if defined(__ANDROID__)
+// tools/apk_extract, built into the launcher on Android (it cannot start a program there).
+extern "C" int boz_apk_extract_run(const char *apk, const char *asset_dir);
+#endif
+
 namespace {
 
 const char *const CDN = "http://cdn-boz-android.callofduty.com/PROD/CODBOZ/1_0_9/";
@@ -103,12 +108,32 @@ void GameFiles::job_install(std::string apk_path) {
         check_image();
         return;
     }
-    if (!os::exists(apk_path)) {
+    if (!os::exists(apk_path) && apk_path.compare(0, 10, "content://") != 0) {
         set_message("APK not found: " + apk_path);
         return;
     }
-    set_message("Extracting the APK...");
     os::make_dir(assets_);
+#if defined(__ANDROID__)
+    // A picked file is a content:// URI: copy it next to the game first.
+    std::string copy;
+    if (apk_path.compare(0, 10, "content://") == 0) {
+        set_message("Reading the APK...");
+        copy = os::join(root_, "import.apk.part");
+        if (!fetch(os::copy_document, apk_path, copy, os::document_size(apk_path))) {
+            std::remove(copy.c_str());
+            set_message("Could not read that file.");
+            return;
+        }
+        apk_path = copy;
+    }
+    set_message("Extracting the APK...");
+    progress_ = -1.0f;
+    int code = boz_apk_extract_run(apk_path.c_str(), assets_.c_str());
+    if (!copy.empty()) {
+        std::remove(copy.c_str());
+    }
+#else
+    set_message("Extracting the APK...");
     os::Process process;
     std::string extractor = os::join(bin_dir_, os::executable_name("codboz_apk_extract"));
     if (!os::spawn(process, extractor, {"extract", apk_path, assets_}, {},
@@ -117,9 +142,14 @@ void GameFiles::job_install(std::string apk_path) {
         return;
     }
     int code = os::wait(process);
+#endif
     if (code != 0 || !os::exists(os::join(assets_, "boz.s3e.unpacked"))) {
         set_message("That APK could not be extracted. Is it the Black Ops Zombies APK? "
+#if defined(__ANDROID__)
+                    "It must be the original APK, version 1.0.11.");
+#else
                     "Details are in setup-log.txt.");
+#endif
         return;
     }
     set_message("Checking the game version...");
@@ -148,6 +178,14 @@ void GameFiles::job_download(std::string) {
         std::string part = target + ".part";
         std::remove(part.c_str());
         set_message(std::string("Downloading ") + PACKS[i].name + " from Activision's server...");
+#if defined(__ANDROID__)
+        if (!fetch(os::download, std::string(CDN) + PACKS[i].name, part, PACKS[i].size)) {
+            std::remove(part.c_str());
+            set_message(std::string("Download of ") + PACKS[i].name +
+                        " failed. Check your connection, or import the packs from files.");
+            return;
+        }
+#else
         os::Process process;
         if (!os::spawn(process, "curl", {"-fsSL", "-o", part, std::string(CDN) + PACKS[i].name}, {},
                        "", "")) {
@@ -165,6 +203,7 @@ void GameFiles::job_download(std::string) {
                         " failed. Check your connection, or import the packs from a folder.");
             return;
         }
+#endif
         set_message(std::string("Checking ") + PACKS[i].name + "...");
         if (!verify_pack(i, part)) {
             std::remove(part.c_str());
@@ -216,3 +255,111 @@ void GameFiles::job_import(std::string folder) {
         set_message("That folder does not contain blackops_etc.dz and blackops_gles1.dz.");
     }
 }
+
+#if defined(__ANDROID__)
+
+void GameFiles::import_pack_documents(const std::vector<std::string> &uris) {
+    std::string joined;
+    for (const std::string &uri : uris) {
+        joined += uri + "\n";
+    }
+    start(&GameFiles::job_import_documents, joined);
+}
+
+void GameFiles::import_mod(const std::string &uri) {
+    start(&GameFiles::job_import_mod, uri);
+}
+
+bool GameFiles::mods_changed() {
+    return mods_changed_.exchange(false);
+}
+
+// Runs a blocking copy or download on its own thread and shows its progress from the size of
+// the file it writes.
+bool GameFiles::fetch(bool (*copy)(const std::string &, const std::string &),
+                      const std::string &from, const std::string &part, int64_t size) {
+    std::atomic<bool> done{false};
+    bool ok = false;
+    std::thread thread([&]() {
+        ok = copy(from, part);
+        done = true;
+    });
+    while (!done) {
+        int64_t written = os::file_size(part);
+        progress_ = size > 0 && written > 0 ? (float)((double)written / (double)size) : -1.0f;
+        sleep_ms(100);
+    }
+    thread.join();
+    return ok;
+}
+
+void GameFiles::job_import_documents(std::string uris) {
+    os::make_dir(assets_);
+    int imported = 0, unknown = 0;
+    size_t at = 0;
+    while (at < uris.size()) {
+        size_t end = uris.find('\n', at);
+        std::string uri = uris.substr(at, end - at);
+        at = end == std::string::npos ? uris.size() : end + 1;
+        if (uri.empty()) {
+            continue;
+        }
+        int64_t size = os::document_size(uri);
+        int index = -1;
+        for (int i = 0; i < 2; ++i) {
+            if (size == PACKS[i].size) {
+                index = i;
+            }
+        }
+        if (index < 0) {
+            ++unknown;
+            continue;
+        }
+        std::string target = os::join(assets_, PACKS[index].name);
+        if (os::file_size(target) == PACKS[index].size) {
+            continue;
+        }
+        std::string part = target + ".part";
+        set_message(std::string("Copying ") + PACKS[index].name + "...");
+        if (!fetch(os::copy_document, uri, part, size)) {
+            std::remove(part.c_str());
+            set_message(std::string("Could not copy ") + PACKS[index].name + ".");
+            return;
+        }
+        set_message(std::string("Checking ") + PACKS[index].name + "...");
+        if (!verify_pack(index, part)) {
+            std::remove(part.c_str());
+            set_message(std::string("That file has the size of ") + PACKS[index].name +
+                        " but not its contents.");
+            return;
+        }
+        if (!os::rename_file(part, target)) {
+            set_message(std::string("Could not save ") + PACKS[index].name + ".");
+            return;
+        }
+        ++imported;
+    }
+    GameStatus now = status();
+    if (now.packs[0].present && now.packs[1].present) {
+        set_message("Data packs ready.");
+    } else if (imported) {
+        set_message("One pack imported. Import the other one too, or download it.");
+    } else if (unknown) {
+        set_message("Those are not the data packs: choose blackops_etc.dz and blackops_gles1.dz "
+                    "(or the game's .obb file).");
+    }
+}
+
+void GameFiles::job_import_mod(std::string uri) {
+    std::string mods = os::join(root_, "mods");
+    os::make_dir(mods);
+    set_message("Installing the mod...");
+    std::string error;
+    std::string folder = os::import_mod_zip(uri, mods, &error);
+    set_message(folder.empty() ? error : "Mod installed in mods/" + folder + ".");
+    if (!folder.empty()) {
+        mods_changed_ = true;
+    }
+}
+
+#endif

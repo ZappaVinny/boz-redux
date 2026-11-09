@@ -68,6 +68,9 @@ int64_t file_size(const std::string &path) {
 bool make_dir(const std::string &path) {
 #if defined(_WIN32)
     return _mkdir(path.c_str()) == 0 || exists(path);
+#elif defined(__ANDROID__)
+    // Group-writable like the folders Java makes, so adb (group ext_data_rw) can add files.
+    return mkdir(path.c_str(), 0770) == 0 || exists(path);
 #else
     return mkdir(path.c_str(), 0755) == 0 || exists(path);
 #endif
@@ -249,7 +252,7 @@ void open_path(const std::string &path) {
     ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-#else
+#elif !defined(__ANDROID__)
 
 std::string exe_dir() {
     char path[PATH_MAX];

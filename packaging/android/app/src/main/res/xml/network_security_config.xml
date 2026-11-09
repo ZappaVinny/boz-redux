@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The game's data packs are only on Activision's CDN over plain HTTP (the launcher checks
+     their SHA-256); everything else stays HTTPS-only. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">cdn-boz-android.callofduty.com</domain>
+    </domain-config>
+</network-security-config>
