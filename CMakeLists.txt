@@ -78,6 +78,11 @@ else()
   add_subdirectory(third_party/dynarmic EXCLUDE_FROM_ALL)
   set(BOZ_CPU_SOURCES src/arm_emu_dynarmic.cpp)
   set(BOZ_CPU_LIBS dynarmic merry::mcl)
+  # arm_emu_dynarmic.cpp uses Dynarmic's IR headers, which include Boost (Android: Gradle passes
+  # Boost_INCLUDE_DIR; MSYS2 and Linux find it in the system include path).
+  if(Boost_INCLUDE_DIR)
+    include_directories(SYSTEM ${Boost_INCLUDE_DIR})
+  endif()
 endif()
 
 set(SDL_SHARED ON CACHE BOOL "" FORCE)
@@ -185,7 +190,20 @@ add_library(boz_guest_heap STATIC src/guest_heap.c src/host_signatures.c ${BOZ_P
 target_link_libraries(boz_guest_heap PUBLIC boz_project)
 target_link_libraries(boz_common PUBLIC boz_guest_heap)
 
-add_executable(codboz_s3e_loader
+# Android: the game is libmain.so, which SDL's Java activity loads and runs (SDL_main); the guest
+# base map is required there (packaging/android).
+if(ANDROID)
+  if(NOT BOZ_GUEST_BASE)
+    message(FATAL_ERROR "Android builds need -DBOZ_GUEST_BASE=ON")
+  endif()
+endif()
+if(ANDROID)
+  add_library(codboz_s3e_loader SHARED)
+  set_target_properties(codboz_s3e_loader PROPERTIES OUTPUT_NAME main)
+else()
+  add_executable(codboz_s3e_loader)
+endif()
+target_sources(codboz_s3e_loader PRIVATE
   ${BOZ_PLATFORM_SOURCES}
   ${BOZ_CPU_SOURCES}
   src/client_config.c
@@ -226,6 +244,9 @@ add_executable(codboz_s3e_loader
 if(WIN32)
   set(BOZ_SYSTEM_LIBS ws2_32 iphlpapi winmm bcrypt)
   set(BOZ_SYSTEM_LINK_OPTIONS -static -static-libgcc -Wl,--large-address-aware)
+elseif(ANDROID)
+  set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} log m)
+  set(BOZ_SYSTEM_LINK_OPTIONS)
 else()
   set(BOZ_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
   set(BOZ_SYSTEM_LINK_OPTIONS)
@@ -246,16 +267,20 @@ endif()
 target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding ${BOZ_CPU_LIBS} lua imgui_core ${BOZ_SYSTEM_LIBS})
 boz_windows_resources(codboz_s3e_loader "BOZ Redux game")
 target_link_options(codboz_s3e_loader PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
-if(NOT WIN32)
+if(NOT WIN32 AND NOT ANDROID)
   target_link_options(codboz_s3e_loader PRIVATE -static-libgcc -static-libstdc++)
 endif()
 target_compile_options(codboz_s3e_loader PRIVATE -falign-functions=16)
-if(NOT WIN32)
+if(NOT WIN32 AND NOT ANDROID)
   target_compile_options(codboz_s3e_loader PRIVATE -fno-pie)
   target_link_options(codboz_s3e_loader PRIVATE -no-pie)
 endif()
 set_target_properties(codboz_s3e_loader PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH "$ORIGIN")
 add_dependencies(codboz_s3e_loader SDL2 SDL2_mixer)
+
+if(ANDROID)
+  return() # the launcher, the extractor and the tests are desktop programs
+endif()
 
 # Launcher: Dear ImGui on SDL's 2D renderer (Direct3D on Windows, OpenGL or software on Linux).
 add_library(imgui STATIC

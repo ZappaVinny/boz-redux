@@ -225,10 +225,12 @@ bool plat_region(uintptr_t address, uint64_t *start, uint64_t *end) {
     bool found = false;
     while (fgets(line, sizeof(line), maps)) {
         unsigned long long lo, hi;
-        if (sscanf(line, "%llx-%llx", &lo, &hi) == 2 && address >= lo && address < hi) {
+        char perms[8] = "";
+        if (sscanf(line, "%llx-%llx %7s", &lo, &hi, perms) == 3 && address >= lo && address < hi) {
+            /* Readable regions only: reserved space (PROT_NONE) is not memory yet. */
+            found = perms[0] == 'r';
             *start = lo;
             *end = hi;
-            found = true;
             break;
         }
     }
