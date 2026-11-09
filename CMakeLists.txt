@@ -71,7 +71,10 @@ else()
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
   add_subdirectory(third_party/dynarmic EXCLUDE_FROM_ALL)
   set(BOZ_CPU_SOURCES src/arm_emu_dynarmic.cpp)
-  set(BOZ_CPU_LIBS dynarmic merry::mcl)
+  # arm_emu_dynarmic.cpp includes Dynarmic IR headers (PreCodeReadHook), which include Boost; the
+  # Boost:: targets Dynarmic finds are local to its directory, so find them here too.
+  find_package(Boost 1.57 REQUIRED)
+  set(BOZ_CPU_LIBS dynarmic merry::mcl Boost::boost)
 endif()
 
 set(SDL_SHARED ON CACHE BOOL "" FORCE)

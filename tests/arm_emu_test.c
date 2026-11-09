@@ -22,7 +22,12 @@ static uint32_t host_add(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_
     return a + b + c + d + e + f;
 }
 
-static uint32_t __attribute__((stdcall)) host_stdcall(uint32_t a, uint32_t b, uint32_t c,
+#if defined(__i386__)
+#define TEST_STDCALL __attribute__((stdcall))
+#else
+#define TEST_STDCALL
+#endif
+static uint32_t TEST_STDCALL host_stdcall(uint32_t a, uint32_t b, uint32_t c,
                                                       uint32_t d, uint32_t e, uint32_t f) {
     return a * 1000 + b * 100 + c * 10 + d + e + f;
 }
@@ -144,7 +149,7 @@ int main(void) {
 
     static const char text[] = "host string";
     args[0] = (uint32_t)(uintptr_t)text;
-    args[1] = (uint32_t)(uintptr_t)&strlen;
+    args[1] = arm_emu_guest_fn((const void *)&strlen); /* libc may lie above 4 GiB */
     uint32_t tail[] = {0xe12fff11u};
     memcpy(&g_code[20], tail, sizeof(tail));
     expect("guest passes host pointer to libc",
