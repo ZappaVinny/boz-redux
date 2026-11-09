@@ -109,28 +109,24 @@ static struct sdl_egl_state g_sdl = {
     .depth_size = 16,
     .renderable_type = EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT,
 };
-static int g_display_token;
-static int g_config_token;
 
+/* The handles the game gets for SDL's display, config, window surface and GL context: small
+ * numbers, never memory, so they pass through unchanged however the game's memory is mapped (see
+ * GUEST_LOWEST_ADDRESS in guest_memory.h). */
 static EGLDisplay fallback_display(void) {
-    return (EGLDisplay)(void *)&g_display_token;
+    return (EGLDisplay)(uintptr_t)0x1001;
 }
 
 static EGLConfig fallback_config(void) {
-    return (EGLConfig)(void *)&g_config_token;
+    return (EGLConfig)(uintptr_t)0x1002;
 }
 
-/* What the game gets for the SDL window surface and GL context: tokens in the executable, not
- * SDL's own pointers, which may lie above 4 GiB on 64-bit hosts. */
-static int g_surface_token;
-static int g_context_token;
-
 static EGLSurface sdl_surface_handle(void) {
-    return (EGLSurface)(void *)&g_surface_token;
+    return (EGLSurface)(uintptr_t)0x1003;
 }
 
 static EGLContext sdl_context_handle(void) {
-    return (EGLContext)(void *)&g_context_token;
+    return (EGLContext)(uintptr_t)0x1004;
 }
 
 static const char *sdl_error(void) {

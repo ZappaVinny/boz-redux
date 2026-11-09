@@ -1,4 +1,6 @@
 #include "s3e_host_internal.h"
+#include "arm_emu.h"
+#include "host_signatures.h"
 
 enum {
     IS_AUDIO_UNIT_INTERFACE_ENTRIES = 13,
@@ -40,19 +42,19 @@ static int32_t is_audio_unit_stop(void) {
 
 int32_t is_audio_unit_get_interface(void *iface, uint32_t size) {
     uint32_t table[IS_AUDIO_UNIT_INTERFACE_ENTRIES] = {
-        GUEST_ADDRESS(&is_audio_unit_register),
-        GUEST_ADDRESS(&is_audio_unit_unregister),
-        GUEST_ADDRESS(&is_audio_unit_init),
-        GUEST_ADDRESS(&is_audio_unit_terminate),
-        GUEST_ADDRESS(&is_audio_unit_set_callbacks),
-        GUEST_ADDRESS(&is_audio_unit_start),
-        GUEST_ADDRESS(&is_audio_unit_stop),
-        GUEST_ADDRESS(&s3eAudioPlay),
-        GUEST_ADDRESS(&s3eAudioStop),
-        GUEST_ADDRESS(&s3eAudioResume),
-        GUEST_ADDRESS(&s3eAudioPause),
-        GUEST_ADDRESS(&s3eAudioSetInt),
-        GUEST_ADDRESS(&s3eAudioGetInt),
+        GUEST_FN(is_audio_unit_register),
+        GUEST_FN(is_audio_unit_unregister),
+        GUEST_FN(is_audio_unit_init),
+        GUEST_FN(is_audio_unit_terminate),
+        GUEST_FN(is_audio_unit_set_callbacks),
+        GUEST_FN(is_audio_unit_start),
+        GUEST_FN(is_audio_unit_stop),
+        GUEST_FN(s3eAudioPlay),
+        GUEST_FN(s3eAudioStop),
+        GUEST_FN(s3eAudioResume),
+        GUEST_FN(s3eAudioPause),
+        GUEST_FN(s3eAudioSetInt),
+        GUEST_FN(s3eAudioGetInt),
     };
 
     if (!iface || size != sizeof(table)) {

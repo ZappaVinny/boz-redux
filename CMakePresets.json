@@ -42,6 +42,19 @@
         "CMAKE_CXX_COMPILER": "g++",
         "CMAKE_RC_COMPILER": "windres"
       }
+    },
+    {
+      "name": "windows-x64-base-msys2",
+      "displayName": "Windows 64-bit with the game's memory at a base offset (tests the Android/Switch path), MSYS2 MINGW64",
+      "binaryDir": "${sourceDir}/build/windows-x64-base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_RC_COMPILER": "windres",
+        "BOZ_GUEST_BASE": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -100,6 +113,17 @@
     {
       "name": "windows-x64-msys2-tests",
       "configurePreset": "windows-x64-msys2"
+    },
+    {
+      "name": "windows-x64-base-msys2",
+      "configurePreset": "windows-x64-base-msys2",
+      "targets": [
+        "codboz_s3e_loader",
+        "codboz_apk_extract",
+        "boz-redux",
+        "SDL2",
+        "SDL2_mixer"
+      ]
     }
   ],
   "testPresets": [

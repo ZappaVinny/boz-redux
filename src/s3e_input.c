@@ -423,7 +423,7 @@ static void pointer_dispatch(uint32_t id, void *event, size_t size) {
         return;
     }
     uint32_t data = guest_block_in(event, size);
-    s3e_guest_call(slot->callback, 2, data, S3E_GUEST_ARG(slot->user_data));
+    s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
     guest_block_out(event, data, size);
 }
 
@@ -436,7 +436,7 @@ static void touchpad_dispatch(uint32_t id, void *event, size_t size) {
         return;
     }
     uint32_t data = guest_block_in(event, size);
-    s3e_guest_call(slot->callback, 2, data, S3E_GUEST_ARG(slot->user_data));
+    s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
     guest_block_out(event, data, size);
 }
 
@@ -515,7 +515,7 @@ static void keyboard_dispatch_event(uint32_t key, int32_t pressed) {
         struct keyboard_callback_slot *slot = &g_keyboard_callbacks[i];
         if (slot->callback && slot->id == 0) {
             uint32_t data = guest_block_in(&event, sizeof(event));
-            s3e_guest_call(slot->callback, 2, data, S3E_GUEST_ARG(slot->user_data));
+            s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
             guest_block_out(&event, data, sizeof(event));
         }
     }

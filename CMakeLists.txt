@@ -13,6 +13,12 @@ else()
   set(BOZ_CPU dynarmic)
 endif()
 message(STATUS "ARM CPU: ${BOZ_CPU}")
+# The game's 4 GiB at an offset in the host (guest_memory.h): required on Android and the Switch,
+# where the low 4 GiB of the process are not ours; on a 64-bit PC it tests that path.
+option(BOZ_GUEST_BASE "Map the game's memory at a base offset (64-bit only)" OFF)
+if(BOZ_GUEST_BASE AND NOT BOZ_CPU STREQUAL "dynarmic")
+  message(FATAL_ERROR "BOZ_GUEST_BASE needs a 64-bit build")
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -161,7 +167,7 @@ endfunction()
 
 add_library(boz_project INTERFACE)
 target_include_directories(boz_project INTERFACE include src third_party/lzma)
-target_compile_definitions(boz_project INTERFACE _GNU_SOURCE)
+target_compile_definitions(boz_project INTERFACE _GNU_SOURCE $<$<BOOL:${BOZ_GUEST_BASE}>:BOZ_GUEST_BASE>)
 target_compile_options(boz_project INTERFACE ${BOZ_WARNINGS})
 
 if(WIN32)
@@ -175,7 +181,7 @@ endif()
 add_library(boz_common STATIC src/str_util.c)
 target_link_libraries(boz_common PUBLIC boz_project)
 # The guest heap (64-bit hosts: memory the game sees has to sit below 4 GiB).
-add_library(boz_guest_heap STATIC src/guest_heap.c ${BOZ_PLATFORM_SOURCES})
+add_library(boz_guest_heap STATIC src/guest_heap.c src/host_signatures.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(boz_guest_heap PUBLIC boz_project)
 target_link_libraries(boz_common PUBLIC boz_guest_heap)
 
@@ -230,8 +236,12 @@ target_link_libraries(boz_guest_heap PUBLIC ${BOZ_SYSTEM_LIBS})
 set(BOZ_GUEST_LINK_OPTIONS)
 if(WIN32 AND BOZ_CPU STREQUAL "dynarmic")
   set(BOZ_SYSTEM_LINK_OPTIONS -static -static-libgcc -static-libstdc++)
-  set(BOZ_GUEST_LINK_OPTIONS -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase
-      -Wl,--disable-high-entropy-va)
+  if(NOT BOZ_GUEST_BASE)
+    # Guest-base builds call every host function through a slot, so the executable may sit
+    # anywhere; leaving it high also makes any host pointer handed to the game stand out.
+    set(BOZ_GUEST_LINK_OPTIONS -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase
+        -Wl,--disable-high-entropy-va)
+  endif()
 endif()
 target_link_libraries(codboz_s3e_loader PRIVATE boz_project boz_common boz_branding ${BOZ_CPU_LIBS} lua imgui_core ${BOZ_SYSTEM_LIBS})
 boz_windows_resources(codboz_s3e_loader "BOZ Redux game")
@@ -324,7 +334,7 @@ boz_test(s3e_input_test SOURCES src/s3e_input.c src/client_config.c
                  plat_lib_symbol=s3e_input_test_dlsym plat_lib_close=s3e_input_test_dlclose)
 
 add_executable(arm_emu_test tests/arm_emu_test.c ${BOZ_CPU_SOURCES} ${BOZ_PLATFORM_SOURCES})
-target_link_libraries(arm_emu_test PRIVATE boz_project ${BOZ_CPU_LIBS} ${BOZ_SYSTEM_LIBS})
+target_link_libraries(arm_emu_test PRIVATE boz_project boz_guest_heap ${BOZ_CPU_LIBS} ${BOZ_SYSTEM_LIBS})
 if(NOT WIN32)
   target_link_options(arm_emu_test PRIVATE -no-pie)  # Unicorn is built without PIC
 endif()

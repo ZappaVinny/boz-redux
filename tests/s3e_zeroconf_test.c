@@ -203,7 +203,7 @@ static void test_discovery_ttl_expiry(void) {
 
 static void test_publish_lifecycle(void) {
     zeroconf_platform_fake_reset();
-    const char *txt[] = {"version=1"};
+    const uint32_t txt[] = {GUEST_ADDRESS("version=1")};
     void *publication =
         s3eZeroConfPublish(htons(10), "Kino Lobby", "_PROJECT_KIWI._tcp", NULL, 1, txt);
     assert(publication);
@@ -221,7 +221,7 @@ static void test_publish_lifecycle(void) {
     s3e_zero_conf_pump();
     assert(zeroconf_platform_fake_sent_count() == 1);
 
-    const char *updated[] = {"version=2"};
+    const uint32_t updated[] = {GUEST_ADDRESS("version=2")};
     assert(s3eZeroConfUpdateTxtRecord(publication, 1, updated) == TEST_RESULT_SUCCESS);
     zeroconf_platform_fake_advance(999);
     s3e_zero_conf_pump();

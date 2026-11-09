@@ -1,4 +1,5 @@
 #include "game_patches.h"
+#include "guest_memory.h"
 
 #include <string.h>
 
@@ -24,7 +25,7 @@ bool player_name_install(struct s3e_loaded_image *loaded, uint32_t player_name_a
         return false;
     }
 
-    uint32_t pc = (uint32_t)(uintptr_t)loaded->base + PLAYER_NAME_REFERENCE_PC_OFFSET;
+    uint32_t pc = GUEST_ADDRESS(loaded->base) + PLAYER_NAME_REFERENCE_PC_OFFSET;
     relative = player_name_address - pc;
     memcpy(reference, &relative, sizeof(relative));
     return true;

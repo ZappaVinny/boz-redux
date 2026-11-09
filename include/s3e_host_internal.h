@@ -41,7 +41,8 @@
 #endif
 
 #define S3E_GUEST_ARG(value) GUEST_ADDRESS(value)
-uint32_t s3e_guest_call(const void *fn, int argc, ...);
+/* Runs guest function fn (a guest address) with argc word arguments on this thread's CPU. */
+uint32_t s3e_guest_call(uint32_t fn, int argc, ...);
 
 typedef int32_t(S3E_SOFTFP *s3e_callback_fn)(void *system_data, void *user_data);
 typedef int32_t(S3E_SOFTFP *s3e_socket_callback_fn)(void *socket, void *system_data,
@@ -563,8 +564,8 @@ void *s3eZeroConfStartSearch(const char *service_type, const char *domain,
                              s3e_zeroconf_callback_fn lost_callback, void *user_data);
 void s3eZeroConfStopSearch(void *search);
 void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_type,
-                         const char *domain, uint16_t txt_count, const char **txt_records);
-int32_t s3eZeroConfUpdateTxtRecord(void *service, uint16_t txt_count, const char **txt_records);
+                         const char *domain, uint16_t txt_count, const uint32_t *txt_records);
+int32_t s3eZeroConfUpdateTxtRecord(void *service, uint16_t txt_count, const uint32_t *txt_records);
 int32_t s3eZeroConfUnpublish(void *service);
 
 int32_t s3eMemoryGetInt(uint32_t key);

@@ -3,13 +3,13 @@
 
 #include "gamedef.h"
 
-static uintptr_t g_image_base;
+static uint32_t g_image_base;
 
-void game_set_image_base(uintptr_t base) {
+void game_set_image_base(uint32_t base) {
     g_image_base = base;
 }
 
-uintptr_t game_image_base(void) {
+uint32_t game_image_base(void) {
     return g_image_base;
 }
 

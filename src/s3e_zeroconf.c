@@ -377,20 +377,21 @@ static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
 }
 
 static int copy_txt_records(char target[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE],
-                            uint16_t *target_count, uint16_t count, const char **records) {
+                            uint16_t *target_count, uint16_t count, const uint32_t *records) {
     if (count > ZERO_CONF_MAX_TXT_RECORDS || (count && !records)) {
         return 0;
     }
     char copied[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE] = {{0}};
     for (uint16_t i = 0; i < count; ++i) {
-        if (!records[i]) {
+        const char *record = GUEST_POINTER(records[i]); /* the game's list of string addresses */
+        if (!record) {
             return 0;
         }
-        size_t length = strnlen(records[i], ZERO_CONF_TXT_RECORD_SIZE);
+        size_t length = strnlen(record, ZERO_CONF_TXT_RECORD_SIZE);
         if (length >= ZERO_CONF_TXT_RECORD_SIZE) {
             return 0;
         }
-        memcpy(copied[i], records[i], length + 1);
+        memcpy(copied[i], record, length + 1);
     }
     memcpy(target, copied, sizeof(copied));
     *target_count = count;
@@ -544,11 +545,11 @@ static void dispatch_found(struct zero_conf_search *search, struct zero_conf_dis
     data->txt_count = entry->txt_count;
     data->txt_records = scratch_txt_records(entry);
     memcpy(&data->ipv4_address, entry->ipv4, sizeof(data->ipv4_address));
-    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", (const char *)(uintptr_t)data->name,
+    NET_TRACE("found \"%s\" at %u.%u.%u.%u:%u\n", (const char *)GUEST_POINTER(data->name),
               entry->ipv4[0], entry->ipv4[1], entry->ipv4[2], entry->ipv4[3], entry->port);
     entry->notified = 1;
     callback_enter();
-    s3e_guest_call(search->found_callback, 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
+    s3e_guest_call(GUEST_ADDRESS(search->found_callback), 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
     guest_scratch_pop(data);
@@ -563,7 +564,7 @@ static void dispatch_update(struct zero_conf_search *search, struct zero_conf_di
     data->txt_count = entry->txt_count;
     data->txt_records = scratch_txt_records(entry);
     callback_enter();
-    s3e_guest_call(search->update_callback, 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
+    s3e_guest_call(GUEST_ADDRESS(search->update_callback), 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
     guest_scratch_pop(data);
@@ -576,7 +577,7 @@ static void dispatch_lost(struct zero_conf_search *search, struct zero_conf_disc
     entry->notified = 0;
     if (callback) {
         callback_enter();
-        s3e_guest_call(callback, 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(service_id),
+        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(service_id),
                        S3E_GUEST_ARG(user_data));
         callback_leave();
     }
@@ -1048,7 +1049,7 @@ void s3eZeroConfStopSearch(void *handle) {
 }
 
 void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_type,
-                         const char *domain, uint16_t txt_count, const char **txt_records) {
+                         const char *domain, uint16_t txt_count, const uint32_t *txt_records) {
     if (!port || !name || !name[0] || !service_type || strlen(name) > 64) {
         return NULL;
     }
@@ -1101,7 +1102,7 @@ void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_ty
     return NULL;
 }
 
-int32_t s3eZeroConfUpdateTxtRecord(void *handle, uint16_t txt_count, const char **txt_records) {
+int32_t s3eZeroConfUpdateTxtRecord(void *handle, uint16_t txt_count, const uint32_t *txt_records) {
     struct zero_conf_publisher *publisher = resolve_publisher(handle);
     char updated[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE] = {{0}};
     uint16_t updated_count = 0;

@@ -21,6 +21,8 @@
 #include <string.h>
 
 #include "arm_emu.h"
+#include "host_signatures.h"
+#include "guest_memory.h"
 
 
 /* The game definition (gamedef/): next to the game data, else next to the executable. */
@@ -161,14 +163,13 @@ int main(int argc, char **argv) {
         s3e_image_free(&image);
         return 1;
     }
-    game_set_image_base((uintptr_t)loaded.base);
+    game_set_image_base(GUEST_ADDRESS(loaded.base));
     if (!frame_interpolation_install()) {
         fprintf(stderr, "frame interpolation not installed: the game executable does not match\n");
     }
 
-    uintptr_t player_name_address = (uintptr_t)s3e_host_player_name();
-    if (player_name_address > UINT32_MAX ||
-        !player_name_install(&loaded, (uint32_t)player_name_address)) {
+    const char *player_name = guest_strdup(s3e_host_player_name());
+    if (!player_name || !player_name_install(&loaded, GUEST_ADDRESS(player_name))) {
         fprintf(stderr, "unable to apply configured player name\n");
     }
     if (!prompt_button_install(&loaded)) {
@@ -181,16 +182,16 @@ int main(int argc, char **argv) {
         if (!arm_emu_init()) {
             return 1;
         }
-        arm_emu_set_image((uint32_t)(uintptr_t)loaded.base,
-                          (uint32_t)((uintptr_t)loaded.base + loaded.map_size));
-        arm_emu_trace_ignore((uint32_t)(uintptr_t)&s3eMallocBase);
-        arm_emu_trace_ignore((uint32_t)(uintptr_t)&s3eFreeBase);
-        arm_emu_trace_ignore((uint32_t)(uintptr_t)&s3eReallocBase);
-        crash_recovery_install((uint32_t)(uintptr_t)loaded.base);
+        uint32_t image = GUEST_ADDRESS(loaded.base);
+        arm_emu_set_image(image, image + (uint32_t)loaded.map_size);
+        arm_emu_trace_ignore(GUEST_FN(s3eMallocBase));
+        arm_emu_trace_ignore(GUEST_FN(s3eFreeBase));
+        arm_emu_trace_ignore(GUEST_FN(s3eReallocBase));
+        crash_recovery_install(image);
         /* Mods start before the game so their hooks and asset patches see everything it does. */
         lua_runtime_start();
         native_input_init();
-        int rc = (int)arm_emu_call((uint32_t)(uintptr_t)(loaded.base + loaded.entry_offset), 0, NULL);
+        int rc = (int)arm_emu_call(GUEST_ADDRESS(loaded.base + loaded.entry_offset), 0, NULL);
         fprintf(stderr, "S3E entry returned %d\n", rc);
     }
 
