@@ -1306,6 +1306,10 @@ int main(int argc, char **argv) {
     load_logo(renderer);
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
+#if defined(__ANDROID__)
+    // Every gamepad steers the launcher: a TV's first "gamepad" is often its remote's IR receiver.
+    ImGui_ImplSDL2_SetGamepadMode(ImGui_ImplSDL2_GamepadMode_AutoAll);
+#endif
 
     GameFiles files(l.root, l.bin_dir);
     l.files = &files;

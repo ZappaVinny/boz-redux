@@ -5,6 +5,8 @@
 #include "native_input.h"
 #include "touch_controls.h"
 
+#include <stdbool.h>
+#include <string.h>
 #include <strings.h>
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
@@ -131,6 +133,7 @@ struct sdl_input_api {
     int (*IsGameController)(int joystick_index);
     const char *(*JoystickNameForIndex)(int joystick_index);
     const char *(*GameControllerNameForIndex)(int joystick_index);
+    int (*GameControllerTypeForIndex)(int joystick_index); /* SDL 2.0.12+ */
     void *(*GameControllerOpen)(int joystick_index);
     void (*GameControllerClose)(void *gamecontroller);
     int (*GameControllerGetAttached)(void *gamecontroller);
@@ -232,7 +235,30 @@ static void input_scan_controllers(void) {
     int report = count != g_last_joystick_count;
     g_last_joystick_count = count;
 
-    for (int i = 0; i < count; ++i) {
+    /* Android TVs list their remote's IR receiver and virtual input devices as controllers too,
+     * and a DualShock 4 comes with separate Touchpad and Motion Sensors devices (also typed
+     * PS4, but without its buttons): gamepads SDL recognises (Xbox, PlayStation, Switch...)
+     * first, then other controllers, remotes and those side devices last. */
+    int rank[64];
+    for (int i = 0; i < count && i < 64; ++i) {
+        const char *name = input_joystick_name(i);
+        int type = g_sdl.GameControllerTypeForIndex ? g_sdl.GameControllerTypeForIndex(i) : 0;
+        bool remote = strstr(name, "IR Receiver") || strstr(name, "Remote") ||
+                      strstr(name, "remote") || strstr(name, "Keypad") ||
+                      strstr(name, "KEYPAD") || !strncmp(name, "sim-", 4) ||
+                      strstr(name, "virtual") || strstr(name, "Touchpad") ||
+                      strstr(name, "Motion Sensors");
+        rank[i] = remote ? 0 : type > 0 ? 2 : 1;
+        if (report) {
+            fprintf(stderr, "[input] device %d: %s (type %d)%s\n", i, name, type,
+                    remote ? ", a remote or virtual device" : "");
+        }
+    }
+    for (int want = 2; want >= 0; --want)
+    for (int i = 0; i < count && i < 64; ++i) {
+        if (rank[i] != want) {
+            continue;
+        }
         if (!g_sdl.IsGameController(i)) {
             if (report) {
                 fprintf(stderr, "[input] joystick %d (%s) has no SDL controller mapping\n", i,
@@ -280,6 +306,8 @@ static void input_open(void) {
     sdl_load_optional_symbol((void **)&g_sdl.JoystickNameForIndex, "SDL_JoystickNameForIndex");
     sdl_load_optional_symbol((void **)&g_sdl.GameControllerNameForIndex,
                              "SDL_GameControllerNameForIndex");
+    sdl_load_optional_symbol((void **)&g_sdl.GameControllerTypeForIndex,
+                             "SDL_GameControllerTypeForIndex");
     ok &= sdl_load_symbol((void **)&g_sdl.GameControllerOpen, "SDL_GameControllerOpen");
     ok &= sdl_load_symbol((void **)&g_sdl.GameControllerClose, "SDL_GameControllerClose");
     ok &=
@@ -1234,6 +1262,14 @@ static void input_refresh_controller(uint64_t now) {
         g_last_joystick_count = -1;
     }
 
+    /* A controller plugged in later may beat the one in use (a gamepad over a TV remote). */
+    if (g_controller && now - g_controller_scan_ms >= CONTROLLER_RESCAN_MS) {
+        g_controller_scan_ms = now;
+        if (g_sdl.NumJoysticks() != g_last_joystick_count) {
+            input_close_controller();
+            g_controller_scan_ms = 0;
+        }
+    }
     if (!g_controller &&
         (!g_controller_scan_ms || now - g_controller_scan_ms >= CONTROLLER_RESCAN_MS)) {
         g_controller_scan_ms = now;

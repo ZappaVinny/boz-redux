@@ -156,9 +156,13 @@ static uint32_t input_manager(void) {
 /* The MaxPitch console variable, registered by the game's first FixedStep. */
 static float max_pitch(void) {
     static uint32_t var;
+    static char *name; /* in guest memory: a string literal may lie above 4 GiB */
     if (!var && g_console_global && g_console_find_var && read_u32(g_console_global)) {
-        var = s3e_guest_call(g_console_find_var, 2,
-                             read_u32(g_console_global), S3E_GUEST_ARG("MaxPitch"));
+        if (!name) {
+            name = guest_strdup("MaxPitch");
+        }
+        var = s3e_guest_call(g_console_find_var, 2, read_u32(g_console_global),
+                             S3E_GUEST_ARG(name));
     }
     return var ? read_float(var + CVAR_VALUE) : 0.5f;
 }
