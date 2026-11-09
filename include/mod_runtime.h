@@ -20,6 +20,9 @@ void game_set_image_base(uint32_t base);
 uint32_t game_image_base(void);
 /* Address of a gamedef symbol (functions carry the Thumb bit), or 0. */
 uint32_t game_symbol_address(const char *name);
+/* Whether the gamedef function starting at address is Thumb: 1, ARM: 0, no such function: -1.
+ * The native CPU (arm_emu_native.c) needs the mode to patch code hooks. */
+int game_code_is_thumb(uint32_t address);
 
 /* --- Lua runtime (lua_runtime.c) ----------------------------------------------------------- */
 

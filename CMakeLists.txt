@@ -6,11 +6,18 @@ if(WIN32)
 endif()
 
 # The ARM CPU: Unicorn on 32-bit x86 hosts (src/arm_emu.c), the Dynarmic JIT on 64-bit hosts
-# (src/arm_emu_dynarmic.cpp, x86-64 and AArch64). Both run the same client; see docs/runtime.md.
-if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-  set(BOZ_CPU unicorn)
-else()
-  set(BOZ_CPU dynarmic)
+# (src/arm_emu_dynarmic.cpp, x86-64 and AArch64), and on 32-bit ARM hosts (Android armeabi-v7a
+# TVs) none at all: the game's code runs natively (src/arm_emu_native.c). All run the same client;
+# see docs/runtime.md. -DBOZ_CPU=unicorn picks Unicorn on a 32-bit ARM host too.
+set(BOZ_CPU "" CACHE STRING "ARM CPU: unicorn, dynarmic or native (empty: by host)")
+if(NOT BOZ_CPU)
+  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(BOZ_CPU dynarmic)
+  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|armv7)")
+    set(BOZ_CPU native)
+  else()
+    set(BOZ_CPU unicorn)
+  endif()
 endif()
 message(STATUS "ARM CPU: ${BOZ_CPU}")
 # The game's 4 GiB at an offset in the host (guest_memory.h): required on Android and the Switch,
@@ -71,6 +78,9 @@ if(NOT WIN32 AND NOT ANDROID) # Android's shared libraries must be PIC
 endif()
 set(BOZ_CPU_SOURCES src/arm_emu.c)
 set(BOZ_CPU_LIBS unicorn)
+elseif(BOZ_CPU STREQUAL "native")
+  set(BOZ_CPU_SOURCES src/arm_emu_native.c)
+  set(BOZ_CPU_LIBS)
 else()
   # Dynarmic: only the A32 frontend, its bundled externals (fmt, mcl, xbyak/oaknut, zydis) and
   # Boost's headers (MSYS2: mingw-w64-x86_64-boost; Debian: libboost-dev).

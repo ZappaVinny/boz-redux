@@ -263,7 +263,7 @@ static uint32_t require(const char *name, bool *ok) {
 }
 
 static bool hook(uint32_t address, arm_emu_code_hook fn) {
-    return address && arm_emu_hook_add(address & ~1u, fn, NULL) >= 0;
+    return address && arm_emu_hook_add(address, fn, NULL) >= 0; /* Thumb bit: the code's mode */
 }
 
 static void on_zombies_playing(struct arm_emu_regs *regs, void *user) {

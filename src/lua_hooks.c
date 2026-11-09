@@ -345,7 +345,8 @@ static int ref_field(lua_State *L, int table, const char *name) {
 }
 
 static int api_hook_add(lua_State *L) {
-    uint32_t address = check_target(L, 1) & ~1u;
+    uint32_t target = check_target(L, 1); /* the Thumb bit tells the native CPU the code's mode */
+    uint32_t address = target & ~1u;
     luaL_checktype(L, 2, LUA_TTABLE);
     int before = ref_field(L, 2, "before");
     int after = ref_field(L, 2, "after");
@@ -370,7 +371,7 @@ static int api_hook_add(lua_State *L) {
             return luaL_error(L, "too many hooked functions");
         }
         site = free_site;
-        int arm_hook = arm_emu_hook_add(address, on_site, (void *)(intptr_t)site);
+        int arm_hook = arm_emu_hook_add(target, on_site, (void *)(intptr_t)site);
         if (arm_hook < 0) {
             return luaL_error(L, "cannot hook 0x%x", (unsigned)address);
         }

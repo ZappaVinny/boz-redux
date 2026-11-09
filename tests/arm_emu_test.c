@@ -8,6 +8,12 @@
 static uint32_t *g_code;
 static int g_failures;
 
+/* Writes guest code. Hosts that run it natively need the instruction cache synced. */
+static void put_code(void *at, const void *code, size_t size) {
+    memcpy(at, code, size);
+    __builtin___clear_cache((char *)at, (char *)at + size);
+}
+
 static void expect(const char *name, uint64_t got, uint64_t want) {
     if (got != want) {
         fprintf(stderr, "FAIL %s: got 0x%llx want 0x%llx\n", name, (unsigned long long)got,
@@ -115,7 +121,7 @@ int main(void) {
         /* 16: tail call r0 */
         0xe12fff10u,
     };
-    memcpy(g_code, c, sizeof(c));
+    put_code(g_code, c, sizeof(c));
 
     uint32_t args[6];
     args[0] = 41;
@@ -146,13 +152,13 @@ int main(void) {
     args[0] = (uint32_t)(uintptr_t)text;
     args[1] = (uint32_t)(uintptr_t)&strlen;
     uint32_t tail[] = {0xe12fff11u};
-    memcpy(&g_code[20], tail, sizeof(tail));
+    put_code(&g_code[20], tail, sizeof(tail));
     expect("guest passes host pointer to libc",
            (uint32_t)arm_emu_call((uint32_t)(uintptr_t)&g_code[20], 2, args), strlen(text));
 
     /* 24: ldr r0, [r0]; bx lr */
     uint32_t load[] = {0xe5900000u, 0xe12fff1eu};
-    memcpy(&g_code[24], load, sizeof(load));
+    put_code(&g_code[24], load, sizeof(load));
     arm_emu_set_fault_handler(recover_null_load);
     args[0] = 0;
     expect("fault handler repairs a null load",
@@ -161,7 +167,7 @@ int main(void) {
 
     /* 28: str r1, [r0]; add r0, r1, #1; bx lr */
     uint32_t store[] = {0xe5801000u, 0xe2810001u, 0xe12fff1eu};
-    memcpy(&g_code[28], store, sizeof(store));
+    put_code(&g_code[28], store, sizeof(store));
     g_store_pc = (uint32_t)(uintptr_t)&g_code[28];
     arm_emu_set_fault_handler(recover_null_store);
     args[0] = 0;
@@ -185,7 +191,8 @@ int main(void) {
     arm_emu_hook_remove(id);
 
     g_trap = (uint32_t)(uintptr_t)&g_code[40];
-    g_code[40] = 0xe12fff1eu; /* never runs: the trap hook moves on first */
+    uint32_t trap_code = 0xe12fff1eu; /* never runs: the trap hook moves on first */
+    put_code(&g_code[40], &trap_code, sizeof(trap_code));
     int entry = arm_emu_hook_add(add_one, hook_redirect_return, NULL);
     int trap = arm_emu_hook_add(g_trap, hook_at_trap, NULL);
     expect("return trap changes the result", (uint32_t)arm_emu_call(add_one, 1, args), 1042);
@@ -194,7 +201,7 @@ int main(void) {
 
     /* 48: Thumb "adds r0, #1; bx lr", called with the Thumb bit, hooked without it. */
     uint16_t thumb[] = {0x3001u, 0x4770u};
-    memcpy(&g_code[48], thumb, sizeof(thumb));
+    put_code(&g_code[48], thumb, sizeof(thumb));
     uint32_t thumb_fn = (uint32_t)(uintptr_t)&g_code[48];
     id = arm_emu_hook_add(thumb_fn | 1u, hook_count, NULL);
     args[0] = 1;

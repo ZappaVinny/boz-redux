@@ -506,6 +506,7 @@ void *make_lazy_gl_stub(const char *symbol) {
     code[2] = 0xe1a00000u;
     code[3] = (uint32_t)index;
     code[4] = arm_emu_guest_fn((const void *)(uintptr_t)&lazy_gl_resolve);
+    __builtin___clear_cache((char *)code, (char *)(code + LAZY_GL_STUB_WORDS));
     g_lazy_gl[index].name = guest_strdup(symbol);
     g_lazy_gl[index].stub = code;
     return code;
