@@ -230,7 +230,32 @@ struct Cpu {
 
 thread_local Cpu *t_cpu;
 
+// A filter in front of the hook table: PreCodeReadHook asks for every instruction the JIT
+// translates, and almost none are hooked. A bit per (address / 2) modulo 2^16, set when a hook is
+// added and rebuilt when one is removed; a clear bit means no hook at that address.
+constexpr unsigned FILTER_BITS = 1u << 16;
+std::atomic<uint64_t> g_hook_filter[FILTER_BITS / 64];
+
+unsigned filter_bit(uint32_t address) { return (address >> 1) & (FILTER_BITS - 1); }
+
+void filter_add(uint32_t address) {
+    unsigned bit = filter_bit(address);
+    g_hook_filter[bit / 64].fetch_or(uint64_t{1} << (bit % 64), std::memory_order_release);
+}
+
+// Called with g_hook_mutex held.
+void filter_rebuild() {
+    for (auto &word : g_hook_filter) word.store(0, std::memory_order_relaxed);
+    for (auto &hook : g_code_hooks) {
+        if (hook.used.load(std::memory_order_acquire)) filter_add(hook.address);
+    }
+}
+
 bool hooked(Cpu *cpu, uint32_t address) {
+    unsigned bit = filter_bit(address);
+    if (!(g_hook_filter[bit / 64].load(std::memory_order_acquire) & (uint64_t{1} << (bit % 64)))) {
+        return false;
+    }
     for (auto &hook : g_code_hooks) {
         if (hook.used.load(std::memory_order_acquire) && hook.owner == cpu &&
             hook.address == address) {
@@ -894,6 +919,7 @@ int arm_emu_hook_add(uint32_t address, arm_emu_code_hook fn, void *user) {
         hook.fn = fn;
         hook.user = user;
         hook.used.store(true, std::memory_order_release);
+        filter_add(address);
         invalidate_later(cpu, address);
         cpu->flush_pending = true;
         if (cpu->level == 0) check_flush(cpu);
@@ -908,6 +934,7 @@ void arm_emu_hook_remove(int id) {
     CodeHook &hook = g_code_hooks[id];
     if (!hook.used.load()) return;
     hook.used.store(false, std::memory_order_release);
+    filter_rebuild();
     invalidate_later(hook.owner, hook.address);
     hook.owner->flush_pending = true;
     if (hook.owner == t_cpu && t_cpu->level == 0) check_flush(t_cpu);
