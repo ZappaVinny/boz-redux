@@ -3,6 +3,7 @@
 #include "client_config.h"
 #include "mod_runtime.h"
 #include "native_input.h"
+#include "touch_controls.h"
 
 #include <strings.h>
 
@@ -784,6 +785,9 @@ static struct {
 } g_bindings[BIND_COUNT];
 static int g_bindings_loaded;
 static uint32_t g_mouse_buttons;
+/* The touch screen was the last input: on-screen controls during a Zombies match. A key or a
+ * controller button hands the match back to them. */
+static int g_touch_mode;
 
 static void parse_binding(enum binding_id id, const char *text) {
     char copy[128];
@@ -1073,6 +1077,10 @@ static void desktop_update_game(const uint8_t *keys, int count, uint64_t dt) {
 /* Game mode in a Zombies match with native controls: the mouse turns the player directly, the
  * movement keys and buttons go to the game's own input functions (native_input.c). Only pause
  * still goes through the Xperia Play key. */
+/* Mouse counts per reference unit a look finger drags: across the screen turns about 180 degrees
+ * at the default look sensitivity. */
+#define TOUCH_LOOK_COUNTS 2.0f
+
 static void desktop_update_native(const uint8_t *keys, int count) {
     static const struct {
         enum binding_id binding;
@@ -1088,14 +1096,37 @@ static void desktop_update_native(const uint8_t *keys, int count) {
     if (g_sdl.GetRelativeMouseState) {
         g_sdl.GetRelativeMouseState(&dx, &dy);
     }
-    native_input_look((float)dx, (float)dy);
+    bool touch = touch_controls_visible();
+    if (touch) {
+        /* SDL also turns fingers into mouse motion and clicks: the controls have them already. */
+        dx = dy = 0;
+        g_mouse_buttons = 0;
+        float tdx, tdy;
+        touch_controls_take_look(&tdx, &tdy);
+        native_input_look(tdx * TOUCH_LOOK_COUNTS, tdy * TOUCH_LOOK_COUNTS);
+    } else {
+        native_input_look((float)dx, (float)dy);
+    }
     float x = (float)(binding_down(keys, count, BIND_MOVE_RIGHT) - binding_down(keys, count, BIND_MOVE_LEFT));
     float y = (float)(binding_down(keys, count, BIND_MOVE_BACK) - binding_down(keys, count, BIND_MOVE_FORWARD));
-    native_input_move(x, y, binding_down(keys, count, BIND_SPRINT) != 0);
-    for (size_t i = 0; i < ARRAY_SIZE(BUTTONS); ++i) {
-        native_input_action(BUTTONS[i].action, binding_down(keys, count, BUTTONS[i].binding) != 0);
+    bool sprint = binding_down(keys, count, BIND_SPRINT) != 0;
+    if (touch) {
+        float tx, ty;
+        touch_controls_move(&tx, &ty);
+        if (tx != 0.0f || ty != 0.0f) {
+            x = tx;
+            y = ty;
+            sprint = sprint || touch_controls_sprint();
+        }
     }
-    game_action_apply(pause_down(keys, count), &KEYMAP_START);
+    native_input_move(x, y, sprint);
+    for (size_t i = 0; i < ARRAY_SIZE(BUTTONS); ++i) {
+        bool down = binding_down(keys, count, BUTTONS[i].binding) != 0 ||
+                    (touch && touch_controls_down(BUTTONS[i].action));
+        native_input_action(BUTTONS[i].action, down);
+    }
+    game_action_apply(pause_down(keys, count) || (touch && touch_controls_pause_held()),
+                      &KEYMAP_START);
 }
 
 /* F11 or Alt+Enter switches between a window and borderless fullscreen. */
@@ -1147,6 +1178,7 @@ static void desktop_update(uint64_t dt) {
     g_prev_tab = tab;
 
     enum native_match match = native_input_match();
+    touch_controls_set_visible(g_touch_mode && g_desktop_game_mode && match == NATIVE_MATCH_ZOMBIES);
     if (native_input_available()) {
         if (match == NATIVE_MATCH_NONE) {
             g_mouse_freed = 0;
@@ -1219,6 +1251,11 @@ enum {
     SDL_MOUSEBUTTONDOWN_EVENT = 0x401,
     SDL_MOUSEBUTTONUP_EVENT = 0x402,
     SDL_MOUSEWHEEL_EVENT = 0x403,
+    SDL_CONTROLLERAXISMOTION_EVENT = 0x650,
+    SDL_CONTROLLERBUTTONDOWN_EVENT = 0x651,
+    SDL_FINGERDOWN_EVENT = 0x700,
+    SDL_FINGERUP_EVENT = 0x701,
+    SDL_FINGERMOTION_EVENT = 0x702,
     SDL_EVENT_BYTES = 56,
 };
 
@@ -1238,11 +1275,63 @@ static void mod_mouse_scale(float *sx, float *sy) {
     }
 }
 
+
+/* An SDL finger (normalized to the window) in the 1280x720 reference units of the controls. */
+static int touch_reference_position(float nx, float ny, float *rx, float *ry) {
+    void *window = g_sdl.GetKeyboardFocus ? g_sdl.GetKeyboardFocus() : NULL;
+    if (!window && g_sdl.GetMouseFocus) {
+        window = g_sdl.GetMouseFocus();
+    }
+    int ww = 0, wh = 0;
+    if (!window || !g_sdl.GetWindowSize) {
+        return 0;
+    }
+    g_sdl.GetWindowSize(window, &ww, &wh);
+    if (ww <= 0 || wh <= 0) {
+        return 0;
+    }
+    int32_t rect[4];
+    present_rect(ww, wh, rect);
+    if (rect[2] <= 0 || rect[3] <= 0) {
+        return 0;
+    }
+    *rx = (nx * (float)ww - (float)rect[0]) * 1280.0f / (float)rect[2];
+    *ry = (ny * (float)wh - (float)rect[1]) * 720.0f / (float)rect[3];
+    return 1;
+}
+
+static void touch_handle_event(uint32_t type, const uint8_t *ev) {
+    if (type == SDL_KEYDOWN_EVENT || type == SDL_CONTROLLERBUTTONDOWN_EVENT) {
+        g_touch_mode = 0;
+        return;
+    }
+    if (type != SDL_FINGERDOWN_EVENT && type != SDL_FINGERUP_EVENT && type != SDL_FINGERMOTION_EVENT) {
+        return;
+    }
+    int64_t finger;
+    float nx, ny, rx, ry;
+    memcpy(&finger, ev + 16, 8);
+    memcpy(&nx, ev + 24, 4);
+    memcpy(&ny, ev + 28, 4);
+    if (type == SDL_FINGERDOWN_EVENT) {
+        g_touch_mode = 1;
+    }
+    if (!touch_controls_visible() || !touch_reference_position(nx, ny, &rx, &ry)) {
+        return;
+    }
+    touch_controls_finger(finger,
+                          type == SDL_FINGERDOWN_EVENT ? TOUCH_DOWN
+                          : type == SDL_FINGERUP_EVENT ? TOUCH_UP
+                                                       : TOUCH_MOVE,
+                          rx, ry);
+}
+
 static void mod_handle_event(const uint8_t *ev) {
     uint32_t type;
     memcpy(&type, ev, 4);
     struct overlay_event out;
     memset(&out, 0, sizeof(out));
+    touch_handle_event(type, ev);
     switch (type) {
     case SDL_KEYDOWN_EVENT:
     case SDL_KEYUP_EVENT: {

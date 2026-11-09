@@ -221,6 +221,7 @@ target_sources(codboz_s3e_loader PRIVATE
   src/lua_settings.c
   src/lua_assets.c
   src/native_input.c
+  src/touch_controls.c
   src/overlay.cpp
   src/branding/brand_imgui.cpp
   src/s3e_config.c
@@ -354,7 +355,7 @@ boz_test(s3e_audio_test SOURCES src/s3e_audio.c
          DEFINES dlsym=s3e_audio_test_dlsym dlclose=s3e_audio_test_dlclose
                  plat_lib_symbol=s3e_audio_test_dlsym plat_lib_close=s3e_audio_test_dlclose)
 boz_test(s3e_audio_unit_test SOURCES src/s3e_audio_unit.c)
-boz_test(s3e_input_test SOURCES src/s3e_input.c src/client_config.c
+boz_test(s3e_input_test SOURCES src/s3e_input.c src/touch_controls.c src/client_config.c
          DEFINES dlsym=s3e_input_test_dlsym dlclose=s3e_input_test_dlclose
                  plat_lib_symbol=s3e_input_test_dlsym plat_lib_close=s3e_input_test_dlclose)
 

@@ -4,6 +4,7 @@
 // touches so the game never notices. Input arrives from the client's SDL pump (s3e_input.c).
 // Lua draws through the `ui` module; widgets that contain others take a function, so a Lua error
 // can never leave a window open.
+#include "touch_controls.h"
 #include "mod_runtime.h"
 #include "brand_imgui.h"
 #include "branding.h"
@@ -600,6 +601,35 @@ extern "C" void overlay_end_frame(void) {
     ImDrawData *draw = ImGui::GetDrawData();
     if (draw && (draw->TotalVtxCount > 0 || (draw->Textures && !draw->Textures->empty()))) {
         render(draw);
+    }
+}
+
+extern "C" void overlay_draw_touch_controls(const int32_t rect[4]) {
+    if (!g_in_frame || rect[2] <= 0 || rect[3] <= 0) {
+        return;
+    }
+    struct touch_shape shapes[32];
+    int count = touch_controls_shapes(shapes, 32);
+    ImDrawList *draw = ImGui::GetForegroundDrawList();
+    float sx = (float)rect[2] / 1280.0f, sy = (float)rect[3] / 720.0f;
+    auto color = [](uint32_t argb) {
+        return IM_COL32((argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff, argb >> 24);
+    };
+    for (int i = 0; i < count; ++i) {
+        const touch_shape &s = shapes[i];
+        ImVec2 center((float)rect[0] + s.x * sx, (float)rect[1] + s.y * sy);
+        float radius = s.r * sy;
+        draw->AddCircleFilled(center, radius, color(s.fill), 48);
+        if (s.outline) {
+            draw->AddCircle(center, radius - 2.0f * sy, color(s.outline), 48, 3.0f * sy);
+        }
+        if (s.label) {
+            float size = (s.r > 80 ? 26.0f : 19.0f) * sy;
+            ImFont *font = ImGui::GetFont();
+            ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, s.label);
+            draw->AddText(font, size, ImVec2(center.x - extent.x * 0.5f, center.y - extent.y * 0.5f),
+                          IM_COL32(255, 255, 255, 230), s.label);
+        }
     }
 }
 

@@ -69,6 +69,9 @@ bool overlay_capturing(void);
 /* Wraps the Lua frame: begin before lua_runtime_frame, end after (draws into framebuffer 0). */
 void overlay_begin_frame(int width, int height, double dt);
 void overlay_end_frame(void);
+/* Draws the on-screen touch controls (touch_controls.h) into the overlay frame; rect is where the
+ * game's 1280x720 picture sits in the window (x, y, width, height). */
+void overlay_draw_touch_controls(const int32_t rect[4]);
 /* Adds the `ui` and `overlay` modules to a Lua state. */
 void overlay_open_lua(void *lua_state);
 

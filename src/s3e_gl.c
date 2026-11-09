@@ -4,6 +4,7 @@
 #include "arm_emu.h"
 #include "host_signatures.h"
 #include "mod_runtime.h"
+#include "touch_controls.h"
 
 /* GL functions with float arguments. The game passes every argument as a 32-bit word (softfp:
  * a float's bits in a core register), so these take words and give the driver real floats: on
@@ -899,7 +900,7 @@ static void mod_runtime_present(void) {
     if (active < 0) {
         active = lua_runtime_start();
     }
-    if (!active) {
+    if (!active && !touch_controls_visible()) {
         return;
     }
     uint64_t now = monotonic_us();
@@ -911,7 +912,14 @@ static void mod_runtime_present(void) {
         height = g_native_window.height;
     }
     overlay_begin_frame(width, height, dt);
-    lua_runtime_frame(dt);
+    if (touch_controls_visible()) {
+        int32_t rect[4];
+        present_rect(width, height, rect);
+        overlay_draw_touch_controls(rect);
+    }
+    if (active) {
+        lua_runtime_frame(dt);
+    }
     overlay_end_frame();
 }
 
