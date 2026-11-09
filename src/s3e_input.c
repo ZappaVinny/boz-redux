@@ -882,21 +882,28 @@ static void desktop_set_game_mode(int enabled) {
     fprintf(stderr, "[input] %s mode\n", enabled ? "game (mouse captured)" : "menu (mouse pointer)");
 }
 
-/* Left-button presses and releases from this pump's SDL events, with their positions. A tap on
- * a touch screen can be down and up again within one frame, so polling the state would miss it:
- * the menu gets one change per frame, at the place it happened. */
+/* Left-button presses and releases from SDL's events, with their positions. A tap on a touch
+ * screen can be down and up again before the game looks, so polling the state would miss it.
+ * The game reads the pointer once per s3ePointerUpdate (its menu update), and a press and a
+ * release between two reads overwrite each other: each queued change is held for a number of
+ * those reads (with a time fallback), and a finger lands only after a move there, as a mouse
+ * would have hovered. */
 enum { PRESS_QUEUE = 16 };
 static struct {
     int32_t x, y;
-    int down;
+    int down; /* 1 press, 0 release, -1 move only */
 } g_press_queue[PRESS_QUEUE];
 static int g_press_head, g_press_count;
-/* Each queued change is held for a few frames: the game's own update runs slower than the
- * display and would miss a press that lasts one frame. */
-enum { PRESS_HOLD_FRAMES = 3, PRESS_DOWN_FRAMES = 8 }; /* a press shorter than ~130 ms is ignored by the menus */
-static int g_press_hold;
+enum {
+    PRESS_DOWN_UPDATES = 3, /* the menus ignore a press seen by a single update */
+    PRESS_OTHER_UPDATES = 2,
+    PRESS_UPDATE_FALLBACK_MS = 40, /* screens that do not call s3ePointerUpdate */
+};
+static int g_press_active, g_press_hold;
 static int32_t g_press_x, g_press_y;
 static int g_press_down;
+static unsigned g_pointer_updates, g_press_seen_updates;
+static uint64_t g_press_tick_ms;
 
 static void queue_press(int32_t x, int32_t y, int down) {
     if (g_press_count == PRESS_QUEUE) {
@@ -911,16 +918,29 @@ static void queue_press(int32_t x, int32_t y, int down) {
 static void desktop_update_menu(void *window) {
     int mx = 0, my = 0, ww = 0, wh = 0;
     uint32_t buttons = g_sdl.GetMouseState(&mx, &my);
-    if (!g_press_hold && g_press_count) {
+    uint64_t now = monotonic_ms();
+    if (g_press_active) {
+        if (g_pointer_updates != g_press_seen_updates ||
+            now - g_press_tick_ms >= PRESS_UPDATE_FALLBACK_MS) {
+            g_press_seen_updates = g_pointer_updates;
+            g_press_tick_ms = now;
+            if (--g_press_hold <= 0) {
+                g_press_active = 0;
+            }
+        }
+    }
+    if (!g_press_active && g_press_count) {
         g_press_x = g_press_queue[g_press_head].x;
         g_press_y = g_press_queue[g_press_head].y;
         g_press_down = g_press_queue[g_press_head].down;
         g_press_head = (g_press_head + 1) % PRESS_QUEUE;
         --g_press_count;
-        g_press_hold = g_press_down > 0 ? PRESS_DOWN_FRAMES : PRESS_HOLD_FRAMES;
+        g_press_active = 1;
+        g_press_hold = g_press_down > 0 ? PRESS_DOWN_UPDATES : PRESS_OTHER_UPDATES;
+        g_press_seen_updates = g_pointer_updates;
+        g_press_tick_ms = now;
     }
-    if (g_press_hold) {
-        --g_press_hold;
+    if (g_press_active) {
         mx = g_press_x;
         my = g_press_y;
         if (g_press_down >= 0) {
@@ -1618,6 +1638,7 @@ int32_t s3ePointerUnRegister(uint32_t id, void *callback) {
 }
 
 int32_t s3ePointerUpdate(void) {
+    ++g_pointer_updates; /* the menu press queue advances per game read */
     pointer_clear_transitions();
     input_pump();
     dispatch_due_timers();
