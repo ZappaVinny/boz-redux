@@ -21,6 +21,7 @@ void *lookup_gl(const char *symbol);
 }
 
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -1346,7 +1347,8 @@ int ui_text_size(lua_State *L) {
 
 // ui.draw_text(text, x, y, [opts]): text at game coordinates. opts: font (ui.font), size (game
 // pixels, default 20), color, align ("left", "center", "right"), shadow (a color: drawn 2 game
-// pixels down and right), layer.
+// pixels down and right), outline (a color: drawn around the text, like the game's HUD numbers)
+// and outline_width (game pixels, default 2), layer.
 int ui_draw_text(lua_State *L) {
     check_frame(L);
     const char *text = luaL_checkstring(L, 1);
@@ -1369,6 +1371,16 @@ int ui_draw_text(lua_State *L) {
     ImU32 shadow = opt_color(L, 4, "shadow", 0);
     if (shadow) {
         list->AddText(font, size * scale, ImVec2(game_x(x + 2), game_y(y + 2)), shadow, text);
+    }
+    ImU32 outline = opt_color(L, 4, "outline", 0);
+    if (outline) {
+        // the text drawn at 16 points around a circle: a solid outline at any width
+        float r = opt_number(L, 4, "outline_width", 2.0f);
+        for (int i = 0; i < 16; ++i) {
+            float a = (float)i * 0.39269908f; // 2 pi / 16
+            list->AddText(font, size * scale, ImVec2(game_x(x + r * std::cos(a)), game_y(y + r * std::sin(a))),
+                          outline, text);
+        }
     }
     list->AddText(font, size * scale, ImVec2(game_x(x), game_y(y)), opt_color(L, 4, "color", IM_COL32_WHITE),
                   text);
