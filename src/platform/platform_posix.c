@@ -184,6 +184,61 @@ const char *plat_symbol_name(const void *address) {
     return dladdr(address, &info) != 0 ? info.dli_sname : NULL;
 }
 
+#if UINTPTR_MAX > 0xffffffffu && defined(__linux__)
+/* 64-bit: memory the game sees has to sit below 4 GiB. Takes the highest gap below 4 GiB that
+ * fits, from the process's mappings, so blocks stay clear of the game image's fixed address
+ * (0x4a000000) whatever the order of allocations; MAP_FIXED_NOREPLACE claims it (if another
+ * thread took it first, the next gap is tried). MAP_32BIT only reaches the low 2 GiB and does not
+ * exist on AArch64. */
+static void *alloc_low(size_t size, int prot) {
+    const uint64_t floor = 0x10000000u, ceiling = (uint64_t)1 << 32, align = 0x10000u;
+    enum { MAX_GAPS = 4096 };
+    static uint64_t gap_lo[MAX_GAPS], gap_hi[MAX_GAPS];
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&lock);
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (!maps) {
+        pthread_mutex_unlock(&lock);
+        return MAP_FAILED;
+    }
+    int gaps = 0;
+    uint64_t gap_start = floor;
+    char line[512];
+    while (gaps < MAX_GAPS && gap_start < ceiling) {
+        unsigned long long start = ceiling, end = ceiling;
+        if (!fgets(line, sizeof(line), maps) || sscanf(line, "%llx-%llx", &start, &end) != 2) {
+            start = end = ceiling;
+        }
+        uint64_t hi = start < ceiling ? start : ceiling;
+        if (hi > gap_start) {
+            gap_lo[gaps] = gap_start;
+            gap_hi[gaps] = hi;
+            gaps++;
+        }
+        if (end > gap_start) {
+            gap_start = end;
+        }
+    }
+    fclose(maps);
+    void *address = MAP_FAILED;
+    for (int i = gaps - 1; i >= 0 && address == MAP_FAILED; --i) {
+        if (gap_hi[i] - gap_lo[i] < size + align) {
+            continue;
+        }
+        uint64_t at = (gap_hi[i] - size) & ~(align - 1);
+        void *got = mmap((void *)(uintptr_t)at, size, prot,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (got != MAP_FAILED && got != (void *)(uintptr_t)at) {
+            munmap(got, size); /* an old kernel ignored the flag and moved it */
+        } else {
+            address = got;
+        }
+    }
+    pthread_mutex_unlock(&lock);
+    return address;
+}
+#endif
+
 void *plat_alloc(void *want, size_t size, bool executable) {
     int prot = PROT_READ | PROT_WRITE | (executable ? PROT_EXEC : 0);
     void *address = MAP_FAILED;
@@ -195,7 +250,14 @@ void *plat_alloc(void *want, size_t size, bool executable) {
         }
     }
     if (address == MAP_FAILED) {
-#if UINTPTR_MAX > 0xffffffffu && defined(MAP_32BIT)
+#if UINTPTR_MAX > 0xffffffffu && defined(__linux__)
+        address = alloc_low(size, prot);
+#if defined(MAP_32BIT)
+        if (address == MAP_FAILED) {
+            address = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+        }
+#endif
+#elif UINTPTR_MAX > 0xffffffffu && defined(MAP_32BIT)
         /* 64-bit: the game sees this memory, so it has to sit below 4 GiB. */
         address = mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
 #else
