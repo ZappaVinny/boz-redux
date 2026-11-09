@@ -905,7 +905,7 @@ static int g_press_down;
 static unsigned g_pointer_updates, g_press_seen_updates;
 static uint64_t g_press_tick_ms;
 
-static void queue_press(int32_t x, int32_t y, int down) {
+__attribute__((unused)) static void queue_press(int32_t x, int32_t y, int down) {
     if (g_press_count == PRESS_QUEUE) {
         return;
     }
@@ -1293,6 +1293,8 @@ static void mod_handle_event(const uint8_t *ev) {
     case SDL_MOUSEBUTTONUP_EVENT: {
         static const int buttons[] = {-1, 0, 2, 1}; /* SDL left, middle, right -> ImGui 0, 2, 1 */
         uint8_t button = ev[16];
+#if defined(__ANDROID__)
+        /* Touch screens only: a mouse is polled as it is (desktop_update_menu). */
         if (button == 1 && !g_desktop_game_mode) {
             int32_t ex, ey;
             memcpy(&ex, ev + 20, 4);
@@ -1304,6 +1306,7 @@ static void mod_handle_event(const uint8_t *ev) {
             }
             queue_press(ex, ey, type == SDL_MOUSEBUTTONDOWN_EVENT);
         }
+#endif
         int32_t x, y;
         float sx, sy;
         memcpy(&x, ev + 20, 4);
