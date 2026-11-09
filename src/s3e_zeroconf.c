@@ -272,6 +272,29 @@ static int instance_name_for_search(const struct zero_conf_search *search,
 
 enum { ZERO_CONF_MAX_INTERFACES = 16 };
 
+/* The adapters, listed again at most every few seconds: every packet goes out on each of them,
+ * and listing them is slow (GetAdaptersAddresses on Windows), on the game thread. */
+enum { ZERO_CONF_ADAPTERS_REFRESH_MS = 5000 };
+
+static int list_adapters(struct in_addr *addresses, struct in_addr *netmasks) {
+    static struct in_addr cached_addresses[ZERO_CONF_MAX_INTERFACES];
+    static struct in_addr cached_netmasks[ZERO_CONF_MAX_INTERFACES];
+    static int cached_count = -1;
+    static uint64_t listed_ms;
+    uint64_t now = zero_conf_now_ms();
+    if (cached_count < 0 || now - listed_ms >= ZERO_CONF_ADAPTERS_REFRESH_MS) {
+        cached_count = zeroconf_platform_list_ipv4(cached_addresses, cached_netmasks,
+                                                   ZERO_CONF_MAX_INTERFACES);
+        listed_ms = now;
+    }
+    int count = cached_count > 0 ? cached_count : 0;
+    memcpy(addresses, cached_addresses, (size_t)count * sizeof(*addresses));
+    if (netmasks) {
+        memcpy(netmasks, cached_netmasks, (size_t)count * sizeof(*netmasks));
+    }
+    return cached_count;
+}
+
 static int ensure_mdns_socket(void) {
     if (g_mdns_fd >= 0) {
         return 1;
@@ -286,7 +309,7 @@ static int ensure_mdns_socket(void) {
     NET_TRACE("mDNS on %s\n", inet_ntop(AF_INET, &interface_address, text, sizeof(text)) ? text : "?");
     if (net_trace_enabled()) {
         struct in_addr all[ZERO_CONF_MAX_INTERFACES];
-        int count = zeroconf_platform_list_ipv4(all, NULL, ZERO_CONF_MAX_INTERFACES);
+        int count = list_adapters(all, NULL);
         for (int i = 0; i < count; ++i) {
             NET_TRACE("  co-op discovery also on %s\n",
                       inet_ntop(AF_INET, &all[i], text, sizeof(text)) ? text : "?");
@@ -345,7 +368,7 @@ static int send_packet_to(const uint8_t *packet, size_t packet_size,
         return zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination);
     }
     struct in_addr interfaces[ZERO_CONF_MAX_INTERFACES];
-    int count = zeroconf_platform_list_ipv4(interfaces, NULL, ZERO_CONF_MAX_INTERFACES);
+    int count = list_adapters(interfaces, NULL);
     if (count <= 0) {
         return zeroconf_platform_send(g_mdns_fd, packet, packet_size, NULL);
     }
@@ -427,7 +450,7 @@ static int send_publication_with(struct zero_conf_publisher *publisher, int good
 static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
                             const struct sockaddr_in *destination) {
     struct in_addr addresses[ZERO_CONF_MAX_INTERFACES], netmasks[ZERO_CONF_MAX_INTERFACES];
-    int count = zeroconf_platform_list_ipv4(addresses, netmasks, ZERO_CONF_MAX_INTERFACES);
+    int count = list_adapters(addresses, netmasks);
     if (destination) {
         const uint8_t *ipv4 = publisher->ipv4;
         for (int i = 0; i < count; ++i) {
