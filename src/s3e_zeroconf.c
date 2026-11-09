@@ -270,6 +270,8 @@ static int instance_name_for_search(const struct zero_conf_search *search,
     return 1;
 }
 
+enum { ZERO_CONF_MAX_INTERFACES = 16 };
+
 static int ensure_mdns_socket(void) {
     if (g_mdns_fd >= 0) {
         return 1;
@@ -282,6 +284,14 @@ static int ensure_mdns_socket(void) {
     }
     char text[INET_ADDRSTRLEN];
     NET_TRACE("mDNS on %s\n", inet_ntop(AF_INET, &interface_address, text, sizeof(text)) ? text : "?");
+    if (net_trace_enabled()) {
+        struct in_addr all[ZERO_CONF_MAX_INTERFACES];
+        int count = zeroconf_platform_list_ipv4(all, NULL, ZERO_CONF_MAX_INTERFACES);
+        for (int i = 0; i < count; ++i) {
+            NET_TRACE("  co-op discovery also on %s\n",
+                      inet_ntop(AF_INET, &all[i], text, sizeof(text)) ? text : "?");
+        }
+    }
     g_mdns_fd = fd;
     g_mdns_interface = interface_address;
     g_mdns_interface_valid = 1;
@@ -326,9 +336,27 @@ static void make_host_label(char output[64]) {
     snprintf(output, 64, "codboz-%s-%lx", sanitized, (unsigned long)((uint32_t)getpid() & 0xffffu));
 }
 
+/* Multicast goes out on every adapter (home network, Radmin, ZeroTier...): with only the first
+ * one, a PC whose VPN adapter came first never reached the phone on its Wi-Fi. A unicast reply
+ * needs no adapter choice. */
 static int send_packet_to(const uint8_t *packet, size_t packet_size,
                           const struct sockaddr_in *destination) {
-    return zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination);
+    if (destination) {
+        return zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination);
+    }
+    struct in_addr interfaces[ZERO_CONF_MAX_INTERFACES];
+    int count = zeroconf_platform_list_ipv4(interfaces, NULL, ZERO_CONF_MAX_INTERFACES);
+    if (count <= 0) {
+        return zeroconf_platform_send(g_mdns_fd, packet, packet_size, NULL);
+    }
+    int sent = 0;
+    for (int i = 0; i < count; ++i) {
+        if (zeroconf_platform_set_multicast_interface(g_mdns_fd, interfaces[i]) &&
+            zeroconf_platform_send(g_mdns_fd, packet, packet_size, NULL)) {
+            sent = 1;
+        }
+    }
+    return sent;
 }
 
 static int send_record_query(const char *name, uint16_t type) {
@@ -362,8 +390,8 @@ static void mark_publisher_txt_announced(struct zero_conf_publisher *publisher) 
     publisher->txt_update_due_ms = 0;
 }
 
-static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
-                            const struct sockaddr_in *destination) {
+static int send_publication_with(struct zero_conf_publisher *publisher, int goodbye,
+                                 const struct sockaddr_in *destination, const uint8_t ipv4[4]) {
     struct mdns_wire_txt_string txt[ZERO_CONF_MAX_TXT_RECORDS];
     publisher_txt_views(publisher, txt);
     struct mdns_wire_service service = {
@@ -375,7 +403,7 @@ static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
         .txt = txt,
         .txt_count = publisher->txt_count,
     };
-    memcpy(service.ipv4, publisher->ipv4, sizeof(service.ipv4));
+    memcpy(service.ipv4, ipv4, sizeof(service.ipv4));
     struct mdns_wire_response_options options = {
         .header_flags = MDNS_WIRE_RESPONSE_FLAGS,
         .ttl = ZERO_CONF_DEFAULT_TTL_SECONDS,
@@ -386,10 +414,41 @@ static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
     size_t packet_size = 0;
     enum mdns_wire_status status =
         mdns_wire_build_service_response(packet, sizeof(packet), &service, &options, &packet_size);
-    if (status != MDNS_WIRE_OK || !send_packet_to(packet, packet_size, destination)) {
+    if (status != MDNS_WIRE_OK ||
+        !zeroconf_platform_send(g_mdns_fd, packet, packet_size, destination)) {
         return 0;
     }
     return 1;
+}
+
+/* Each adapter announces its own address in the A record, so a player on another network than
+ * the first one (a ZeroTier or Radmin peer) gets an address it can reach. A unicast reply carries
+ * the address on the asker's subnet. */
+static int send_publication(struct zero_conf_publisher *publisher, int goodbye,
+                            const struct sockaddr_in *destination) {
+    struct in_addr addresses[ZERO_CONF_MAX_INTERFACES], netmasks[ZERO_CONF_MAX_INTERFACES];
+    int count = zeroconf_platform_list_ipv4(addresses, netmasks, ZERO_CONF_MAX_INTERFACES);
+    if (destination) {
+        const uint8_t *ipv4 = publisher->ipv4;
+        for (int i = 0; i < count; ++i) {
+            if (((addresses[i].s_addr ^ destination->sin_addr.s_addr) & netmasks[i].s_addr) == 0) {
+                ipv4 = (const uint8_t *)&addresses[i].s_addr;
+                break;
+            }
+        }
+        return send_publication_with(publisher, goodbye, destination, ipv4);
+    }
+    if (count <= 0) {
+        return send_publication_with(publisher, goodbye, NULL, publisher->ipv4);
+    }
+    int sent = 0;
+    for (int i = 0; i < count; ++i) {
+        if (zeroconf_platform_set_multicast_interface(g_mdns_fd, addresses[i]) &&
+            send_publication_with(publisher, goodbye, NULL, (const uint8_t *)&addresses[i].s_addr)) {
+            sent = 1;
+        }
+    }
+    return sent;
 }
 
 static int copy_txt_records(char target[ZERO_CONF_MAX_TXT_RECORDS][ZERO_CONF_TXT_RECORD_SIZE],
