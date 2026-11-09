@@ -88,6 +88,12 @@ static void return_from_frame(struct arm_emu_fault *f, int first_register, int s
     f->thumb = (return_address & 1u) != 0;
 }
 
+/* The string sites read through a post-indexed load (ldrb rX, [rX], #1). Dynarmic stops after the
+ * base register's write-back, Unicorn before it: a NULL string shows as 0 or 1 there. */
+static bool null_string(const struct arm_emu_fault *f, int reg) {
+    return f->address < 0x10u && f->r[reg] <= 1u;
+}
+
 static bool recover(struct arm_emu_fault *f) {
     uint32_t offset = f->r[PC] - g_base;
     if (recover_bucket_allocator(f, offset)) {
@@ -101,15 +107,15 @@ static bool recover(struct arm_emu_fault *f) {
         return_from_frame(f, R3, 5);
         return true;
     }
-    if ((offset == NULL_STRING_R1_A || offset == NULL_STRING_R1_B) && f->r[R1] == 0) {
+    if ((offset == NULL_STRING_R1_A || offset == NULL_STRING_R1_B) && null_string(f, R1)) {
         f->r[R1] = host_address(g_empty_string);
         return true;
     }
-    if ((offset == NULL_STRING_R0_A || offset == NULL_STRING_R0_B) && f->r[R0] == 0) {
+    if ((offset == NULL_STRING_R0_A || offset == NULL_STRING_R0_B) && null_string(f, R0)) {
         f->r[R0] = host_address(g_empty_string);
         return true;
     }
-    if (offset == NULL_STRING_SKIP && f->r[R1] == 0) {
+    if (offset == NULL_STRING_SKIP && null_string(f, R1)) {
         f->r[R0] = 0;
         f->r[R2] = 0;
         f->r[PC] = g_base + NULL_STRING_SKIP_TARGET;

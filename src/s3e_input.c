@@ -480,6 +480,10 @@ static void pointer_dispatch_button(uint32_t button, int32_t pressed) {
         .x = g_pointer_x,
         .y = g_pointer_y,
     };
+    if (getenv("BOZ_TRACE_INPUT")) {
+        fprintf(stderr, "[input] pointer %u %s at %d,%d\n", button, pressed ? "down" : "up",
+                g_pointer_x, g_pointer_y);
+    }
     pointer_dispatch(0, &event, sizeof(event));
     pointer_dispatch(2, &touch_event, sizeof(touch_event));
 }
@@ -878,9 +882,53 @@ static void desktop_set_game_mode(int enabled) {
     fprintf(stderr, "[input] %s mode\n", enabled ? "game (mouse captured)" : "menu (mouse pointer)");
 }
 
+/* Left-button presses and releases from this pump's SDL events, with their positions. A tap on
+ * a touch screen can be down and up again within one frame, so polling the state would miss it:
+ * the menu gets one change per frame, at the place it happened. */
+enum { PRESS_QUEUE = 16 };
+static struct {
+    int32_t x, y;
+    int down;
+} g_press_queue[PRESS_QUEUE];
+static int g_press_head, g_press_count;
+/* Each queued change is held for a few frames: the game's own update runs slower than the
+ * display and would miss a press that lasts one frame. */
+enum { PRESS_HOLD_FRAMES = 3, PRESS_DOWN_FRAMES = 8 }; /* a press shorter than ~130 ms is ignored by the menus */
+static int g_press_hold;
+static int32_t g_press_x, g_press_y;
+static int g_press_down;
+
+static void queue_press(int32_t x, int32_t y, int down) {
+    if (g_press_count == PRESS_QUEUE) {
+        return;
+    }
+    int at = (g_press_head + g_press_count++) % PRESS_QUEUE;
+    g_press_queue[at].x = x;
+    g_press_queue[at].y = y;
+    g_press_queue[at].down = down;
+}
+
 static void desktop_update_menu(void *window) {
     int mx = 0, my = 0, ww = 0, wh = 0;
     uint32_t buttons = g_sdl.GetMouseState(&mx, &my);
+    if (!g_press_hold && g_press_count) {
+        g_press_x = g_press_queue[g_press_head].x;
+        g_press_y = g_press_queue[g_press_head].y;
+        g_press_down = g_press_queue[g_press_head].down;
+        g_press_head = (g_press_head + 1) % PRESS_QUEUE;
+        --g_press_count;
+        g_press_hold = g_press_down > 0 ? PRESS_DOWN_FRAMES : PRESS_HOLD_FRAMES;
+    }
+    if (g_press_hold) {
+        --g_press_hold;
+        mx = g_press_x;
+        my = g_press_y;
+        if (g_press_down >= 0) {
+            buttons = g_press_down ? MOUSE_LEFT : 0;
+        } else {
+            buttons = g_prev_mouse_left ? MOUSE_LEFT : 0; /* a move only */
+        }
+    }
     g_sdl.GetWindowSize(window, &ww, &wh);
     if (ww <= 0 || wh <= 0) {
         return;
@@ -1058,6 +1106,11 @@ static void desktop_update(uint64_t dt) {
     }
     load_bindings();
     void *window = g_sdl.GetMouseFocus();
+    if (!window && g_sdl.GetKeyboardFocus) {
+        /* Touch screens: SDL drops the mouse focus when the finger lifts, so the release would
+         * never be seen through it. */
+        window = g_sdl.GetKeyboardFocus();
+    }
     int count = 0;
     const uint8_t *keys = g_sdl.GetKeyboardState(&count);
     g_mouse_buttons = g_sdl.GetMouseState(NULL, NULL);
@@ -1220,6 +1273,17 @@ static void mod_handle_event(const uint8_t *ev) {
     case SDL_MOUSEBUTTONUP_EVENT: {
         static const int buttons[] = {-1, 0, 2, 1}; /* SDL left, middle, right -> ImGui 0, 2, 1 */
         uint8_t button = ev[16];
+        if (button == 1 && !g_desktop_game_mode) {
+            int32_t ex, ey;
+            memcpy(&ex, ev + 20, 4);
+            memcpy(&ey, ev + 24, 4);
+            if (type == SDL_MOUSEBUTTONDOWN_EVENT) {
+                /* A finger lands without hovering first: move the pointer there before the
+                 * press, as a mouse would have, so the menu sees the press on its button. */
+                queue_press(ex, ey, -1);
+            }
+            queue_press(ex, ey, type == SDL_MOUSEBUTTONDOWN_EVENT);
+        }
         int32_t x, y;
         float sx, sy;
         memcpy(&x, ev + 20, 4);

@@ -35,6 +35,11 @@ public final class SetupActivity extends Activity {
         new File(m_Root, "saves").mkdirs();
         setContentView(buildLayout());
         refresh();
+        // Testing: adb shell am start -n org.bozredux.client/.SetupActivity --ez autoplay true
+        //          [--es BOZ_TRACE_INPUT 1 ...] starts the game at once with those variables.
+        if (getIntent().getBooleanExtra("autoplay", false) && m_Play.isEnabled()) {
+            play();
+        }
     }
 
     private View buildLayout() {
@@ -99,6 +104,15 @@ public final class SetupActivity extends Activity {
         Intent intent = new Intent(this, GameActivity.class);
         intent.putExtra(GameActivity.EXTRA_ARGS, args.toArray(new String[0]));
         intent.putExtra(GameActivity.EXTRA_SAVES, new File(m_Root, "saves").getPath());
+        Bundle extras = getIntent().getExtras();
+        if (extras != null) {
+            for (String key : extras.keySet()) {
+                Object value = extras.get(key);
+                if (key.startsWith("BOZ_") && value instanceof String) {
+                    intent.putExtra(key, (String) value);
+                }
+            }
+        }
         startActivity(intent);
     }
 
