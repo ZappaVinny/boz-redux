@@ -42,6 +42,20 @@ public final class GameActivity extends SDLActivity {
                 Log.e(TAG, "cannot set HOME", e);
             }
         }
+        // Debugging switches: adb shell am start ... --es BOZ_TRACE_INPUT 1
+        Bundle extras = getIntent().getExtras();
+        if (extras != null) {
+            for (String key : extras.keySet()) {
+                Object value = extras.get(key);
+                if (key.startsWith("BOZ_") && value instanceof String) {
+                    try {
+                        Os.setenv(key, (String) value, true);
+                    } catch (ErrnoException e) {
+                        Log.e(TAG, "cannot set " + key, e);
+                    }
+                }
+            }
+        }
         super.onCreate(state);
         // Without the lock Android drops incoming multicast: the Local Wi-Fi lobby (mDNS) needs it.
         WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
