@@ -948,7 +948,11 @@ static void dispatch_socket_event(const struct socket_poll_entry *entry) {
             NET_TRACE("connected\n");
         }
         set_socket_error(map_socket_errno(native_error));
-        invoke_socket_callback(callback, handle, &result, user_data);
+        /* The game reads the result through system_data: hand it a guest copy (a 64-bit host's
+         * stack is above 4 GiB). */
+        uint32_t guest_result = guest_block_in(&result, sizeof(result));
+        invoke_socket_callback(callback, handle, (void *)(uintptr_t)guest_result, user_data);
+        guest_block_out(&result, guest_result, sizeof(result));
         if (!slot_matches(index, entry->generation)) {
             return;
         }
