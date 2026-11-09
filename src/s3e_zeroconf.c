@@ -99,6 +99,22 @@ struct zero_conf_publisher {
 
 static struct zero_conf_search g_searches[ZERO_CONF_MAX_SEARCHES];
 static struct zero_conf_publisher g_publishers[ZERO_CONF_MAX_PUBLISHERS];
+
+/* The handles the game gets for a search and a publication: small numbers, never memory, like
+ * the socket handles (the structures are host memory the game may not be able to address). */
+enum {
+    ZERO_CONF_SEARCH_HANDLE_FIRST = 0x5300,
+    ZERO_CONF_PUBLISHER_HANDLE_FIRST = 0x5400,
+};
+
+static void *search_handle(const struct zero_conf_search *search) {
+    return (void *)(uintptr_t)(ZERO_CONF_SEARCH_HANDLE_FIRST + (uintptr_t)(search - g_searches));
+}
+
+static void *publisher_handle(const struct zero_conf_publisher *publisher) {
+    return (void *)(uintptr_t)(ZERO_CONF_PUBLISHER_HANDLE_FIRST +
+                               (uintptr_t)(publisher - g_publishers));
+}
 static int g_mdns_fd = -1;
 static int g_zero_conf_pumping;
 static uint32_t g_search_generation;
@@ -549,7 +565,7 @@ static void dispatch_found(struct zero_conf_search *search, struct zero_conf_dis
               entry->ipv4[0], entry->ipv4[1], entry->ipv4[2], entry->ipv4[3], entry->port);
     entry->notified = 1;
     callback_enter();
-    s3e_guest_call(GUEST_ADDRESS(search->found_callback), 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
+    s3e_guest_call(GUEST_ADDRESS(search->found_callback), 3, S3E_GUEST_ARG(search_handle(search)), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
     guest_scratch_pop(data);
@@ -564,7 +580,7 @@ static void dispatch_update(struct zero_conf_search *search, struct zero_conf_di
     data->txt_count = entry->txt_count;
     data->txt_records = scratch_txt_records(entry);
     callback_enter();
-    s3e_guest_call(GUEST_ADDRESS(search->update_callback), 3, S3E_GUEST_ARG(search), GUEST_ADDRESS(data),
+    s3e_guest_call(GUEST_ADDRESS(search->update_callback), 3, S3E_GUEST_ARG(search_handle(search)), GUEST_ADDRESS(data),
                    S3E_GUEST_ARG(search->user_data));
     callback_leave();
     guest_scratch_pop(data);
@@ -577,7 +593,7 @@ static void dispatch_lost(struct zero_conf_search *search, struct zero_conf_disc
     entry->notified = 0;
     if (callback) {
         callback_enter();
-        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(search), S3E_GUEST_ARG(service_id),
+        s3e_guest_call(GUEST_ADDRESS(callback), 3, S3E_GUEST_ARG(search_handle(search)), S3E_GUEST_ARG(service_id),
                        S3E_GUEST_ARG(user_data));
         callback_leave();
     }
@@ -972,19 +988,17 @@ static void expire_discovered(uint64_t now) {
 }
 
 static struct zero_conf_search *resolve_search(void *handle) {
-    for (size_t i = 0; i < ZERO_CONF_MAX_SEARCHES; ++i) {
-        if (&g_searches[i] == handle && g_searches[i].in_use) {
-            return &g_searches[i];
-        }
+    uintptr_t index = (uintptr_t)handle - ZERO_CONF_SEARCH_HANDLE_FIRST;
+    if (index < ZERO_CONF_MAX_SEARCHES && g_searches[index].in_use) {
+        return &g_searches[index];
     }
     return NULL;
 }
 
 static struct zero_conf_publisher *resolve_publisher(void *handle) {
-    for (size_t i = 0; i < ZERO_CONF_MAX_PUBLISHERS; ++i) {
-        if (&g_publishers[i] == handle && g_publishers[i].in_use) {
-            return &g_publishers[i];
-        }
+    uintptr_t index = (uintptr_t)handle - ZERO_CONF_PUBLISHER_HANDLE_FIRST;
+    if (index < ZERO_CONF_MAX_PUBLISHERS && g_publishers[index].in_use) {
+        return &g_publishers[index];
     }
     return NULL;
 }
@@ -1035,7 +1049,7 @@ void *s3eZeroConfStartSearch(const char *service_type, const char *domain,
         uint64_t now = zero_conf_now_ms();
         (void)send_query(search);
         search->next_query_ms = now + ZERO_CONF_QUERY_INTERVAL_MS;
-        return search;
+        return search_handle(search);
     }
     return NULL;
 }
@@ -1097,7 +1111,7 @@ void *s3eZeroConfPublish(uint16_t port, const char *name, const char *service_ty
         mark_publisher_txt_announced(publisher);
         publisher->last_announce_ms = now;
         publisher->next_announce_ms = now + ZERO_CONF_ANNOUNCE_INTERVAL_MS;
-        return publisher;
+        return publisher_handle(publisher);
     }
     return NULL;
 }

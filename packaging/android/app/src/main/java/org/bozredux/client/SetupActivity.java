@@ -5,15 +5,22 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.List;
 
 /**
  * First screen (temporary, until the launcher runs on Android): shows whether the game files are
@@ -25,6 +32,10 @@ public final class SetupActivity extends Activity {
     private File m_Root;
     private TextView m_State;
     private Button m_Play;
+    private EditText m_Name;
+
+    /** The game's limit for a player name (s3e_config.c valid_player_name). */
+    private static final int NAME_MAX = 13;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -54,6 +65,29 @@ public final class SetupActivity extends Activity {
         column.addView(text("Classic Black Ops Zombies, on Android. Use your own copy of the game.", 15,
                 0xFFB8B8C0));
         m_State = text("", 15, 0xFFFFFFFF);
+        column.addView(space());
+        column.addView(text("Player name (shown to the others in co-op)", 15, 0xFFFFFFFF));
+        m_Name = new EditText(this);
+        m_Name.setSingleLine(true);
+        m_Name.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        m_Name.setTextColor(0xFFFFFFFF);
+        m_Name.setHintTextColor(0xFF808088);
+        m_Name.setHint("Letters, digits, space - _ . (up to 13)");
+        // the characters the game accepts, as the desktop launcher filters them
+        m_Name.setFilters(new InputFilter[] {new InputFilter.LengthFilter(NAME_MAX),
+                (source, start, end, dest, dstart, dend) -> {
+                    StringBuilder kept = new StringBuilder();
+                    for (int i = start; i < end; ++i) {
+                        char c = source.charAt(i);
+                        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                                || c == ' ' || c == '-' || c == '_' || c == '.') {
+                            kept.append(c);
+                        }
+                    }
+                    return kept.length() == end - start ? null : kept;
+                }});
+        m_Name.setText(readName());
+        column.addView(m_Name);
         column.addView(space());
         column.addView(m_State);
         column.addView(space());
@@ -93,7 +127,70 @@ public final class SetupActivity extends Activity {
         if (ready) m_Play.requestFocus(); // a TV remote or controller starts on PLAY
     }
 
+    /** client.ini [player] name, as the desktop launcher reads it. */
+    private String readName() {
+        File ini = new File(m_Root, "client.ini");
+        if (!ini.isFile()) return "";
+        try {
+            boolean player = false;
+            for (String line : Files.readAllLines(ini.toPath(), StandardCharsets.UTF_8)) {
+                String t = line.trim();
+                if (t.startsWith("[")) {
+                    player = t.equals("[player]");
+                } else if (player && t.startsWith("name") && t.contains("=")) {
+                    String key = t.substring(0, t.indexOf('=')).trim();
+                    if (key.equals("name")) return t.substring(t.indexOf('=') + 1).trim();
+                }
+            }
+        } catch (IOException e) {
+            // no name yet
+        }
+        return "";
+    }
+
+    /** Writes client.ini [player] name in place, keeping the rest of the file (comments too). */
+    private void writeName(String name) {
+        File ini = new File(m_Root, "client.ini");
+        List<String> lines = new ArrayList<>();
+        try {
+            if (ini.isFile()) lines = new ArrayList<>(Files.readAllLines(ini.toPath(), StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            lines = new ArrayList<>();
+        }
+        // [player] starts at section; its entries run until the next section header (end).
+        int section = -1, end = -1, existing = -1;
+        for (int i = 0; i < lines.size(); ++i) {
+            String t = lines.get(i).trim();
+            if (t.startsWith("[")) {
+                if (section >= 0 && end < 0) end = i;
+                if (t.equals("[player]")) {
+                    section = i;
+                    end = -1;
+                }
+            } else if (section >= 0 && end < 0 && t.contains("=")
+                    && t.substring(0, t.indexOf('=')).trim().equals("name")) {
+                existing = i;
+            }
+        }
+        String entry = "name = " + name;
+        if (existing >= 0) {
+            lines.set(existing, entry);
+        } else if (section >= 0) {
+            lines.add(end >= 0 ? end : lines.size(), entry);
+        } else {
+            lines.add("");
+            lines.add("[player]");
+            lines.add(entry);
+        }
+        try {
+            Files.write(ini.toPath(), lines, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            m_State.setText("Cannot save the player name: " + e.getMessage());
+        }
+    }
+
     private void play() {
+        writeName(m_Name.getText().toString().trim());
         ArrayList<String> args = new ArrayList<>();
         args.add("--root");
         args.add(m_Root.getPath());

@@ -399,10 +399,6 @@ static int render_generator_audio(int channel, const void *data, uint32_t sample
         if (requested > SOUND_GENERATOR_CHUNK_SAMPLES) {
             requested = SOUND_GENERATOR_CHUNK_SAMPLES;
         }
-        if ((uintptr_t)(pcm + written) > UINT32_MAX || (uintptr_t)data > UINT32_MAX) {
-            guest_free(pcm);
-            return -1;
-        }
         struct s3e_sound_gen_audio_info info = {
             .channel = channel,
             .target = GUEST_ADDRESS(pcm + written),
