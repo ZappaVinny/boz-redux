@@ -26,8 +26,14 @@ jobs:
             path: build/linux-x86/package/BOZ-Redux-linux-x86.tar.gz
           - name: Windows x86
             target: windows
+            arch: x86
             artifact: BOZ-Redux-windows-x86
             path: build/windows-x86/package/BOZ-Redux-windows-x86.zip
+          - name: Windows x64
+            target: windows64
+            arch: x64
+            artifact: BOZ-Redux-windows-x64
+            path: build/windows-x64/package/BOZ-Redux-windows-x64.zip
     steps:
       - name: Install git
         run: pacman -Sy --noconfirm --needed git
@@ -37,10 +43,10 @@ jobs:
           submodules: recursive
 
       - uses: actions/cache@v4
-        if: matrix.target == 'windows'
+        if: matrix.arch
         with:
           path: build/downloads
-          key: windows-gl-${{ hashFiles('scripts/fetch-mesa-windows.sh', 'scripts/fetch-angle-windows.sh') }}
+          key: windows-gl-${{ matrix.arch }}-${{ hashFiles('scripts/fetch-mesa-windows.sh', 'scripts/fetch-angle-windows.sh') }}
 
       - name: Build, test and package
         run: scripts/ci.sh ${{ matrix.target }}
@@ -51,10 +57,10 @@ jobs:
           path: ${{ matrix.path }}
 
       - uses: actions/upload-artifact@v4
-        if: matrix.target == 'windows'
+        if: matrix.arch
         with:
-          name: windows-tests
-          path: build/windows-x86/tests/*_test.exe
+          name: windows-tests-${{ matrix.arch }}
+          path: build/windows-${{ matrix.arch }}/tests/*_test.exe
           retention-days: 1
 
   # The 64-bit client and its tests, in the PC memory map and the guest-base map Android uses.
@@ -104,9 +110,13 @@ jobs:
 
   # The Windows build on real Windows: unit tests, then the extractor and the launcher start.
   windows-test:
-    name: Windows tests
+    name: Windows tests (${{ matrix.arch }})
     needs: build
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, x64]
     defaults:
       run:
         shell: bash
@@ -118,16 +128,16 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: BOZ-Redux-windows-x86
-          path: build/windows-x86/package
+          name: BOZ-Redux-windows-${{ matrix.arch }}
+          path: build/windows-${{ matrix.arch }}/package
 
       - uses: actions/download-artifact@v4
         with:
-          name: windows-tests
-          path: build/windows-x86/tests
+          name: windows-tests-${{ matrix.arch }}
+          path: build/windows-${{ matrix.arch }}/tests
 
       - name: Test
-        run: scripts/test-windows.sh
+        run: BOZ_ARCH=${{ matrix.arch }} scripts/test-windows.sh
 
   # The Windows build made on Windows itself (MSYS2 MINGW32), for contributors without Linux:
   # it must configure, build and pass the unit tests just like the cross build.

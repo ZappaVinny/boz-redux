@@ -31,6 +31,18 @@ case "$target" in
     cmake --build build/windows-x86 -j"$(nproc)"
     scripts/package-windows.sh
     ;;
+  windows64)
+    # The 64-bit Windows client (Dynarmic). Dynarmic only uses Boost's headers, so the Linux
+    # package's serve the cross build, from a folder of their own (not all of /usr/include).
+    # CI runs its unit tests on Windows (scripts/test-windows.sh).
+    pacman -Syu --noconfirm --needed git cmake mingw-w64-gcc boost libarchive zip curl
+    git config --global --add safe.directory '*'
+    cd "$here"
+    mkdir -p build/boost-headers && ln -sfn /usr/include/boost build/boost-headers/boost
+    cmake --preset windows-x64 -DBoost_INCLUDE_DIR="$here/build/boost-headers"
+    cmake --build build/windows-x64 -j"$(nproc)"
+    BOZ_ARCH=x64 scripts/package-windows.sh
+    ;;
   linux64)
     # The 64-bit client (Dynarmic) with its tests, in both memory maps: the PC one and the
     # guest-base map Android uses, so Android-only memory bugs show up here. The host-function

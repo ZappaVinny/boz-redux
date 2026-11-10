@@ -3,18 +3,19 @@
 # from the repo root, then starts the packaged programs the way a player does: the APK extractor on
 # a small fake APK and the launcher (one screenshot, then it quits).
 # Usage: scripts/test-windows.sh   (after a Windows build: build/windows-x86/tests/*.exe and
-#        build/windows-x86/package/BOZ-Redux-windows-x86.zip)
+#        build/windows-x86/package/BOZ-Redux-windows-x86.zip; BOZ_ARCH=x64 for build/windows-x64)
 # Under Wine: BOZ_RUN=wine BOZ_NO_WINDOW=1 scripts/test-windows.sh (no launcher without a display).
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
+arch="${BOZ_ARCH:-x86}"
 run=(${BOZ_RUN:-})
 py="$(command -v python || command -v python3)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 failed=0
-for test in build/windows-x86/tests/*_test.exe; do
+for test in build/windows-$arch/tests/*_test.exe; do
     if "${run[@]}" "$test" > "$work/out.txt" 2>&1; then
         echo "ok   $(basename "$test")"
     else
@@ -25,7 +26,7 @@ for test in build/windows-x86/tests/*_test.exe; do
 done
 [ "$failed" = 0 ] || exit 1
 
-"$py" -m zipfile -e build/windows-x86/package/BOZ-Redux-windows-x86.zip "$work/client"
+"$py" -m zipfile -e build/windows-$arch/package/BOZ-Redux-windows-$arch.zip "$work/client"
 client="$(dirname "$(find "$work/client" -name boz-redux.exe | head -1)")"
 
 # The extractor: usage without arguments, and it copies stored assets out of an APK (a ZIP).

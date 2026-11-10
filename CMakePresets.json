@@ -20,6 +20,15 @@
       }
     },
     {
+      "name": "windows-x64",
+      "displayName": "Windows 64-bit (x86-64, Dynarmic, MinGW cross)",
+      "binaryDir": "${sourceDir}/build/windows-x64",
+      "toolchainFile": "${sourceDir}/cmake/x86_64-w64-mingw32.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
       "name": "windows-x64-msys2",
       "displayName": "Windows 64-bit (x86-64, Dynarmic), built on Windows in an MSYS2 MINGW64 shell",
       "binaryDir": "${sourceDir}/build/windows-x64",
@@ -93,6 +102,17 @@
     {
       "name": "windows-x86",
       "configurePreset": "windows-x86",
+      "targets": [
+        "codboz_s3e_loader",
+        "codboz_apk_extract",
+        "boz-redux",
+        "SDL2",
+        "SDL2_mixer"
+      ]
+    },
+    {
+      "name": "windows-x64",
+      "configurePreset": "windows-x64",
       "targets": [
         "codboz_s3e_loader",
         "codboz_apk_extract",
