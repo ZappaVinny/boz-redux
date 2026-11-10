@@ -3,6 +3,7 @@
 #include "client_config.h"
 #include "mod_runtime.h"
 #include "native_input.h"
+#include "touch_screen.h"
 
 #include <strings.h>
 
@@ -153,6 +154,8 @@ struct sdl_input_api {
     int (*HasEvent)(uint32_t type);
     int (*PollEvent)(void *event);
     const char *(*GetScancodeName)(int scancode);
+    void (*StartTextInput)(void);
+    void (*StopTextInput)(void);
 };
 
 static const uint32_t KEY_ACTION[] = {XPERIA_KEY_ACTION_SPRINT};
@@ -304,6 +307,8 @@ static void input_open(void) {
     sdl_load_optional_symbol((void **)&g_sdl.HasEvent, "SDL_HasEvent");
     sdl_load_optional_symbol((void **)&g_sdl.PollEvent, "SDL_PollEvent");
     sdl_load_optional_symbol((void **)&g_sdl.GetScancodeName, "SDL_GetScancodeName");
+    sdl_load_optional_symbol((void **)&g_sdl.StartTextInput, "SDL_StartTextInput");
+    sdl_load_optional_symbol((void **)&g_sdl.StopTextInput, "SDL_StopTextInput");
     if (!ok || g_sdl.InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
         if (!ok) {
             fprintf(stderr, "[input] SDL2 controller symbols unavailable\n");
@@ -882,73 +887,9 @@ static void desktop_set_game_mode(int enabled) {
     fprintf(stderr, "[input] %s mode\n", enabled ? "game (mouse captured)" : "menu (mouse pointer)");
 }
 
-/* Left-button presses and releases from SDL's events, with their positions. A tap on a touch
- * screen can be down and up again before the game looks, so polling the state would miss it.
- * The game reads the pointer once per s3ePointerUpdate (its menu update), and a press and a
- * release between two reads overwrite each other: each queued change is held for a number of
- * those reads (with a time fallback), and a finger lands only after a move there, as a mouse
- * would have hovered. */
-enum { PRESS_QUEUE = 16 };
-static struct {
-    int32_t x, y;
-    int down; /* 1 press, 0 release, -1 move only */
-} g_press_queue[PRESS_QUEUE];
-static int g_press_head, g_press_count;
-enum {
-    PRESS_DOWN_UPDATES = 3, /* the menus ignore a press seen by a single update */
-    PRESS_OTHER_UPDATES = 2,
-    PRESS_UPDATE_FALLBACK_MS = 40, /* screens that do not call s3ePointerUpdate */
-};
-static int g_press_active, g_press_hold;
-static int32_t g_press_x, g_press_y;
-static int g_press_down;
-static unsigned g_pointer_updates, g_press_seen_updates;
-static uint64_t g_press_tick_ms;
-
-__attribute__((unused)) static void queue_press(int32_t x, int32_t y, int down) {
-    if (g_press_count == PRESS_QUEUE) {
-        return;
-    }
-    int at = (g_press_head + g_press_count++) % PRESS_QUEUE;
-    g_press_queue[at].x = x;
-    g_press_queue[at].y = y;
-    g_press_queue[at].down = down;
-}
-
 static void desktop_update_menu(void *window) {
     int mx = 0, my = 0, ww = 0, wh = 0;
     uint32_t buttons = g_sdl.GetMouseState(&mx, &my);
-    uint64_t now = monotonic_ms();
-    if (g_press_active) {
-        if (g_pointer_updates != g_press_seen_updates ||
-            now - g_press_tick_ms >= PRESS_UPDATE_FALLBACK_MS) {
-            g_press_seen_updates = g_pointer_updates;
-            g_press_tick_ms = now;
-            if (--g_press_hold <= 0) {
-                g_press_active = 0;
-            }
-        }
-    }
-    if (!g_press_active && g_press_count) {
-        g_press_x = g_press_queue[g_press_head].x;
-        g_press_y = g_press_queue[g_press_head].y;
-        g_press_down = g_press_queue[g_press_head].down;
-        g_press_head = (g_press_head + 1) % PRESS_QUEUE;
-        --g_press_count;
-        g_press_active = 1;
-        g_press_hold = g_press_down > 0 ? PRESS_DOWN_UPDATES : PRESS_OTHER_UPDATES;
-        g_press_seen_updates = g_pointer_updates;
-        g_press_tick_ms = now;
-    }
-    if (g_press_active) {
-        mx = g_press_x;
-        my = g_press_y;
-        if (g_press_down >= 0) {
-            buttons = g_press_down ? MOUSE_LEFT : 0;
-        } else {
-            buttons = g_prev_mouse_left ? MOUSE_LEFT : 0; /* a move only */
-        }
-    }
     g_sdl.GetWindowSize(window, &ww, &wh);
     if (ww <= 0 || wh <= 0) {
         return;
@@ -1121,8 +1062,8 @@ static void desktop_toggle_fullscreen(void) {
 static int g_mouse_freed;
 
 static void desktop_update(uint64_t dt) {
-    if (!desktop_available()) {
-        return;
+    if (!desktop_available() || touch_screen_mode()) {
+        return; /* touch screens: fingers reach the game as touches (touch_screen_event) */
     }
     load_bindings();
     void *window = g_sdl.GetMouseFocus();
@@ -1219,6 +1160,9 @@ enum {
     SDL_MOUSEBUTTONDOWN_EVENT = 0x401,
     SDL_MOUSEBUTTONUP_EVENT = 0x402,
     SDL_MOUSEWHEEL_EVENT = 0x403,
+    SDL_FINGERDOWN_EVENT = 0x700,
+    SDL_FINGERUP_EVENT = 0x701,
+    SDL_FINGERMOTION_EVENT = 0x702,
     SDL_EVENT_BYTES = 56,
 };
 
@@ -1238,11 +1182,147 @@ static void mod_mouse_scale(float *sx, float *sy) {
     }
 }
 
+/* Touch screens: every finger is one of the game's touches (s3ePointer touch events, the
+ * multi-touch API it uses on phones), as Marmalade delivered them. The first finger also moves
+ * the polled pointer. While a mod's window takes input the fingers go to it instead (SDL's mouse
+ * copies of the fingers drive the overlay). Three fingers down at once press F1 for mods, which
+ * open their menus with keys a phone does not have. */
+enum { TOUCH_SLOTS = 10 };
+static struct {
+    int64_t finger;
+    int active;
+} g_touch_slots[TOUCH_SLOTS];
+
+static int touch_slot_for(int64_t finger, int create) {
+    for (int i = 0; i < TOUCH_SLOTS; ++i) {
+        if (g_touch_slots[i].active && g_touch_slots[i].finger == finger) {
+            return i;
+        }
+    }
+    if (!create) {
+        return -1;
+    }
+    for (int i = 0; i < TOUCH_SLOTS; ++i) {
+        if (!g_touch_slots[i].active) {
+            g_touch_slots[i].active = 1;
+            g_touch_slots[i].finger = finger;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int touch_fingers_down(void) {
+    int count = 0;
+    for (int i = 0; i < TOUCH_SLOTS; ++i) {
+        count += g_touch_slots[i].active;
+    }
+    return count;
+}
+
+/* An SDL finger position (0..1 in the window) in the game's pointer coordinates. */
+static int touch_game_position(float nx, float ny, int32_t *x, int32_t *y) {
+    void *window = g_sdl.GetKeyboardFocus ? g_sdl.GetKeyboardFocus() : NULL;
+    if (!window && g_sdl.GetMouseFocus) {
+        window = g_sdl.GetMouseFocus();
+    }
+    int ww = 0, wh = 0;
+    if (!window || !g_sdl.GetWindowSize) {
+        return 0;
+    }
+    g_sdl.GetWindowSize(window, &ww, &wh);
+    int32_t rect[4];
+    present_rect(ww, wh, rect);
+    if (ww <= 0 || wh <= 0 || rect[2] <= 0 || rect[3] <= 0) {
+        return 0;
+    }
+    *x = clamp_pointer_x((int32_t)((nx * (float)ww - (float)rect[0]) * (float)window_width() / (float)rect[2]));
+    *y = clamp_pointer_y((int32_t)((ny * (float)wh - (float)rect[1]) * (float)window_height() / (float)rect[3]));
+    return 1;
+}
+
+static void touch_dispatch(int slot, int kind, int32_t x, int32_t y) {
+    if (kind == SDL_FINGERMOTION_EVENT) {
+        struct s3e_pointer_touch_motion_event event = {.touch_id = slot, .x = x, .y = y};
+        pointer_dispatch(3, &event, sizeof(event));
+    } else {
+        struct s3e_pointer_touch_event event = {
+            .touch_id = slot, .pressed = kind == SDL_FINGERDOWN_EVENT, .x = x, .y = y};
+        pointer_dispatch(2, &event, sizeof(event));
+    }
+    if (slot == 0) {
+        g_pointer_x = x;
+        g_pointer_y = y;
+        /* The polled state only: g_pointer_down belongs to the controller's cursor, which
+         * releases it every frame it is not in use. */
+        if (kind == SDL_FINGERDOWN_EVENT) {
+            g_pointer_states[0] = POINTER_STATE_PRESSED;
+        } else if (kind == SDL_FINGERUP_EVENT) {
+            g_pointer_states[0] = POINTER_STATE_RELEASED;
+        }
+    }
+}
+
+/* Lifts every finger the game holds (a mod window took the input). */
+static void touch_release_all(void) {
+    for (int i = 0; i < TOUCH_SLOTS; ++i) {
+        if (g_touch_slots[i].active) {
+            g_touch_slots[i].active = 0;
+            touch_dispatch(i, SDL_FINGERUP_EVENT, i == 0 ? g_pointer_x : 0, i == 0 ? g_pointer_y : 0);
+        }
+    }
+}
+
+static void touch_screen_event(uint32_t type, const uint8_t *ev) {
+    if (type != SDL_FINGERDOWN_EVENT && type != SDL_FINGERUP_EVENT && type != SDL_FINGERMOTION_EVENT) {
+        return;
+    }
+    int64_t finger;
+    float nx, ny;
+    memcpy(&finger, ev + 16, 8); /* SDL_TouchFingerEvent: fingerId, x, y */
+    memcpy(&nx, ev + 24, 4);
+    memcpy(&ny, ev + 28, 4);
+    if (overlay_capturing()) {
+        touch_release_all();
+        return;
+    }
+    int slot = touch_slot_for(finger, type == SDL_FINGERDOWN_EVENT);
+    int32_t x, y;
+    if (slot < 0 || !touch_game_position(nx, ny, &x, &y)) {
+        return;
+    }
+    if (type == SDL_FINGERUP_EVENT) {
+        g_touch_slots[slot].active = 0;
+    }
+    touch_dispatch(slot, (int)type, x, y);
+    if (type == SDL_FINGERDOWN_EVENT && touch_fingers_down() == 3) {
+        lua_runtime_key("F1", true, false);
+        lua_runtime_key("F1", false, false);
+    }
+}
+
+/* The on-screen keyboard while a mod's text field has the focus. */
+static void touch_screen_keyboard(void) {
+    static bool shown;
+    bool want = overlay_wants_text_input();
+    if (want != shown && g_sdl.StartTextInput && g_sdl.StopTextInput) {
+        shown = want;
+        if (want) {
+            g_sdl.StartTextInput();
+        } else {
+            g_sdl.StopTextInput();
+        }
+    }
+}
+
 static void mod_handle_event(const uint8_t *ev) {
     uint32_t type;
     memcpy(&type, ev, 4);
     struct overlay_event out;
     memset(&out, 0, sizeof(out));
+    if (touch_screen_mode()) {
+        touch_screen_event(type, ev);
+    }
     switch (type) {
     case SDL_KEYDOWN_EVENT:
     case SDL_KEYUP_EVENT: {
@@ -1293,20 +1373,6 @@ static void mod_handle_event(const uint8_t *ev) {
     case SDL_MOUSEBUTTONUP_EVENT: {
         static const int buttons[] = {-1, 0, 2, 1}; /* SDL left, middle, right -> ImGui 0, 2, 1 */
         uint8_t button = ev[16];
-#if defined(__ANDROID__)
-        /* Touch screens only: a mouse is polled as it is (desktop_update_menu). */
-        if (button == 1 && !g_desktop_game_mode) {
-            int32_t ex, ey;
-            memcpy(&ex, ev + 20, 4);
-            memcpy(&ey, ev + 24, 4);
-            if (type == SDL_MOUSEBUTTONDOWN_EVENT) {
-                /* A finger lands without hovering first: move the pointer there before the
-                 * press, as a mouse would have, so the menu sees the press on its button. */
-                queue_press(ex, ey, -1);
-            }
-            queue_press(ex, ey, type == SDL_MOUSEBUTTONDOWN_EVENT);
-        }
-#endif
         int32_t x, y;
         float sx, sy;
         memcpy(&x, ev + 20, 4);
@@ -1400,6 +1466,9 @@ void input_pump(void) {
         uint8_t event[SDL_EVENT_BYTES + 8];
         while (g_sdl.PollEvent(event)) {
             mod_handle_event(event);
+        }
+        if (touch_screen_mode()) {
+            touch_screen_keyboard();
         }
     } else {
         g_sdl.FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
@@ -1641,7 +1710,6 @@ int32_t s3ePointerUnRegister(uint32_t id, void *callback) {
 }
 
 int32_t s3ePointerUpdate(void) {
-    ++g_pointer_updates; /* the menu press queue advances per game read */
     pointer_clear_transitions();
     input_pump();
     dispatch_due_timers();
@@ -1657,6 +1725,8 @@ int32_t s3ePointerGetInt(uint32_t key) {
         return g_pointer_x;
     case 2:
         return g_pointer_y;
+    case 4: /* S3E_POINTER_MULTI_TOUCH_AVAILABLE: the game then reads touches by finger */
+        return touch_screen_mode() ? 1 : 0;
     default:
         return 0;
     }

@@ -12,6 +12,7 @@
  * from the move pad's own update), the buttons as OnInputAction, and adds mouse movement straight
  * to the controller's yaw and pitch at the start of FixedStep. The game still clamps the pitch,
  * applies recoil and rebuilds the view. */
+#include "touch_screen.h"
 #include "native_input.h"
 
 #include "arm_emu.h"
@@ -292,8 +293,9 @@ bool native_input_init(void) {
         return g_available;
     }
     started = true;
-    if (getenv("BOZ_TOUCHPAD_CONTROLS")) {
-        fprintf(stderr, "[input] native controls off (BOZ_TOUCHPAD_CONTROLS)\n");
+    if (getenv("BOZ_TOUCHPAD_CONTROLS") || touch_screen_mode()) {
+        fprintf(stderr, "[input] native controls off (%s)\n",
+                touch_screen_mode() ? "touch screen" : "BOZ_TOUCHPAD_CONTROLS");
         return false;
     }
     bool ok = true;

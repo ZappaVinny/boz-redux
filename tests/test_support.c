@@ -74,6 +74,10 @@ __attribute__((weak)) void overlay_event(const struct overlay_event *event) {
     (void)event;
 }
 
+__attribute__((weak)) bool overlay_wants_text_input(void) {
+    return false;
+}
+
 __attribute__((weak)) bool overlay_capturing(void) {
     return false;
 }

@@ -69,6 +69,8 @@ bool overlay_capturing(void);
 /* Wraps the Lua frame: begin before lua_runtime_frame, end after (draws into framebuffer 0). */
 void overlay_begin_frame(int width, int height, double dt);
 void overlay_end_frame(void);
+/* Whether a mod's text field has the keyboard focus (touch screens show their keyboard). */
+bool overlay_wants_text_input(void);
 /* Adds the `ui` and `overlay` modules to a Lua state. */
 void overlay_open_lua(void *lua_state);
 

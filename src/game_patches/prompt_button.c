@@ -1,4 +1,5 @@
 #include "game_patches.h"
+#include "touch_screen.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +17,7 @@ static const uint8_t SHOW_BUTTON[2] = {0x29, 0x46};   /* mov r1, r5 */
 static const uint8_t HIDE_BUTTON[2] = {0x00, 0x21};   /* movs r1, #0 */
 
 bool prompt_button_install(struct s3e_loaded_image *loaded) {
-    if (getenv("BOZ_TOUCHPAD_CONTROLS")) {
+    if (getenv("BOZ_TOUCHPAD_CONTROLS") || touch_screen_mode()) {
         return true;   /* touch play keeps the button to press */
     }
     if (!loaded || !loaded->base || loaded->map_size < PROMPT_IMAGE_VISIBLE_OFFSET + 2) {

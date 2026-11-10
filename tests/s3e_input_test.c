@@ -162,6 +162,51 @@ static uint8_t fake_game_controller_get_button(void *controller, int button) {
     return g_fake_buttons[button];
 }
 
+/* Finger events for the touch-screen test, handed out by SDL_PollEvent. */
+static uint8_t g_fake_events[8][64];
+static int g_fake_event_count, g_fake_event_next;
+static int g_fake_window_token;
+static int g_fake_poll; /* SDL_PollEvent exists (the touch test); otherwise events are flushed */
+
+static void fake_finger(uint32_t type, int64_t finger, float x, float y) {
+    assert(g_fake_event_count < 8);
+    uint8_t *ev = g_fake_events[g_fake_event_count++];
+    memset(ev, 0, 64);
+    memcpy(ev, &type, 4);
+    memcpy(ev + 16, &finger, 8);
+    memcpy(ev + 24, &x, 4);
+    memcpy(ev + 28, &y, 4);
+}
+
+static int fake_poll_event(void *event) {
+    if (g_fake_event_next == g_fake_event_count) {
+        return 0;
+    }
+    memcpy(event, g_fake_events[g_fake_event_next++], 56);
+    return 1;
+}
+
+static void *fake_keyboard_focus(void) {
+    return &g_fake_window_token;
+}
+
+static void fake_window_size(void *window, int *w, int *h) {
+    (void)window;
+    *w = 640;
+    *h = 480;
+}
+
+static const char *g_lua_keys[4];
+static int g_lua_key_count;
+
+bool lua_runtime_key(const char *name, bool down, bool repeat) {
+    (void)repeat;
+    if (down && g_lua_key_count < 4) {
+        g_lua_keys[g_lua_key_count++] = name;
+    }
+    return false;
+}
+
 static const char *fake_sdl_error(void) {
     return "fake input error";
 }
@@ -195,6 +240,11 @@ void *dlsym(void *handle, const char *name) {
     TEST_SYMBOL("SDL_GameControllerGetAxis", fake_game_controller_get_axis)
     TEST_SYMBOL("SDL_GameControllerGetButton", fake_game_controller_get_button)
     TEST_SYMBOL("SDL_GetError", fake_sdl_error)
+    if (g_fake_poll) {
+        TEST_SYMBOL("SDL_PollEvent", fake_poll_event)
+    }
+    TEST_SYMBOL("SDL_GetKeyboardFocus", fake_keyboard_focus)
+    TEST_SYMBOL("SDL_GetWindowSize", fake_window_size)
 #undef TEST_SYMBOL
     return NULL;
 }
@@ -532,7 +582,75 @@ static void test_cursor_position_precedes_press(void) {
     assert(g_pointer_events.y[0] == g_pointer_events.y[1]);
 }
 
+/* Touch screens: each finger is its own s3e touch (the game's multi-touch controls), the first
+ * also moves the polled pointer, and three fingers press F1 for mods. */
+struct touch_log {
+    int32_t id[8], pressed[8], x[8], y[8];
+    int motion[8];
+    size_t count;
+};
+static struct touch_log g_touches;
+
+static int32_t record_touch(void *system_data, void *user_data) {
+    const struct s3e_pointer_touch_event *event = system_data;
+    struct touch_log *log = user_data;
+    assert(log->count < 8);
+    log->id[log->count] = event->touch_id;
+    log->pressed[log->count] = event->pressed;
+    log->x[log->count] = event->x;
+    log->y[log->count] = event->y;
+    log->motion[log->count++] = 0;
+    return 0;
+}
+
+static int32_t record_touch_motion(void *system_data, void *user_data) {
+    const struct s3e_pointer_touch_motion_event *event = system_data;
+    struct touch_log *log = user_data;
+    assert(log->count < 8);
+    log->id[log->count] = event->touch_id;
+    log->x[log->count] = event->x;
+    log->y[log->count] = event->y;
+    log->motion[log->count++] = 1;
+    return 0;
+}
+
+static void test_touch_screen_fingers(void) {
+    g_fake_poll = 1;
+    reset_input();
+    assert(s3ePointerGetInt(4) == 1); /* multi-touch available */
+    g_pointer_callbacks[2].callback = (void *)(uintptr_t)&record_touch;
+    g_pointer_callbacks[2].user_data = &g_touches;
+    g_pointer_callbacks[3].callback = (void *)(uintptr_t)&record_touch_motion;
+    g_pointer_callbacks[3].user_data = &g_touches;
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x700, 71, 0.25f, 0.5f); /* left thumb down */
+    fake_finger(0x700, 99, 0.75f, 0.5f); /* right thumb down */
+    fake_finger(0x702, 71, 0.5f, 0.25f); /* left thumb moves */
+    fake_finger(0x701, 99, 0.75f, 0.5f); /* right thumb up */
+    input_pump();
+
+    assert(g_touches.count == 4);
+    assert(g_touches.id[0] == 0 && g_touches.pressed[0] == 1 && !g_touches.motion[0]);
+    assert(g_touches.x[0] == 160 && g_touches.y[0] == 240);
+    assert(g_touches.id[1] == 1 && g_touches.pressed[1] == 1);
+    assert(g_touches.x[1] == 480 && g_touches.y[1] == 240);
+    assert(g_touches.id[2] == 0 && g_touches.motion[2] && g_touches.x[2] == 320 && g_touches.y[2] == 120);
+    assert(g_touches.id[3] == 1 && g_touches.pressed[3] == 0);
+    assert(g_pointer_x == 320 && g_pointer_y == 120); /* the first finger */
+    assert(s3ePointerGetState(0) != 0);
+
+    /* Three fingers: F1 for mods. Slot 1 is free again and is reused. */
+    g_fake_event_count = g_fake_event_next = 0;
+    g_touches.count = 0;
+    fake_finger(0x700, 5, 0.5f, 0.5f);
+    fake_finger(0x700, 6, 0.6f, 0.5f);
+    input_pump();
+    assert(g_touches.id[0] == 1 && g_touches.id[1] == 2);
+    assert(g_lua_key_count == 1 && strcmp(g_lua_keys[0], "F1") == 0);
+}
+
 int main(void) {
+    setenv("BOZ_TOUCH_SCREEN", "1", 1); /* touch mode only changes desktop and touch input */
     test_skips_unmapped_joysticks();
     test_retries_controller_discovery();
     test_disconnect_releases_input_and_reconnects();
@@ -543,6 +661,7 @@ int main(void) {
     test_cursor_mode_releases_and_reacquires_held_action();
     test_touchpad_initial_position_precedes_press();
     test_cursor_position_precedes_press();
+    test_touch_screen_fingers();
     reset_input();
     input_shutdown();
     puts("s3e_input_test: ok");

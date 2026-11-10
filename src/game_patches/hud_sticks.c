@@ -2,6 +2,7 @@
  * ingame.group.bin is made transparent wherever the group comes from (the pack, a loose file, a
  * mod's rebuilt copy). The texture is found by its resource record, not by file size. Touchpad
  * controls (BOZ_TOUCHPAD_CONTROLS) play with the sticks, so it is skipped then. */
+#include "touch_screen.h"
 #include "game_patches.h"
 
 #include <stdlib.h>
@@ -26,7 +27,8 @@ static const struct { uint16_t x, y, width, height; } STICKS[] = {
 };
 
 bool hud_sticks_apply_to(const char *name) {
-    return strcasecmp(str_base_name(name), "ingame.group.bin") == 0 && !getenv("BOZ_TOUCHPAD_CONTROLS");
+    return strcasecmp(str_base_name(name), "ingame.group.bin") == 0 && !getenv("BOZ_TOUCHPAD_CONTROLS") &&
+           !touch_screen_mode();
 }
 
 static uint8_t *find_record(uint8_t *data, size_t size) {

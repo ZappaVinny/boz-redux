@@ -1,4 +1,5 @@
 #include "s3e_host_internal.h"
+#include "touch_screen.h"
 
 #include "arm_emu.h"
 #include "host_signatures.h"
@@ -77,8 +78,8 @@ const char *s3eDeviceGetString(uint32_t key) {
     switch (key) {
     case 0:
         return "Android";
-    case 2:
-        return "R800i";
+    case 2: /* the model: an Xperia Play gets the game's Xperia controls (its XperiaDeviceID list) */
+        return touch_screen_mode() ? "BOZ-Redux-Android" : "R800i";
     case 8:
         return "ARM7A";
     case 0x0d:
@@ -88,7 +89,7 @@ const char *s3eDeviceGetString(uint32_t key) {
     case 0x14:
         return "en_US";
     case 0x15:
-        return "Sony Ericsson Xperia Play";
+        return touch_screen_mode() ? "BOZ Redux Android" : "Sony Ericsson Xperia Play";
     case 0x19:
         return s3e_device_id_get();
     case 0x1f:

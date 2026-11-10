@@ -590,6 +590,10 @@ extern "C" void overlay_begin_frame(int width, int height, double dt) {
     g_in_frame = true;
 }
 
+extern "C" bool overlay_wants_text_input(void) {
+    return g_context && ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput;
+}
+
 extern "C" void overlay_end_frame(void) {
     if (!g_in_frame) {
         return;
