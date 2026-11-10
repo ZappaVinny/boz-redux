@@ -772,8 +772,12 @@ void mods_tab(Launcher &l) {
         return;
     }
 
+    // The details below get six lines; the list keeps at least three rows on a short screen (a
+    // phone), where the details then scroll below it.
     float details_height = ImGui::GetTextLineHeightWithSpacing() * 6;
-    ImGui::BeginChild("mod_list", ImVec2(0, -details_height), ImGuiChildFlags_Borders);
+    float list_height = std::max(ImGui::GetContentRegionAvail().y - details_height,
+                                 ImGui::GetFrameHeightWithSpacing() * 4);
+    ImGui::BeginChild("mod_list", ImVec2(0, list_height), ImGuiChildFlags_Borders);
     int move_from = -1, move_to = -1;
     if (ImGui::BeginTable("mods", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
@@ -1286,12 +1290,18 @@ int main(int argc, char **argv) {
     ImGui::GetIO().IniFilename = nullptr;
     apply_style();
 #if defined(__ANDROID__)
-    // A phone's or TV's screen in pixels: lay out as on a window about 640 pixels high, and let
-    // a TV remote or controller move between the buttons.
+    // Sized by the screen's density (one desktop pixel per Android dp, the size Android's own text
+    // has), as far as the layout still fits: at least about 450 by 950 desktop pixels. A
+    // controller can move between the buttons.
     {
         int w = 0, h = 0;
         SDL_GetRendererOutputSize(renderer, &w, &h);
-        g_scale = std::max(1.0f, std::min(3.0f, std::min((float)h / 640.0f, (float)w / 1000.0f)));
+        float dpi = 0.0f;
+        float by_density = SDL_GetDisplayDPI(0, &dpi, nullptr, nullptr) == 0 && dpi > 0.0f
+                               ? dpi / 160.0f : (float)h / 640.0f;
+        float fits = std::min((float)h / 450.0f, (float)w / 950.0f);
+        g_scale = std::max(1.0f, std::min(3.0f, std::min(by_density, fits)));
+        SDL_Log("launcher scale %.2f (%dx%d, %.0f dpi)", g_scale, w, h, dpi);
         ImGui::GetStyle().ScaleAllSizes(g_scale);
         ImGui::GetStyle().FontScaleDpi = g_scale;
         ImGui::GetStyle().ScrollbarSize = px(18);
