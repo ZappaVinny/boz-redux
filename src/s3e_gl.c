@@ -818,7 +818,9 @@ static void clear_letterbox_rect(GLint x, GLint y, GLsizei width, GLsizei height
 }
 
 static void frontend_overlay_gl_present(void) {
-    int has_letterbox = g_surface.x || g_surface.y;
+    /* With window scaling the game draws into the scale framebuffer (surface-sized, no bars) and
+     * scale_present clears the bars, so window-sized bars here would erase the picture's edge. */
+    int has_letterbox = (g_surface.x || g_surface.y) && g_scale_state <= 0;
     int draw_cursor = input_draw_software_cursor();
     if (!has_letterbox && !draw_cursor) {
         return;
