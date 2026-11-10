@@ -5,6 +5,9 @@
 // Lua draws through the `ui` module; widgets that contain others take a function, so a Lua error
 // can never leave a window open.
 #include "mod_runtime.h"
+#include "touch_screen.h"
+
+#include <algorithm>
 #include "brand_imgui.h"
 #include "branding.h"
 
@@ -453,6 +456,7 @@ bool g_context;
 bool g_in_frame;
 bool g_capturing;
 float g_scale = 1.0f;
+constexpr float TOUCH_SCREEN_UI_SCALE = 1.6f;
 ImGuiErrorRecoveryState g_recovery;
 
 ImGuiKey imgui_key(int scancode) {
@@ -575,13 +579,18 @@ extern "C" void overlay_begin_frame(int width, int height, double dt) {
     io.DisplaySize = ImVec2((float)width, (float)height);
     io.DeltaTime = dt > 0.0 ? (float)dt : 1.0f / 60.0f;
     float scale = height >= 720 ? (float)height / 720.0f : 1.0f;
+    if (touch_screen_mode()) {
+        /* A phone screen is a few inches tall: text and buttons at the PC's share of the screen
+         * would be too small to read or tap. */
+        scale *= TOUCH_SCREEN_UI_SCALE;
+    }
     if (scale != g_scale) {
         ImGuiStyle &style = ImGui::GetStyle();
         style.ScaleAllSizes(scale / g_scale);
         style.FontScaleDpi = scale;
         g_scale = scale;
     }
-    io.MouseDrawCursor = g_capturing;
+    io.MouseDrawCursor = g_capturing && !touch_screen_mode();
     if (!g_capturing) {
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     }
@@ -677,11 +686,22 @@ int ui_window(lua_State *L) {
     luaL_checktype(L, body, LUA_TFUNCTION);
     float x = opt_number(L, opts, "x", -1), y = opt_number(L, opts, "y", -1);
     float w = opt_number(L, opts, "w", 0), h = opt_number(L, opts, "h", 0);
-    if (x >= 0 && y >= 0) {
-        ImGui::SetNextWindowPos(ImVec2(x * g_scale, y * g_scale), ImGuiCond_FirstUseEver);
-    }
+    // The first placement stays on the screen (small windows, and phones, where the UI is
+    // larger): the size is cut to the display, then the position moved so the window fits.
+    ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImVec2 size(w * g_scale, h * g_scale);
     if (w > 0 && h > 0) {
-        ImGui::SetNextWindowSize(ImVec2(w * g_scale, h * g_scale), ImGuiCond_FirstUseEver);
+        size.x = std::min(size.x, display.x);
+        size.y = std::min(size.y, display.y);
+        ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
+    }
+    if (x >= 0 && y >= 0) {
+        ImVec2 at(x * g_scale, y * g_scale);
+        if (w > 0 && h > 0) {
+            at.x = std::max(0.0f, std::min(at.x, display.x - size.x));
+            at.y = std::max(0.0f, std::min(at.y, display.y - size.y));
+        }
+        ImGui::SetNextWindowPos(at, ImGuiCond_FirstUseEver);
     }
     if (opt_bool(L, opts, "focus")) {
         ImGui::SetNextWindowFocus();
