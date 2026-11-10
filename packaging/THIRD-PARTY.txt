@@ -9,6 +9,9 @@ Licence of this package
 Unicorn Engine (built into codboz_s3e_loader)
   https://github.com/unicorn-engine/unicorn - GPLv2 (QEMU-derived)
 
+Dynarmic (64-bit builds: the ARM CPU, built into codboz_s3e_loader)
+  https://github.com/azahar-emu/dynarmic - 0BSD license
+
 SDL2 (SDL2.dll / libSDL2-2.0.so.0)
   https://github.com/libsdl-org/SDL - zlib license
 
