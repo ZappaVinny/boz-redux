@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # CI build inside an archlinux:base-devel container (the same toolchain as local development).
-# Usage: scripts/ci.sh linux|windows
+# Usage: scripts/ci.sh linux|windows|linux64
 # Local run: docker run --rm -v "$PWD:/src" -w /src archlinux:base-devel scripts/ci.sh linux
 set -euo pipefail
-target="${1:?usage: ci.sh linux|windows}"
+target="${1:?usage: ci.sh linux|windows|linux64}"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 
 case "$target" in
@@ -30,6 +30,23 @@ case "$target" in
     # The unit tests too; CI runs them on Windows (scripts/test-windows.sh).
     cmake --build build/windows-x86 -j"$(nproc)"
     scripts/package-windows.sh
+    ;;
+  linux64)
+    # The 64-bit client (Dynarmic) with its tests, in both memory maps: the PC one and the
+    # guest-base map Android uses, so Android-only memory bugs show up here. The host-function
+    # signature table must match the sources it is generated from.
+    pacman -Syu --noconfirm --needed git cmake ninja boost python sdl2 mesa libglvnd libxkbcommon \
+      libdecor wayland libx11 alsa-lib wayland-protocols
+    git config --global --add safe.directory '*'
+    cd "$here"
+    python3 tools/gen_host_signatures.py
+    git diff --exit-code -- src/host_signatures.c ||
+      { echo "src/host_signatures.c is out of date: run tools/gen_host_signatures.py" >&2; exit 1; }
+    for preset in linux-x64 linux-x64-base; do
+      cmake --preset "$preset"
+      cmake --build --preset "$preset-tests" -j"$(nproc)"
+      ctest --preset "$preset" --output-on-failure
+    done
     ;;
   *)
     echo "unknown target: $target" >&2

@@ -55,6 +55,23 @@
         "CMAKE_RC_COMPILER": "windres",
         "BOZ_GUEST_BASE": "ON"
       }
+    },
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x64",
+      "binaryDir": "${sourceDir}/build/linux-x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-x64-base",
+      "displayName": "Linux x64, guest-base memory map (the Android map, for tests)",
+      "binaryDir": "${sourceDir}/build/linux-x64-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "BOZ_GUEST_BASE": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -124,12 +141,56 @@
         "SDL2",
         "SDL2_mixer"
       ]
+    },
+    {
+      "name": "linux-x64",
+      "configurePreset": "linux-x64",
+      "targets": [
+        "codboz_s3e_loader",
+        "codboz_apk_extract",
+        "boz-redux",
+        "SDL2",
+        "SDL2_mixer"
+      ]
+    },
+    {
+      "name": "linux-x64-tests",
+      "configurePreset": "linux-x64"
+    },
+    {
+      "name": "linux-x64-base",
+      "configurePreset": "linux-x64-base",
+      "targets": [
+        "codboz_s3e_loader",
+        "codboz_apk_extract",
+        "boz-redux",
+        "SDL2",
+        "SDL2_mixer"
+      ]
+    },
+    {
+      "name": "linux-x64-base-tests",
+      "configurePreset": "linux-x64-base"
     }
   ],
   "testPresets": [
     {
       "name": "linux-x86",
       "configurePreset": "linux-x86",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-x64",
+      "configurePreset": "linux-x64",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-x64-base",
+      "configurePreset": "linux-x64-base",
       "output": {
         "outputOnFailure": true
       }

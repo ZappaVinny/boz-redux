@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 64-migration]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -56,6 +56,51 @@ jobs:
           name: windows-tests
           path: build/windows-x86/tests/*_test.exe
           retention-days: 1
+
+  # The 64-bit client and its tests, in the PC memory map and the guest-base map Android uses.
+  linux64:
+    name: Linux x64 (PC and guest-base maps)
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Install git
+        run: pacman -Sy --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and test
+        run: scripts/ci.sh linux64
+
+  # The Android APK (arm64, phones). The runner image has the Android SDK; the NDK and CMake
+  # versions the Gradle build asks for are installed here.
+  android:
+    name: Android (arm64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install the NDK and CMake
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build the APK
+        working-directory: packaging/android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BOZ-Redux-android-arm64-debug
+          path: packaging/android/app/build/outputs/apk/debug/app-debug.apk
 
   # The Windows build on real Windows: unit tests, then the extractor and the launcher start.
   windows-test:
