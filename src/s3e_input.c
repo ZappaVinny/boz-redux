@@ -419,9 +419,10 @@ static int32_t clamp_pointer_y(int32_t y) {
     return clamp_value(y, window_height());
 }
 
-/* Marmalade calls every callback registered for an event: the game registers pointer events from
- * two places (the touch manager, then the UI). The first registration of each event stays in
- * g_pointer_callbacks; later, different ones go here and are called after it. */
+/* Touch screens: Marmalade calls every callback registered for an event, and the game registers
+ * pointer events from two places (the touch manager, then the UI). The first registration of each
+ * event stays in g_pointer_callbacks; later, different ones go here and are called after it. On
+ * a PC the last registration replaces the earlier one, as before (the UI gets the mouse). */
 enum { POINTER_EXTRA_CALLBACKS = 3 };
 static struct callback_slot g_pointer_extra[4][POINTER_EXTRA_CALLBACKS];
 
@@ -1762,7 +1763,7 @@ int32_t s3ePointerRegister(uint32_t id, void *callback, void *user_data) {
         return 0;
     }
     struct callback_slot *first = &g_pointer_callbacks[id];
-    if (!first->callback || first->callback == callback) {
+    if (!touch_screen_mode() || !first->callback || first->callback == callback) {
         first->callback = callback;
         first->user_data = user_data;
         return 0;

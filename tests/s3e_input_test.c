@@ -751,8 +751,8 @@ static void test_touch_tap_hovers_then_presses(void) {
     g_pointer_callbacks[1].callback = NULL;
 }
 
-/* Marmalade calls every callback registered for an event: the touch manager and the UI both take
- * the touch events. */
+/* Touch screens: Marmalade calls every callback registered for an event, so the touch manager and
+ * the UI both take the touch events. (The test runs in touch mode; a PC keeps the last one.) */
 static int g_touch_calls_a, g_touch_calls_b;
 static int32_t count_touch_a(void *system_data, void *user_data) {
     (void)system_data; (void)user_data;
