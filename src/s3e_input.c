@@ -419,17 +419,29 @@ static int32_t clamp_pointer_y(int32_t y) {
     return clamp_value(y, window_height());
 }
 
-static void pointer_dispatch(uint32_t id, void *event, size_t size) {
-    if (id >= ARRAY_SIZE(g_pointer_callbacks)) {
-        return;
-    }
-    struct callback_slot *slot = &g_pointer_callbacks[id];
+/* Marmalade calls every callback registered for an event: the game registers pointer events from
+ * two places (the touch manager, then the UI). The first registration of each event stays in
+ * g_pointer_callbacks; later, different ones go here and are called after it. */
+enum { POINTER_EXTRA_CALLBACKS = 3 };
+static struct callback_slot g_pointer_extra[4][POINTER_EXTRA_CALLBACKS];
+
+static void pointer_call(struct callback_slot *slot, void *event, size_t size) {
     if (!slot->callback) {
         return;
     }
     uint32_t data = guest_block_in(event, size);
     s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
     guest_block_out(event, data, size);
+}
+
+static void pointer_dispatch(uint32_t id, void *event, size_t size) {
+    if (id >= ARRAY_SIZE(g_pointer_callbacks)) {
+        return;
+    }
+    pointer_call(&g_pointer_callbacks[id], event, size);
+    for (int i = 0; i < POINTER_EXTRA_CALLBACKS; ++i) {
+        pointer_call(&g_pointer_extra[id][i], event, size);
+    }
 }
 
 static void touchpad_dispatch(uint32_t id, void *event, size_t size) {
@@ -443,6 +455,19 @@ static void touchpad_dispatch(uint32_t id, void *event, size_t size) {
     uint32_t data = guest_block_in(event, size);
     s3e_guest_call(GUEST_ADDRESS(slot->callback), 2, data, S3E_GUEST_ARG(slot->user_data));
     guest_block_out(event, data, size);
+}
+
+/* A finger's polled press and release, one per s3ePointerUpdate, so each lasts a whole frame (a
+ * finger lands between the game's reads). The press comes one update after the finger lands: the
+ * Flash menus press the button the pointer was already over, as a mouse always is. */
+enum { TOUCH_QUEUE = 16, TOUCH_HOVER = 0 };
+static uint8_t g_touch_queue[TOUCH_QUEUE];
+static int g_touch_queue_count;
+
+static void touch_queue_push(uint8_t state) {
+    if (g_touch_queue_count < TOUCH_QUEUE) {
+        g_touch_queue[g_touch_queue_count++] = state;
+    }
 }
 
 static void pointer_set_down(int down) {
@@ -469,6 +494,12 @@ static void pointer_clear_transitions(void) {
         } else if (g_touchpad_state[i] == POINTER_STATE_RELEASED) {
             g_touchpad_state[i] = POINTER_STATE_UP;
         }
+    }
+    if (g_touch_queue_count) {
+        if (g_touch_queue[0] != TOUCH_HOVER) {
+            g_pointer_states[0] = g_touch_queue[0];
+        }
+        memmove(g_touch_queue, g_touch_queue + 1, (size_t)--g_touch_queue_count);
     }
 }
 
@@ -1185,9 +1216,11 @@ static void mod_mouse_scale(float *sx, float *sy) {
 /* Touch screens: every finger is one of the game's touches (s3ePointer touch events, the
  * multi-touch API it uses on phones), as Marmalade delivered them. The first finger also moves
  * the polled pointer. While a mod's window takes input the fingers go to it instead (SDL's mouse
- * copies of the fingers drive the overlay). Three fingers down at once press F1 for mods, which
- * open their menus with keys a phone does not have. */
-enum { TOUCH_SLOTS = 10 };
+ * copies of the fingers drive the overlay). Three fingers held for a second press F1 for mods,
+ * which open their menus with keys a phone does not have (held, so play never opens it). */
+enum { TOUCH_SLOTS = 10, TOUCH_MENU_HOLD_MS = 1000 };
+static uint64_t g_touch_three_since; /* when the third finger went down; 0 = fewer than three */
+static int g_touch_menu_pressed;
 static struct {
     int64_t finger;
     int active;
@@ -1242,24 +1275,37 @@ static int touch_game_position(float nx, float ny, int32_t *x, int32_t *y) {
 }
 
 static void touch_dispatch(int slot, int kind, int32_t x, int32_t y) {
-    if (kind == SDL_FINGERMOTION_EVENT) {
-        struct s3e_pointer_touch_motion_event event = {.touch_id = slot, .x = x, .y = y};
-        pointer_dispatch(3, &event, sizeof(event));
-    } else {
-        struct s3e_pointer_touch_event event = {
-            .touch_id = slot, .pressed = kind == SDL_FINGERDOWN_EVENT, .x = x, .y = y};
-        pointer_dispatch(2, &event, sizeof(event));
+    if (slot != 0) {
+        if (kind == SDL_FINGERMOTION_EVENT) {
+            struct s3e_pointer_touch_motion_event event = {.touch_id = slot, .x = x, .y = y};
+            pointer_dispatch(3, &event, sizeof(event));
+        } else {
+            struct s3e_pointer_touch_event event = {
+                .touch_id = slot, .pressed = kind == SDL_FINGERDOWN_EVENT, .x = x, .y = y};
+            pointer_dispatch(2, &event, sizeof(event));
+        }
+        return;
     }
-    if (slot == 0) {
+    /* The first finger is also the pointer (motion and button events) and touch 0. */
+    if (x != g_pointer_x || y != g_pointer_y) {
         g_pointer_x = x;
         g_pointer_y = y;
-        /* The polled state only: g_pointer_down belongs to the controller's cursor, which
-         * releases it every frame it is not in use. */
         if (kind == SDL_FINGERDOWN_EVENT) {
-            g_pointer_states[0] = POINTER_STATE_PRESSED;
-        } else if (kind == SDL_FINGERUP_EVENT) {
-            g_pointer_states[0] = POINTER_STATE_RELEASED;
+            struct s3e_pointer_motion_event event = {.x = x, .y = y}; /* touch 0 is not down yet */
+            pointer_dispatch(1, &event, sizeof(event));
+        } else {
+            pointer_dispatch_motion();
         }
+    }
+    if (kind != SDL_FINGERMOTION_EVENT) {
+        int down = kind == SDL_FINGERDOWN_EVENT;
+        /* The polled state goes through the queue; g_pointer_down belongs to the controller's
+         * cursor, which releases it every frame it is not in use. */
+        if (down) {
+            touch_queue_push(TOUCH_HOVER);
+        }
+        touch_queue_push(down ? POINTER_STATE_PRESSED : POINTER_STATE_RELEASED);
+        pointer_dispatch_button(0, down);
     }
 }
 
@@ -1287,15 +1333,33 @@ static void touch_screen_event(uint32_t type, const uint8_t *ev) {
         return;
     }
     int slot = touch_slot_for(finger, type == SDL_FINGERDOWN_EVENT);
-    int32_t x, y;
-    if (slot < 0 || !touch_game_position(nx, ny, &x, &y)) {
+    int32_t x = 0, y = 0;
+    int mapped = slot >= 0 && touch_game_position(nx, ny, &x, &y);
+    if (getenv("BOZ_TRACE_INPUT")) {
+        fprintf(stderr, "[input] finger %lld %s at %.3f,%.3f: slot %d, game %d,%d%s\n",
+                (long long)finger, type == SDL_FINGERDOWN_EVENT ? "down" : type == SDL_FINGERUP_EVENT ? "up" : "move",
+                nx, ny, slot, x, y, mapped ? "" : " (not mapped)");
+    }
+    if (!mapped) {
         return;
     }
     if (type == SDL_FINGERUP_EVENT) {
         g_touch_slots[slot].active = 0;
     }
     touch_dispatch(slot, (int)type, x, y);
-    if (type == SDL_FINGERDOWN_EVENT && touch_fingers_down() == 3) {
+    if (touch_fingers_down() != 3) {
+        g_touch_three_since = 0;
+    } else if (type == SDL_FINGERDOWN_EVENT) {
+        g_touch_three_since = monotonic_ms();
+        g_touch_menu_pressed = 0;
+    }
+}
+
+/* F1 once three fingers have stayed down for TOUCH_MENU_HOLD_MS. */
+static void touch_menu_hold(void) {
+    if (g_touch_three_since && !g_touch_menu_pressed &&
+        monotonic_ms() - g_touch_three_since >= TOUCH_MENU_HOLD_MS) {
+        g_touch_menu_pressed = 1;
         lua_runtime_key("F1", true, false);
         lua_runtime_key("F1", false, false);
     }
@@ -1469,6 +1533,7 @@ void input_pump(void) {
         }
         if (touch_screen_mode()) {
             touch_screen_keyboard();
+            touch_menu_hold();
         }
     } else {
         g_sdl.FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
@@ -1693,16 +1758,47 @@ void s3eKeyboardClearState(void) {
 }
 
 int32_t s3ePointerRegister(uint32_t id, void *callback, void *user_data) {
-    if (id < ARRAY_SIZE(g_pointer_callbacks)) {
-        g_pointer_callbacks[id].callback = callback;
-        g_pointer_callbacks[id].user_data = user_data;
+    if (id >= ARRAY_SIZE(g_pointer_callbacks) || !callback) {
+        return 0;
     }
+    struct callback_slot *first = &g_pointer_callbacks[id];
+    if (!first->callback || first->callback == callback) {
+        first->callback = callback;
+        first->user_data = user_data;
+        return 0;
+    }
+    struct callback_slot *free_slot = NULL;
+    for (int i = 0; i < POINTER_EXTRA_CALLBACKS; ++i) {
+        struct callback_slot *slot = &g_pointer_extra[id][i];
+        if (slot->callback == callback) {
+            slot->user_data = user_data;
+            return 0;
+        }
+        if (!slot->callback && !free_slot) {
+            free_slot = slot;
+        }
+    }
+    if (!free_slot) {
+        fprintf(stderr, "[input] too many callbacks for pointer event %u\n", id);
+        return 1;
+    }
+    free_slot->callback = callback;
+    free_slot->user_data = user_data;
     return 0;
 }
 
 int32_t s3ePointerUnRegister(uint32_t id, void *callback) {
-    if (id < ARRAY_SIZE(g_pointer_callbacks) &&
-        (!callback || callback == g_pointer_callbacks[id].callback)) {
+    if (id >= ARRAY_SIZE(g_pointer_callbacks)) {
+        return 0;
+    }
+    for (int i = 0; i < POINTER_EXTRA_CALLBACKS; ++i) {
+        struct callback_slot *slot = &g_pointer_extra[id][i];
+        if (slot->callback && (!callback || slot->callback == callback)) {
+            slot->callback = NULL;
+            slot->user_data = NULL;
+        }
+    }
+    if (!callback || callback == g_pointer_callbacks[id].callback) {
         g_pointer_callbacks[id].callback = NULL;
         g_pointer_callbacks[id].user_data = NULL;
     }

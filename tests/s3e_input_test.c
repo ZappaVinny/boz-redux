@@ -637,16 +637,152 @@ static void test_touch_screen_fingers(void) {
     assert(g_touches.id[2] == 0 && g_touches.motion[2] && g_touches.x[2] == 320 && g_touches.y[2] == 120);
     assert(g_touches.id[3] == 1 && g_touches.pressed[3] == 0);
     assert(g_pointer_x == 320 && g_pointer_y == 120); /* the first finger */
-    assert(s3ePointerGetState(0) != 0);
+    s3ePointerUpdate(); /* the polled press shows a frame after the move */
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 2);
 
-    /* Three fingers: F1 for mods. Slot 1 is free again and is reused. */
+    /* Three fingers held for a second: F1 for mods, once. Slot 1 is free again and is reused. */
     g_fake_event_count = g_fake_event_next = 0;
     g_touches.count = 0;
     fake_finger(0x700, 5, 0.5f, 0.5f);
     fake_finger(0x700, 6, 0.6f, 0.5f);
     input_pump();
     assert(g_touches.id[0] == 1 && g_touches.id[1] == 2);
+    assert(g_lua_key_count == 0); /* not yet: a quick three-finger touch happens in play */
+    for (int i = 0; i < 100; ++i) {
+        g_fake_event_count = g_fake_event_next = 0;
+        input_pump();
+    }
     assert(g_lua_key_count == 1 && strcmp(g_lua_keys[0], "F1") == 0);
+}
+
+/* The menus: pointer motion and button callbacks, in order. */
+static char g_pointer_log[16];
+static int32_t g_pointer_log_x, g_pointer_log_y;
+static size_t g_pointer_log_count;
+
+static int32_t log_menu_button(void *system_data, void *user_data) {
+    const struct s3e_pointer_button_event *event = system_data;
+    (void)user_data;
+    assert(g_pointer_log_count < sizeof(g_pointer_log) - 1);
+    g_pointer_log[g_pointer_log_count++] = event->pressed ? 'D' : 'U';
+    g_pointer_log_x = event->x;
+    g_pointer_log_y = event->y;
+    return 0;
+}
+
+static int32_t log_menu_motion(void *system_data, void *user_data) {
+    const struct s3e_pointer_motion_event *event = system_data;
+    (void)user_data;
+    assert(g_pointer_log_count < sizeof(g_pointer_log) - 1);
+    g_pointer_log[g_pointer_log_count++] = 'M';
+    g_pointer_log_x = event->x;
+    g_pointer_log_y = event->y;
+    return 0;
+}
+
+/* Menus: the first finger moves the pointer (motion, then button events, as a mouse click), and
+ * the polled pointer shows the new position unpressed for a frame before PRESSED (the Flash
+ * menus press what the pointer was over). Each press and release lasts a whole frame. */
+static void test_touch_tap_hovers_then_presses(void) {
+    g_fake_poll = 1;
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x701, 71, 0.5f, 0.5f); /* lift the last test's fingers */
+    fake_finger(0x701, 5, 0.5f, 0.5f);
+    fake_finger(0x701, 6, 0.5f, 0.5f);
+    input_pump();
+    reset_input();
+    s3ePointerUpdate();
+    s3ePointerUpdate();
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 0);
+
+    g_pointer_callbacks[0].callback = (void *)(uintptr_t)&log_menu_button;
+    g_pointer_callbacks[1].callback = (void *)(uintptr_t)&log_menu_motion;
+    g_pointer_log_count = 0;
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x700, 7, 0.75f, 0.25f);
+    input_pump(); /* mid-frame: after this frame's read */
+    assert(g_pointer_log_count == 2 && memcmp(g_pointer_log, "MD", 2) == 0);
+    assert(g_pointer_log_x == 480 && g_pointer_log_y == 120);
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 0 && s3ePointerGetX() == 480); /* over it, not pressed */
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 2);
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 1);
+
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x701, 7, 0.75f, 0.25f);
+    input_pump();
+    assert(g_pointer_log_count == 3 && g_pointer_log[2] == 'U');
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 4);
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 0);
+
+    /* A quick tap, up before its press showed: still unpressed, pressed, then released. */
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x700, 8, 0.25f, 0.25f);
+    fake_finger(0x701, 8, 0.25f, 0.25f);
+    input_pump();
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 0);
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 2);
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 4);
+    s3ePointerUpdate();
+    assert(s3ePointerGetState(0) == 0);
+
+    /* Two quick taps in one frame: both presses and releases, in order. */
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x700, 10, 0.25f, 0.25f);
+    fake_finger(0x701, 10, 0.25f, 0.25f);
+    fake_finger(0x700, 11, 0.5f, 0.5f);
+    fake_finger(0x701, 11, 0.5f, 0.5f);
+    input_pump();
+    static const int32_t taps[] = {0, 2, 4, 0, 2, 4, 0};
+    for (size_t i = 0; i < sizeof(taps) / sizeof(taps[0]); ++i) {
+        s3ePointerUpdate();
+        assert(s3ePointerGetState(0) == taps[i]);
+    }
+    g_pointer_callbacks[0].callback = NULL;
+    g_pointer_callbacks[1].callback = NULL;
+}
+
+/* Marmalade calls every callback registered for an event: the touch manager and the UI both take
+ * the touch events. */
+static int g_touch_calls_a, g_touch_calls_b;
+static int32_t count_touch_a(void *system_data, void *user_data) {
+    (void)system_data; (void)user_data;
+    ++g_touch_calls_a;
+    return 0;
+}
+static int32_t count_touch_b(void *system_data, void *user_data) {
+    (void)system_data; (void)user_data;
+    ++g_touch_calls_b;
+    return 0;
+}
+
+static void test_pointer_callbacks_all_called(void) {
+    reset_input();
+    s3ePointerRegister(2, (void *)(uintptr_t)&count_touch_a, NULL);
+    s3ePointerRegister(2, (void *)(uintptr_t)&count_touch_b, NULL);
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x700, 9, 0.5f, 0.5f);
+    fake_finger(0x701, 9, 0.5f, 0.5f);
+    input_pump();
+    assert(g_touch_calls_a == 2 && g_touch_calls_b == 2);
+    s3ePointerUnRegister(2, (void *)(uintptr_t)&count_touch_b);
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x700, 9, 0.5f, 0.5f);
+    input_pump();
+    assert(g_touch_calls_a == 3 && g_touch_calls_b == 2);
+    s3ePointerUnRegister(2, (void *)(uintptr_t)&count_touch_a);
+    g_fake_event_count = g_fake_event_next = 0;
+    fake_finger(0x701, 9, 0.5f, 0.5f);
+    input_pump();
 }
 
 int main(void) {
@@ -662,6 +798,8 @@ int main(void) {
     test_touchpad_initial_position_precedes_press();
     test_cursor_position_precedes_press();
     test_touch_screen_fingers();
+    test_touch_tap_hovers_then_presses();
+    test_pointer_callbacks_all_called();
     reset_input();
     input_shutdown();
     puts("s3e_input_test: ok");

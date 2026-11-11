@@ -310,8 +310,9 @@ uintptr_t s3eStub(void) {
 
 int32_t s3eTouchpadGetInt(uint32_t key) {
     switch (key) {
-    case 0:
-        return 1;
+    case 0: /* available: the Xperia Play's touchpad. With it the HUD forces the analogue-pad scheme
+             * (no on-screen look or fire), so a touch screen, like an ordinary phone, has none. */
+        return touch_screen_mode() ? 0 : 1;
     case 1:
         return XPERIA_TOUCHPAD_WIDTH;
     case 2:
