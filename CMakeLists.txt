@@ -34,22 +34,27 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-if(BOZ_CPU STREQUAL "unicorn")
-file(GLOB BOZ_UNICORN_PATCHES ${CMAKE_SOURCE_DIR}/third_party/patches/unicorn-*.patch)
-foreach(patch IN LISTS BOZ_UNICORN_PATCHES)
-  execute_process(COMMAND git apply --reverse --check ${patch}
-                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/unicorn
-                  RESULT_VARIABLE already_applied OUTPUT_QUIET ERROR_QUIET)
-  if(NOT already_applied EQUAL 0)
-    execute_process(COMMAND git apply ${patch}
-                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/unicorn
-                    RESULT_VARIABLE patch_result)
-    if(NOT patch_result EQUAL 0)
-      message(FATAL_ERROR "Unicorn patch failed to apply: ${patch}")
+# Applies third_party/patches/<name>-*.patch to the third_party/<name> submodule once.
+function(boz_apply_patches name)
+  file(GLOB patches ${CMAKE_SOURCE_DIR}/third_party/patches/${name}-*.patch)
+  foreach(patch IN LISTS patches)
+    execute_process(COMMAND git apply --reverse --check ${patch}
+                    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/${name}
+                    RESULT_VARIABLE already_applied OUTPUT_QUIET ERROR_QUIET)
+    if(NOT already_applied EQUAL 0)
+      execute_process(COMMAND git apply ${patch}
+                      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/${name}
+                      RESULT_VARIABLE patch_result)
+      if(NOT patch_result EQUAL 0)
+        message(FATAL_ERROR "${name} patch failed to apply: ${patch}")
+      endif()
+      message(STATUS "Applied ${patch}")
     endif()
-    message(STATUS "Applied ${patch}")
-  endif()
-endforeach()
+  endforeach()
+endfunction()
+
+if(BOZ_CPU STREQUAL "unicorn")
+boz_apply_patches(unicorn)
 
 set(UNICORN_ARCH "arm" CACHE STRING "" FORCE)
 set(UNICORN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -75,6 +80,7 @@ else()
   set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
   set(DYNARMIC_INSTALL OFF CACHE BOOL "" FORCE)
   set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  boz_apply_patches(dynarmic)
   add_subdirectory(third_party/dynarmic EXCLUDE_FROM_ALL)
   set(BOZ_CPU_SOURCES src/arm_emu_dynarmic.cpp)
   # arm_emu_dynarmic.cpp includes Dynarmic IR headers (PreCodeReadHook), which include Boost; the

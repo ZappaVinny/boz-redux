@@ -1,0 +1,26 @@
+diff --git a/src/dynarmic/backend/arm64/emit_arm64_a32.cpp b/src/dynarmic/backend/arm64/emit_arm64_a32.cpp
+index 909dde73..aa43098b 100644
+--- a/src/dynarmic/backend/arm64/emit_arm64_a32.cpp
++++ b/src/dynarmic/backend/arm64/emit_arm64_a32.cpp
+@@ -170,7 +170,7 @@ void EmitA32CheckMemoryAbort(oaknut::CodeGenerator& code, EmitContext& ctx, IR::
+ 
+     const A32::LocationDescriptor current_location{IR::LocationDescriptor{inst->GetArg(0).GetU64()}};
+ 
+-    code.LDAR(Xscratch0, Xhalt);
++    code.LDAR(Wscratch0, Xhalt);
+     code.TST(Xscratch0, static_cast<u32>(HaltReason::MemoryAbort));
+     code.B(EQ, end);
+     EmitSetUpperLocationDescriptor(code, ctx, current_location, ctx.block.Location());
+diff --git a/src/dynarmic/backend/arm64/emit_arm64_a64.cpp b/src/dynarmic/backend/arm64/emit_arm64_a64.cpp
+index 5152a54b..aae84810 100644
+--- a/src/dynarmic/backend/arm64/emit_arm64_a64.cpp
++++ b/src/dynarmic/backend/arm64/emit_arm64_a64.cpp
+@@ -153,7 +153,7 @@ void EmitA64CheckMemoryAbort(oaknut::CodeGenerator& code, EmitContext& ctx, IR::
+ 
+     const A64::LocationDescriptor current_location{IR::LocationDescriptor{inst->GetArg(0).GetU64()}};
+ 
+-    code.LDAR(Xscratch0, Xhalt);
++    code.LDAR(Wscratch0, Xhalt);
+     code.TST(Xscratch0, static_cast<u32>(HaltReason::MemoryAbort));
+     code.B(EQ, end);
+     code.MOV(Xscratch0, current_location.PC());
