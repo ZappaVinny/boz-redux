@@ -26,6 +26,8 @@ struct mod_info {
     char dir[1024];         /* full path of the mod folder */
     char maps[MOD_MAPS_MAX][64]; /* levels the mod adds (manifest `maps = ["name", ...]`) */
     int map_count;
+    char boz[32];           /* [sdk] boz: the standard library version the mod was built with */
+    int client_api;         /* [sdk] client_api: the client Lua API it was built for; 0 unknown */
     bool has_manifest;
     bool enabled;
 };
@@ -43,6 +45,10 @@ bool mods_set_setting(const char *saves, const char *mod_id, const char *key, co
  * Returns the number of files. */
 int mods_list_assets(const struct mod_info *mod,
                      void (*fn)(const char *relative, const char *full, void *user), void *user);
+
+/* True when the mod was built for another client Lua API than this client's (BOZ_LUA_API): it
+ * may not work. Mods without the number (older SDKs, hand-made) are not flagged. */
+bool mods_api_differs(const struct mod_info *mod);
 
 /* Game process: scans the mods using client.ini [mods] and indexes the enabled mods' assets. */
 void mods_init(const char *root);

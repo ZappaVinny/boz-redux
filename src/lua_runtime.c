@@ -5,7 +5,11 @@
 #include "native_input.h"
 
 #include "gamedef.h"
+#include "boz_api.h"
 #include "mods.h"
+#include "test_mode.h"
+#include "branding.h"
+#include "touch_screen.h"
 #include "platform/platform.h"
 #include "s3e_host_internal.h"
 
@@ -56,6 +60,7 @@ static bool protected_call(int mod, int nargs, int nresults) {
     lua_remove(L, base);
     if (status != LUA_OK) {
         log_line(mod, lua_tostring(L, -1));
+        test_mode_note_error(lua_runtime_mod_id(mod), lua_tostring(L, -1));
         lua_pop(L, 1);
         for (int i = 0; i < nresults; ++i) {
             lua_pushnil(L);
@@ -70,6 +75,7 @@ static bool protected_call(int mod, int nargs, int nresults) {
 /* Registry tables: EVENTS[name] = { {fn, mod, failed}, ... }, BINDS[key] = {fn, mod, failed}. */
 static const char EVENTS_KEY[] = "boz.events";
 static const char BINDS_KEY[] = "boz.binds";
+static const char ENVS_KEY[] = "boz.envs";   /* envs[mod index] = the mod's environment */
 
 void lua_runtime_registry_table(lua_State *state, const char *key) {
     if (lua_getfield(state, LUA_REGISTRYINDEX, key) != LUA_TTABLE) {
@@ -91,7 +97,7 @@ static void push_handler(lua_State *state, int fn_index) {
 static int api_events_on(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
-    lua_runtime_registry_table(L, EVENTS_KEY);
+    lua_runtime_registry_table(state, EVENTS_KEY);
     if (lua_getfield(state, -1, name) != LUA_TTABLE) {
         lua_pop(state, 1);
         lua_newtable(state);
@@ -106,7 +112,7 @@ static int api_events_on(lua_State *state) {
 static int api_events_off(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
-    lua_runtime_registry_table(L, EVENTS_KEY);
+    lua_runtime_registry_table(state, EVENTS_KEY);
     if (lua_getfield(state, -1, name) != LUA_TTABLE) {
         return 0;
     }
@@ -182,7 +188,7 @@ static bool dispatch_event(const char *name, void (*push_args)(void *), void *us
 
 static int api_input_bind(lua_State *state) {
     const char *key = luaL_checkstring(state, 1);
-    lua_runtime_registry_table(L, BINDS_KEY);
+    lua_runtime_registry_table(state, BINDS_KEY);
     if (lua_isnoneornil(state, 2)) {
         lua_pushnil(state);
     } else {
@@ -529,6 +535,38 @@ static void add_functions(const char *name, const luaL_Reg *functions) {
     lua_setglobal(L, name);
 }
 
+/* client: what runs the mods. version ("0.4.0-dev"), api (BOZ_LUA_API), arch ("x86", "x64",
+ * "arm64"), platform ("windows", "linux", "android") and touch (true on phones: mods can pick
+ * a layout for fingers). */
+static void open_client_info(void) {
+#if defined(__aarch64__)
+    const char *arch = "arm64";
+#elif defined(__x86_64__) || defined(_M_X64)
+    const char *arch = "x64";
+#else
+    const char *arch = "x86";
+#endif
+#if defined(__ANDROID__)
+    const char *platform = "android";
+#elif defined(_WIN32)
+    const char *platform = "windows";
+#else
+    const char *platform = "linux";
+#endif
+    lua_newtable(L);
+    lua_pushstring(L, BOZ_VERSION);
+    lua_setfield(L, -2, "version");
+    lua_pushinteger(L, BOZ_LUA_API);
+    lua_setfield(L, -2, "api");
+    lua_pushstring(L, arch);
+    lua_setfield(L, -2, "arch");
+    lua_pushstring(L, platform);
+    lua_setfield(L, -2, "platform");
+    lua_pushboolean(L, touch_screen_mode());
+    lua_setfield(L, -2, "touch");
+    lua_setglobal(L, "client");
+}
+
 static void open_api(void) {
     luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
     luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1);
@@ -561,6 +599,7 @@ static void open_api(void) {
     lua_setglobal(L, "shared");
     lua_pushcfunction(L, api_log);
     lua_setglobal(L, "print");
+    open_client_info();
 
     static const luaL_Reg events[] = {{"on", api_events_on}, {"off", api_events_off}, {NULL, NULL}};
     static const luaL_Reg input[] = {{"bind", api_input_bind},     {"unbind", api_input_unbind},
@@ -620,8 +659,15 @@ static void run_mod(int index) {
     lua_setfield(L, -2, "__index");
     lua_setmetatable(L, env);
 
+    /* Kept for a test script run in the mod's environment (test mode). */
+    lua_runtime_registry_table(L, ENVS_KEY);
+    lua_pushvalue(L, env);
+    lua_rawseti(L, -2, index);
+    lua_pop(L, 1);
+
     if (luaL_loadfilex(L, path, "t") != LUA_OK) {
         log_line(index, lua_tostring(L, -1));
+        test_mode_note_error(mod->id, lua_tostring(L, -1));
         lua_settop(L, env - 1);
         return;
     }
@@ -632,6 +678,124 @@ static void run_mod(int index) {
         g_active = true;
     }
     lua_settop(L, env - 1);
+}
+
+/* --- BOZ Test (test mode: --test FILE) ------------------------------------------------------- */
+
+/* test.finish(passed, json): the harness's end; writes the result and exits. */
+static int api_test_finish(lua_State *state) {
+    bool passed = lua_toboolean(state, 1);
+    const char *json = luaL_optstring(state, 2, NULL);
+    lua_settings_flush(L);
+    test_mode_finish(passed ? TEST_EXIT_PASSED : TEST_EXIT_FAILED, json);
+    return 0;
+}
+
+static int api_test_finger(lua_State *state) {
+    int id = (int)luaL_checkinteger(state, 1);
+    const char *action = luaL_checkstring(state, 2);
+    float x = (float)luaL_checknumber(state, 3);
+    float y = (float)luaL_checknumber(state, 4);
+    if (!input_test_finger(id, action, x, y)) {
+        static bool warned;
+        if (!warned) {
+            warned = true;
+            log_line(g_current_mod, "test: fingers need touch-screen mode (\"--! touch: true\")");
+        }
+    }
+    return 0;
+}
+
+static int api_test_screenshot(lua_State *state) {
+    lua_pushboolean(state, test_mode_request_screenshot(luaL_checkstring(state, 1)));
+    return 1;
+}
+
+static int api_test_errors(lua_State *state) {
+    lua_pushinteger(state, test_mode_error_count());
+    return 1;
+}
+
+/* The enabled mod a test belongs to: --test-mod, else the mod folder holding the file. */
+static int test_mod_index(const struct test_options *options) {
+    int count = mods_enabled_count();
+    for (int i = 0; i < count; ++i) {
+        const struct mod_info *mod = mods_enabled_at(i);
+        if (options->mod && options->mod[0]) {
+            if (!strcmp(mod->id, options->mod)) {
+                return i;
+            }
+            continue;
+        }
+        size_t length = strlen(mod->dir);
+        if (!strncmp(options->file, mod->dir, length) &&
+            (options->file[length] == '/' || options->file[length] == '\\')) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void run_test(void) {
+    const struct test_options *options = test_mode_options();
+    int index = test_mod_index(options);
+    if (index < 0) {
+        fprintf(stderr, "[test] no enabled mod %s for %s\n", options->mod ? options->mod : "holds",
+                options->file);
+        test_mode_finish(TEST_EXIT_ERROR, NULL);
+        return;
+    }
+    int top = lua_gettop(L);
+    /* env = setmetatable({test = {...}}, {__index = the mod's environment}) */
+    lua_newtable(L);
+    int env = lua_gettop(L);
+    static const luaL_Reg functions[] = {{"finish", api_test_finish},
+                                         {"finger", api_test_finger},
+                                         {"screenshot", api_test_screenshot},
+                                         {"errors", api_test_errors},
+                                         {NULL, NULL}};
+    lua_newtable(L);
+    luaL_setfuncs(L, functions, 0);
+    lua_pushstring(L, options->role);
+    lua_setfield(L, -2, "role");
+    lua_pushstring(L, options->file);
+    lua_setfield(L, -2, "file");
+    lua_pushstring(L, options->out);
+    lua_setfield(L, -2, "out");
+    lua_setfield(L, env, "test");
+    lua_createtable(L, 0, 1);
+    lua_runtime_registry_table(L, ENVS_KEY);
+    if (lua_rawgeti(L, -1, index) != LUA_TTABLE) {
+        /* The mod has no main.lua: its environment is made for the test. */
+        lua_pop(L, 1);
+        lua_pushglobaltable(L);
+    }
+    lua_remove(L, -2);
+    lua_setfield(L, -2, "__index");
+    lua_setmetatable(L, env);
+
+    bool ok = luaL_loadbufferx(L, (const char *)TEST_HARNESS.data, TEST_HARNESS.size,
+                               "=test_harness", "t") == LUA_OK;
+    if (ok) {
+        lua_pushvalue(L, env);
+        lua_setupvalue(L, -2, 1);
+        ok = protected_call(index, 0, 0);
+    } else {
+        log_line(index, lua_tostring(L, -1));
+    }
+    if (ok && luaL_loadfilex(L, options->file, "t") != LUA_OK) {
+        log_line(index, lua_tostring(L, -1));
+        ok = false;
+    } else if (ok) {
+        lua_pushvalue(L, env);
+        lua_setupvalue(L, -2, 1);
+        ok = protected_call(index, 0, 0);
+    }
+    lua_settop(L, top);
+    if (!ok) {
+        test_mode_finish(TEST_EXIT_ERROR, NULL);
+    }
+    g_active = true;
 }
 
 bool lua_runtime_start(void) {
@@ -650,7 +814,7 @@ bool lua_runtime_start(void) {
             any_script = true;
         }
     }
-    if (!any_script) {
+    if (!any_script && !test_mode_active()) {
         return false;
     }
     g_lua_thread = pthread_self();
@@ -662,6 +826,9 @@ bool lua_runtime_start(void) {
     open_api();
     for (int i = 0; i < count; ++i) {
         run_mod(i);
+    }
+    if (test_mode_active()) {
+        run_test();
     }
     return g_active;
 }

@@ -1,5 +1,6 @@
 /* Mod discovery and the asset override index. See mods.h. */
 #include "mods.h"
+#include "boz_api.h"
 #include "str_util.h"
 
 #include "client_config.h"
@@ -31,8 +32,8 @@ static void read_maps(struct mod_info *mod, const char *value) {
     }
 }
 
-/* mod.toml: top-level `key = "string"` lines and the `maps` list are read; tables and other keys
- * are left for later readers. */
+/* mod.toml: top-level `key = "string"` lines, the `maps` list, and [sdk] `boz` and `client_api`;
+ * other tables and keys are left for later readers. */
 static void read_manifest(struct mod_info *mod) {
     char path[1200];
     snprintf(path, sizeof(path), "%s/mod.toml", mod->dir);
@@ -42,21 +43,37 @@ static void read_manifest(struct mod_info *mod) {
     }
     mod->has_manifest = true;
     char line[1024];
-    bool top_level = true;
+    char table[32] = "";
     while (fgets(line, sizeof(line), file)) {
         char *text = str_trim(line);
         if (*text == '[') {
-            top_level = false;
+            /* [name] sets the table; [[name]] (arrays of tables) is never one this reads. */
+            char *end = strchr(text, ']');
+            if (text[1] == '[' || !end) {
+                snprintf(table, sizeof(table), "[[");
+            } else {
+                snprintf(table, sizeof(table), "%.*s", (int)(end - text - 1), text + 1);
+            }
+            continue;
         }
         char *equals = strchr(text, '=');
-        if (!top_level || *text == '#' || !equals) {
+        if (*text == '#' || !equals) {
             continue;
         }
         *equals = '\0';
         char *key = str_trim(text);
         char *value = str_trim(equals + 1);
-        if (!strcmp(key, "maps") && *value == '[') {
+        bool top_level = !table[0];
+        bool sdk = !strcmp(table, "sdk");
+        if (!top_level && !sdk) {
+            continue;
+        }
+        if (top_level && !strcmp(key, "maps") && *value == '[') {
             read_maps(mod, value);
+            continue;
+        }
+        if (sdk && !strcmp(key, "client_api")) {
+            mod->client_api = atoi(value);
             continue;
         }
         if (*value != '"') {
@@ -68,6 +85,12 @@ static void read_manifest(struct mod_info *mod) {
         }
         *close = '\0';
         ++value;
+        if (sdk) {
+            if (!strcmp(key, "boz")) {
+                snprintf(mod->boz, sizeof(mod->boz), "%s", value);
+            }
+            continue;
+        }
         struct {
             const char *key;
             char *field;
@@ -87,6 +110,10 @@ static void read_manifest(struct mod_info *mod) {
         }
     }
     fclose(file);
+}
+
+bool mods_api_differs(const struct mod_info *mod) {
+    return mod->client_api > 0 && mod->client_api != BOZ_LUA_API;
 }
 
 bool mods_set_setting(const char *saves, const char *mod_id, const char *key, const char *value) {
@@ -320,6 +347,14 @@ void mods_init(const char *root) {
         int files = mods_list_assets(mod, add_override, NULL);
         fprintf(stderr, "[mods] loaded %s %s (%d asset file%s)\n", mod->id,
                 mod->version[0] ? mod->version : "", files, files == 1 ? "" : "s");
+        if (mod->game[0] && strcmp(mod->game, "1.0.11") != 0) {
+            fprintf(stderr, "[mods] %s was made for game version %s (this client runs 1.0.11)\n",
+                    mod->id, mod->game);
+        }
+        if (mods_api_differs(mod)) {
+            fprintf(stderr, "[mods] %s was built for BOZ Redux API %d (this client has %d); it may not "
+                            "work\n", mod->id, mod->client_api, BOZ_LUA_API);
+        }
     }
 }
 

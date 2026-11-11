@@ -1,5 +1,5 @@
-/* Runs a real mod script through the Lua runtime: settings (defaults, types, saving), events and
- * key bindings. */
+/* Runs a real mod script through the Lua runtime: settings (defaults, types, saving), events, key
+ * bindings and the client table. */
 #include "client_config.h"
 #include "test_support.h"
 #include "posix_compat.h"
@@ -23,6 +23,11 @@ void overlay_open_lua(void *state) {
 
 void lua_hooks_open(lua_State *state) {
     (void)state;
+}
+
+int input_test_finger(int id, const char *action, float x, float y) {
+    (void)id, (void)action, (void)x, (void)y;
+    return 0;
 }
 
 static void write_file(const char *path, const char *text) {
@@ -70,6 +75,9 @@ int main(void) {
                "events.on('frame', function(dt) settings.set('frames', (settings.get('frames', 0)) + 1) end)\n"
                "input.bind('F5', function() settings.set('f5', true) end)\n"
                "assets.patch('Menu.BIN', function(bytes) return bytes:upper() .. '!' end)\n"
+               "assert(client.version == '" BOZ_VERSION "' and client.api >= 1, 'client info')\n"
+               "assert(client.arch == 'x86' or client.arch == 'x64' or client.arch == 'arm64')\n"
+               "assert(type(client.platform) == 'string' and type(client.touch) == 'boolean')\n"
                "settings.set('ok', true)\n");
     snprintf(path, sizeof(path), "%s/mods/t/scripts/lib", root);
     mkdir(path, 0755);

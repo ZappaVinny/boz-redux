@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(boz_redux_client VERSION 0.3.1 LANGUAGES C CXX)
-set(BOZ_VERSION ${PROJECT_VERSION})
+# The client's version, the one source for every program and the Android app (its Gradle file
+# reads these two lines). A release clears the suffix: "0.4.0-dev" during work, "0.4.0" released.
+project(boz_redux_client VERSION 0.4.0 LANGUAGES C CXX)
+set(BOZ_VERSION_SUFFIX "-dev")
+set(BOZ_VERSION "${PROJECT_VERSION}${BOZ_VERSION_SUFFIX}")
 if(WIN32)
   enable_language(RC)
 endif()
@@ -156,6 +159,16 @@ add_custom_command(
   DEPENDS ${BOZ_BRANDING_DEPENDS} ${CMAKE_SOURCE_DIR}/cmake/embed_files.cmake
   COMMENT "Embedding the branding")
 add_library(boz_branding STATIC src/branding/brand_image.c ${CMAKE_BINARY_DIR}/generated/branding_data.c)
+# The BOZ Test harness (src/test_harness.lua), built into the loader for --test.
+file(WRITE ${CMAKE_BINARY_DIR}/generated/test_harness_files.txt
+     "TEST_HARNESS=${CMAKE_SOURCE_DIR}/src/test_harness.lua")
+add_custom_command(
+  OUTPUT ${CMAKE_BINARY_DIR}/generated/test_harness.c
+  COMMAND ${CMAKE_COMMAND} -DOUTPUT=${CMAKE_BINARY_DIR}/generated/test_harness.c
+          -DLIST=${CMAKE_BINARY_DIR}/generated/test_harness_files.txt -P ${CMAKE_SOURCE_DIR}/cmake/embed_files.cmake
+  DEPENDS ${CMAKE_SOURCE_DIR}/src/test_harness.lua ${CMAKE_SOURCE_DIR}/cmake/embed_files.cmake
+  COMMENT "Embedding the test harness")
+set(BOZ_TEST_MODE_SOURCES src/test_mode.c ${CMAKE_BINARY_DIR}/generated/test_harness.c)
 target_include_directories(boz_branding PUBLIC include PRIVATE third_party/stb)
 
 # boz_windows_resources(target "Description"): the icon, version information and a manifest
@@ -168,7 +181,7 @@ function(boz_windows_resources target description)
   set(BOZ_RC_MANIFEST "${CMAKE_SOURCE_DIR}/packaging/windows/app.manifest")
   set(BOZ_RC_NAME "${target}")
   set(BOZ_RC_DESCRIPTION "${description}")
-  string(REPLACE "." "," BOZ_RC_VERSION_COMMAS "${BOZ_VERSION}")
+  string(REPLACE "." "," BOZ_RC_VERSION_COMMAS "${PROJECT_VERSION}")
   configure_file(${CMAKE_SOURCE_DIR}/packaging/windows/app.rc.in
                  ${CMAKE_BINARY_DIR}/generated/${target}.rc @ONLY)
   target_sources(${target} PRIVATE ${CMAKE_BINARY_DIR}/generated/${target}.rc)
@@ -176,7 +189,8 @@ endfunction()
 
 add_library(boz_project INTERFACE)
 target_include_directories(boz_project INTERFACE include src third_party/lzma)
-target_compile_definitions(boz_project INTERFACE _GNU_SOURCE $<$<BOOL:${BOZ_GUEST_BASE}>:BOZ_GUEST_BASE>)
+target_compile_definitions(boz_project INTERFACE _GNU_SOURCE BOZ_VERSION="${BOZ_VERSION}"
+                           $<$<BOOL:${BOZ_GUEST_BASE}>:BOZ_GUEST_BASE>)
 target_compile_options(boz_project INTERFACE ${BOZ_WARNINGS})
 
 if(WIN32)
@@ -221,6 +235,7 @@ target_sources(codboz_s3e_loader PRIVATE
   src/gamedef.c
   src/game_image.c
   src/lua_runtime.c
+  ${BOZ_TEST_MODE_SOURCES}
   src/lua_hooks.c
   src/lua_settings.c
   src/lua_assets.c
@@ -315,7 +330,6 @@ if(ANDROID)
   set_source_files_properties(tools/apk_extract/codboz_apk_extract.c PROPERTIES
     COMPILE_DEFINITIONS "main=boz_apk_extract_main;exit=boz_apk_extract_exit")
   target_include_directories(boz_launcher PRIVATE include third_party/imgui/backends)
-  target_compile_definitions(boz_launcher PRIVATE BOZ_VERSION="${BOZ_VERSION}")
   target_link_libraries(boz_launcher PRIVATE imgui_core boz_common boz_branding SDL2::SDL2 log)
   return() # the desktop launcher, the extractor program and the tests are desktop programs
 endif()
@@ -339,7 +353,6 @@ add_executable(boz-redux
 target_include_directories(boz-redux PRIVATE include)
 target_compile_options(boz-redux PRIVATE ${BOZ_WARNINGS})
 target_link_libraries(boz-redux PRIVATE imgui boz_common boz_branding)
-target_compile_definitions(boz-redux PRIVATE BOZ_VERSION="${BOZ_VERSION}")
 boz_windows_resources(boz-redux "BOZ Redux launcher")
 if(WIN32)
   target_link_libraries(boz-redux PRIVATE comdlg32 shell32 ole32)
@@ -383,7 +396,7 @@ boz_test(s3e_timer_test SOURCES src/s3e_timer.c)
 boz_test(client_config_test SOURCES src/client_config.c)
 boz_test(mods_test SOURCES src/mods.c src/client_config.c)
 boz_test(gamedef_test SOURCES src/gamedef.c)
-boz_test(lua_runtime_test SOURCES src/lua_runtime.c src/lua_settings.c src/lua_assets.c src/mods.c src/client_config.c src/gamedef.c
+boz_test(lua_runtime_test SOURCES src/lua_runtime.c ${BOZ_TEST_MODE_SOURCES} src/lua_settings.c src/lua_assets.c src/mods.c src/client_config.c src/gamedef.c
          src/game_image.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(lua_runtime_test PRIVATE lua ${CMAKE_DL_LIBS})
 boz_test(s3e_memory_test SOURCES src/s3e_memory.c)

@@ -59,6 +59,14 @@ fun ensure(dep: Dep): File {
 val boostDir = ensure(boost)
 val repo: File = rootProject.file("../..")
 
+// The version comes from CMakeLists.txt (project VERSION and BOZ_VERSION_SUFFIX), like every
+// other program; versionCode grows with it (0.4.0 -> 400).
+val cmakeText = File(repo, "CMakeLists.txt").readText()
+val clientVersion = Regex("""project\(boz_redux_client VERSION (\d+)\.(\d+)\.(\d+)""").find(cmakeText)
+    ?: error("CMakeLists.txt: no project(boz_redux_client VERSION x.y.z)")
+val versionSuffix = Regex("""set\(BOZ_VERSION_SUFFIX "([^"]*)"\)""").find(cmakeText)?.groupValues?.get(1) ?: ""
+val (versionMajor, versionMinor, versionPatch) = clientVersion.destructured
+
 // The approved BOZ Redux icon (branding/icons), as the launcher icon.
 val iconRes = layout.buildDirectory.dir("generated/boz-res").get().asFile
 run {
@@ -89,8 +97,8 @@ android {
         applicationId = "org.bozredux.client"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.4.0-dev"
+        versionCode = versionMajor.toInt() * 10000 + versionMinor.toInt() * 100 + versionPatch.toInt()
+        versionName = "$versionMajor.$versionMinor.$versionPatch$versionSuffix"
         ndk {
             abiFilters += "arm64-v8a"
         }

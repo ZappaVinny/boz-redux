@@ -1,3 +1,4 @@
+#include "test_mode.h"
 #include "s3e_host_internal.h"
 #include "platform/platform.h"
 
@@ -917,23 +918,8 @@ static void mod_runtime_present(void) {
     overlay_end_frame();
 }
 
-/* BOZ_SCREENSHOT_DIR: save the presented frame there as a PPM every BOZ_SCREENSHOT_EVERY frames
- * (default 60), for checking what the game draws in automated (offscreen) runs. */
-static void debug_screenshot(void) {
-    static int ready = 0, every = 60;
-    static const char *dir = NULL;
-    static unsigned frame = 0, saved = 0;
-    if (!ready) {
-        ready = 1;
-        dir = getenv("BOZ_SCREENSHOT_DIR");
-        const char *value = getenv("BOZ_SCREENSHOT_EVERY");
-        if (value && atoi(value) > 0) {
-            every = atoi(value);
-        }
-    }
-    if (!dir || ++frame % (unsigned)every) {
-        return;
-    }
+/* The presented frame as a PPM file. */
+static void save_frame(const char *path) {
     int width = 0, height = 0;
     if (!egl_backend_drawable_size(&width, &height) || width <= 0 || height <= 0) {
         return;
@@ -947,8 +933,6 @@ static void debug_screenshot(void) {
     }
     raw_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, 0);
     read(0, 0, width, height, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pixels);
-    char path[1024];
-    snprintf(path, sizeof path, "%s/frame_%05u.ppm", dir, saved++);
     FILE *out = fopen(path, "wb");
     if (out) {
         fprintf(out, "P6\n%d %d\n255\n", width, height);
@@ -960,6 +944,33 @@ static void debug_screenshot(void) {
         fclose(out);
     }
     guest_free(pixels);
+}
+
+/* BOZ_SCREENSHOT_DIR: save the presented frame there as a PPM every BOZ_SCREENSHOT_EVERY frames
+ * (default 60), for checking what the game draws in automated (offscreen) runs; and the frames
+ * a BOZ Test asks for (test.screenshot). */
+static void debug_screenshot(void) {
+    static int ready = 0, every = 60;
+    static const char *dir = NULL;
+    static unsigned frame = 0, saved = 0;
+    const char *requested = test_mode_take_screenshot();
+    if (requested) {
+        save_frame(requested);
+    }
+    if (!ready) {
+        ready = 1;
+        dir = getenv("BOZ_SCREENSHOT_DIR");
+        const char *value = getenv("BOZ_SCREENSHOT_EVERY");
+        if (value && atoi(value) > 0) {
+            every = atoi(value);
+        }
+    }
+    if (!dir || ++frame % (unsigned)every) {
+        return;
+    }
+    char path[1024];
+    snprintf(path, sizeof path, "%s/frame_%05u.ppm", dir, saved++);
+    save_frame(path);
 }
 
 static EGLBoolean host_eglSwapBuffers(EGLDisplay display, EGLSurface surface) {

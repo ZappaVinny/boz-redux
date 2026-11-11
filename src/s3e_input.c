@@ -1320,6 +1320,8 @@ static void touch_release_all(void) {
     }
 }
 
+static void touch_finger(uint32_t type, int64_t finger, float nx, float ny);
+
 static void touch_screen_event(uint32_t type, const uint8_t *ev) {
     if (type != SDL_FINGERDOWN_EVENT && type != SDL_FINGERUP_EVENT && type != SDL_FINGERMOTION_EVENT) {
         return;
@@ -1329,6 +1331,27 @@ static void touch_screen_event(uint32_t type, const uint8_t *ev) {
     memcpy(&finger, ev + 16, 8); /* SDL_TouchFingerEvent: fingerId, x, y */
     memcpy(&nx, ev + 24, 4);
     memcpy(&ny, ev + 28, 4);
+    touch_finger(type, finger, nx, ny);
+}
+
+/* Test fingers get ids far from SDL's. */
+enum { TEST_FINGER_BASE = 0x7e570000 };
+
+int input_test_finger(int id, const char *action, float x, float y) {
+    if (!touch_screen_mode() || id < 0 || id > 9 || !action) {
+        return 0;
+    }
+    uint32_t type = !strcmp(action, "down") ? SDL_FINGERDOWN_EVENT
+                    : !strcmp(action, "up") ? SDL_FINGERUP_EVENT
+                    : !strcmp(action, "move") ? SDL_FINGERMOTION_EVENT : 0;
+    if (!type) {
+        return 0;
+    }
+    touch_finger(type, TEST_FINGER_BASE + id, x, y);
+    return 1;
+}
+
+static void touch_finger(uint32_t type, int64_t finger, float nx, float ny) {
     if (overlay_capturing()) {
         touch_release_all();
         return;

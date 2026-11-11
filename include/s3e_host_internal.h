@@ -374,6 +374,9 @@ uint64_t egl_backend_frame_interval_us(int *vsync);
 void present_rect(int32_t width, int32_t height, int32_t *rect);
 void egl_backend_shutdown(void);
 void input_pump(void);
+/* BOZ Test: a finger (id 0-9) "down", "move" or "up" at x, y (0..1 across the window), as if
+ * from the touch screen. Touch-screen mode only; false otherwise. */
+int input_test_finger(int id, const char *action, float x, float y);
 void input_shutdown(void);
 void audio_shutdown(void);
 int32_t audio_unit_backend_set_callbacks(void *capture_callback, void *render_callback);

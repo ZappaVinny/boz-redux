@@ -383,9 +383,19 @@ bool client_config_write_default(const char *path) {
     return true;
 }
 
+static const char *g_config_path;
+
+void client_config_set_path(const char *path) {
+    g_config_path = path;
+}
+
 void client_config_load(const char *root) {
     char path[4096];
-    snprintf(path, sizeof(path), "%s/client.ini", root && root[0] ? root : ".");
+    if (g_config_path && g_config_path[0]) {
+        snprintf(path, sizeof(path), "%s", g_config_path);
+    } else {
+        snprintf(path, sizeof(path), "%s/client.ini", root && root[0] ? root : ".");
+    }
     FILE *file = fopen(path, "r");
     if (!file) {
         client_config_write_default(path);

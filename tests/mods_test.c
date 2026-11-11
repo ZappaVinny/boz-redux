@@ -44,7 +44,12 @@ int main(void) {
                                           "game = \"1.0.11\"\n"
                                           "maps = [\"arena\", \"lab_2\"]\n"
                                           "[settings]\n"
-                                          "name = \"ignored\"\n");
+                                          "name = \"ignored\"\n"
+                                          "[sdk]\n"
+                                          "boz = \"0.4.0\"\n"
+                                          "client_api = 1\n"
+                                          "[[sdk.dependencies]]\n"
+                                          "boz = \"ignored too\"\n");
     write_file("mods/developer/assets/data-etc/Weapons_Kino.group.bin", "developer");
     write_file("mods/zeta/assets/weapons_kino.group.bin", "zeta");
     write_file("mods/zeta/assets/sounds/shot.mp3", "zeta");
@@ -61,6 +66,11 @@ int main(void) {
     assert(mods[1].map_count == 2 && !strcmp(mods[1].maps[0], "arena") &&
            !strcmp(mods[1].maps[1], "lab_2"));
     assert(mods[0].map_count == 0);
+    assert(!strcmp(mods[1].boz, "0.4.0") && mods[1].client_api == 1); /* [sdk]; not [[...]] */
+    assert(!mods[0].boz[0] && mods[0].client_api == 0);
+    assert(!mods_api_differs(&mods[1]) && !mods_api_differs(&mods[0])); /* same API; unknown */
+    mods[1].client_api = 99;
+    assert(mods_api_differs(&mods[1]));
     assert(!strcmp(mods[2].id, "zeta") && mods[2].enabled);
 
     /* Listed ids come first in their order; unlisted ones follow; disabled ones are off. */

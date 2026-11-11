@@ -1,4 +1,5 @@
 // BOZ Redux launcher: sets up game files, edits client.ini and starts the game client.
+#include "boz_api.h"
 #include "brand_imgui.h"
 #include "branding.h"
 #include "client_config.h"
@@ -840,6 +841,10 @@ void mods_tab(Launcher &l) {
         } else if (mod.game[0] && std::strcmp(mod.game, "1.0.11") != 0) {
             ImGui::TextColored(WARN_COLOUR, "Made for game version %s; this client runs 1.0.11.",
                                mod.game);
+        }
+        if (mods_api_differs(&mod)) {
+            ImGui::TextColored(WARN_COLOUR, "Built for BOZ Redux API %d (this one has %d); it may not work.",
+                               mod.client_api, BOZ_LUA_API);
         }
         if (mod.description[0]) {
             ImGui::TextWrapped("%s", mod.description);

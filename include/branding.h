@@ -17,6 +17,7 @@ extern const struct brand_blob BRAND_ICON;          /* PNG, 256x256 */
 extern const struct brand_blob BRAND_FONT_REGULAR;  /* Barlow Regular (OFL) */
 extern const struct brand_blob BRAND_FONT_SEMIBOLD; /* Barlow SemiBold */
 extern const struct brand_blob BRAND_FONT_HEADING;  /* Barlow Condensed Bold */
+extern const struct brand_blob TEST_HARNESS;        /* src/test_harness.lua (the loader only) */
 
 /* Brand colours, 0xRRGGBB. */
 enum {

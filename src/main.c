@@ -5,6 +5,7 @@
 #include "game_patches.h"
 #include "gamedef.h"
 #include "str_util.h"
+#include "test_mode.h"
 #include "s3e_host.h"
 #include "s3e_host_internal.h"
 #include "s3e_image.h"
@@ -40,7 +41,8 @@ static void load_game_definition(const char *root) {
 static void usage(const char *argv0) {
     fprintf(stderr,
             "usage: %s [--run] [--root DIR] [--display-size WIDTHxHEIGHT] [--log FILE] "
-            "IMAGE.s3e.unpacked\n",
+            "[--config CLIENT.INI] [--test FILE [--test-mod ID] [--test-out DIR] "
+            "[--test-role ROLE] [--test-timeout SECONDS]] IMAGE.s3e.unpacked\n",
             argv0);
 }
 
@@ -111,6 +113,7 @@ int main(int argc, char **argv) {
     uint32_t display_width = 1280;
     uint32_t display_height = 720;
     bool display_size_given = false;
+    struct test_options test = {0};
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--run") == 0) {
@@ -129,6 +132,28 @@ int main(int argc, char **argv) {
             }
             if (freopen(argv[++i], "w", stderr)) {
                 setvbuf(stderr, NULL, _IOLBF, 0);
+            }
+        } else if (!strcmp(argv[i], "--test") || !strcmp(argv[i], "--test-mod") ||
+                   !strcmp(argv[i], "--test-out") || !strcmp(argv[i], "--test-role") ||
+                   !strcmp(argv[i], "--test-timeout") || !strcmp(argv[i], "--config")) {
+            /* BOZ Test (include/test_mode.h) and its own client.ini. */
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            const char *option = argv[i], *value = argv[++i];
+            if (!strcmp(option, "--test")) {
+                test.file = value;
+            } else if (!strcmp(option, "--test-mod")) {
+                test.mod = value;
+            } else if (!strcmp(option, "--test-out")) {
+                test.out = value;
+            } else if (!strcmp(option, "--test-role")) {
+                test.role = value;
+            } else if (!strcmp(option, "--test-timeout")) {
+                test.timeout_seconds = atoi(value);
+            } else {
+                client_config_set_path(value);
             }
         } else if (strcmp(argv[i], "--display-size") == 0) {
             if (i + 1 >= argc) {
@@ -156,6 +181,9 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    if (test.file) {
+        test_mode_start(&test);
+    }
     client_config_load(root);
     mods_init(root);
     /* Render resolution: --display-size, else BOZ_DISPLAY / client.ini, else 1280x720. */
