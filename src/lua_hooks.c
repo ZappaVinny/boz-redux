@@ -30,8 +30,13 @@ struct site {
     int after_handlers;
 };
 
+/* A handler that keeps failing (it may run thousands of times a frame) is switched off after
+ * this many errors; fewer, it stays on (each distinct error is logged once). */
+enum { HOOK_ERRORS_MAX = 50 };
+
 struct handler {
     bool used, failed;
+    int errors;
     int site;
     int before, after;  /* registry refs or LUA_NOREF */
     int mod;
@@ -242,9 +247,9 @@ static void run_handlers(int site, bool after, struct call *call, int call_index
         }
         lua_rawgeti(g_L, LUA_REGISTRYINDEX, ref);
         lua_pushvalue(g_L, call_index);
-        if (!lua_runtime_pcall(h->mod, 1, 0)) {
+        if (!lua_runtime_pcall(h->mod, 1, 0) && ++h->errors >= HOOK_ERRORS_MAX) {
             h->failed = true;
-            lua_runtime_log(h->mod, "hook handler switched off after the error above");
+            lua_runtime_log(h->mod, "hook handler switched off after failing 50 times");
         }
         if (!after && call->skip) {
             break;
@@ -381,7 +386,8 @@ static int api_hook_add(lua_State *L) {
         if (h->used) {
             continue;
         }
-        *h = (struct handler){true, false, site, before, after, lua_runtime_current_mod()};
+        *h = (struct handler){.used = true, .site = site, .before = before, .after = after,
+                              .mod = lua_runtime_current_mod()};
         g_sites[site].handlers++;
         if (after != LUA_NOREF) {
             g_sites[site].after_handlers++;

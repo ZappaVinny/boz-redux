@@ -926,9 +926,11 @@ static void save_frame(const char *path) {
     }
     void (GL_APIENTRY *read)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *) =
         lookup_gl("glReadPixels");
-    unsigned char *pixels = guest_malloc((size_t)width * height * 4);
+    /* The host's own memory: the game's heap may have no 3.5 MB left late in a match. */
+    unsigned char *pixels = malloc((size_t)width * height * 4);
     if (!read || !pixels) {
-        guest_free(pixels);
+        free(pixels);
+        fprintf(stderr, "[gl] screenshot %s: no memory or no glReadPixels\n", path);
         return;
     }
     raw_bind_framebuffer(GL_READ_FRAMEBUFFER_VALUE, 0);
@@ -942,8 +944,10 @@ static void save_frame(const char *path) {
             }
         }
         fclose(out);
+    } else {
+        fprintf(stderr, "[gl] screenshot %s: cannot write it\n", path);
     }
-    guest_free(pixels);
+    free(pixels);
 }
 
 /* BOZ_SCREENSHOT_DIR: save the presented frame there as a PPM every BOZ_SCREENSHOT_EVERY frames

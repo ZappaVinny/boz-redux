@@ -49,6 +49,11 @@ static int traceback(lua_State *state) {
 }
 
 /* Calls the function under its nargs arguments; logs errors. Leaves nresults (or nils) on the stack. */
+/* Errors already logged (registry LOGGED_KEY: "<mod>:<message>" -> true), at most this many. */
+static const char LOGGED_KEY[] = "boz.logged";
+enum { LOGGED_ERRORS_MAX = 256 };
+static int g_logged_errors;
+
 static bool protected_call(int mod, int nargs, int nresults) {
     int base = lua_gettop(L) - nargs;
     lua_pushcfunction(L, traceback);
@@ -59,7 +64,25 @@ static bool protected_call(int mod, int nargs, int nresults) {
     g_current_mod = saved;
     lua_remove(L, base);
     if (status != LUA_OK) {
-        log_line(mod, lua_tostring(L, -1));
+        /* Each error once: a handler that fails every frame keeps the log readable. */
+        const char *message = lua_tostring(L, -1);
+        lua_runtime_registry_table(L, LOGGED_KEY);
+        lua_pushfstring(L, "%d:%s", mod, message ? message : "?");
+        bool seen = lua_rawget(L, -2) != LUA_TNIL;
+        lua_pop(L, 1);
+        if (!seen) {
+            g_logged_errors++;
+            if (g_logged_errors <= LOGGED_ERRORS_MAX) {
+                lua_pushfstring(L, "%d:%s", mod, message ? message : "?");
+                lua_pushboolean(L, 1);
+                lua_rawset(L, -3);
+            }
+            log_line(mod, message);
+            if (g_logged_errors == LOGGED_ERRORS_MAX) {
+                log_line(mod, "(more errors than this are logged each time they happen)");
+            }
+        }
+        lua_pop(L, 1);
         test_mode_note_error(lua_runtime_mod_id(mod), lua_tostring(L, -1));
         lua_pop(L, 1);
         for (int i = 0; i < nresults; ++i) {
@@ -72,7 +95,7 @@ static bool protected_call(int mod, int nargs, int nresults) {
 
 /* --- Events and key bindings ------------------------------------------------------------------- */
 
-/* Registry tables: EVENTS[name] = { {fn, mod, failed}, ... }, BINDS[key] = {fn, mod, failed}. */
+/* Registry tables: EVENTS[name] = { {fn, mod}, ... }, BINDS[key] = {fn, mod}. */
 static const char EVENTS_KEY[] = "boz.events";
 static const char BINDS_KEY[] = "boz.binds";
 static const char ENVS_KEY[] = "boz.envs";   /* envs[mod index] = the mod's environment */
@@ -137,14 +160,9 @@ static int api_events_off(lua_State *state) {
 }
 
 /* Calls one handler entry (at the stack top) with nargs arguments pushed by push_args. Returns
- * true when the handler returned true. Handlers that raise an error are switched off. */
+ * true when the handler returned true. A handler that raises an error stays on (one error is
+ * no reason to stop a mod): the error is logged the first time it happens. */
 static bool call_handler(void (*push_args)(void *), void *user, int nargs) {
-    lua_getfield(L, -1, "failed");
-    bool failed = lua_toboolean(L, -1);
-    lua_pop(L, 1);
-    if (failed) {
-        return false;
-    }
     lua_getfield(L, -1, "mod");
     int mod = (int)lua_tointeger(L, -1);
     lua_pop(L, 1);
@@ -153,11 +171,6 @@ static bool call_handler(void (*push_args)(void *), void *user, int nargs) {
     bool ok = protected_call(mod, nargs, 1);
     bool used = ok && lua_toboolean(L, -1);
     lua_pop(L, 1);
-    if (!ok) {
-        lua_pushboolean(L, 1);
-        lua_setfield(L, -2, "failed");
-        log_line(mod, "handler switched off after the error above");
-    }
     return used;
 }
 

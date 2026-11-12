@@ -1,5 +1,5 @@
 /* hook module against real emulated code: Lua handlers change arguments, skip calls and change
- * results; several handlers share a function; failing handlers are switched off. */
+ * results; several handlers share a function; failing handlers stay on until they fail 50 times. */
 #include "arm_emu.h"
 #include "lua_runtime_internal.h"
 #include "mod_runtime.h"
@@ -97,6 +97,15 @@ int main(void) {
     run("h4 = hook.add('AddOne', {before = function(c) error('boom') end})");
     expect("failing handler does not break the call", call1(add_one, 1), 2);
     run("hook.remove(h4)");
+    /* A handler that fails now and then keeps running (it is not switched off at once). */
+    run("calls = 0; h5 = hook.add('AddOne', {before = function(c) calls = calls + 1; "
+        "if calls == 1 then error('once') end end})");
+    call1(add_one, 1);
+    call1(add_one, 1);
+    lua_getglobal(L, "calls");
+    expect("a handler that failed once still runs", (uint32_t)lua_tointeger(L, -1), 2);
+    lua_pop(L, 1);
+    run("hook.remove(h5)");
 
     run("seen = hook.bits_float(hook.float_bits(1.5))");
     lua_getglobal(L, "seen");
