@@ -32,6 +32,22 @@ static void read_maps(struct mod_info *mod, const char *value) {
     }
 }
 
+/* A TOML list of strings as "a,b,c". */
+static void read_list(const char *value, char *out, size_t out_size) {
+    out[0] = '\0';
+    const char *open = strchr(value, '"');
+    while (open) {
+        const char *close = strchr(open + 1, '"');
+        if (!close) {
+            break;
+        }
+        size_t used = strlen(out);
+        snprintf(out + used, out_size - used, "%s%.*s", used ? "," : "", (int)(close - open - 1),
+                 open + 1);
+        open = strchr(close + 1, '"');
+    }
+}
+
 /* A [[map]] entry while it is read: committed when the next table starts or the file ends. */
 struct map_entry {
     bool open;
@@ -127,7 +143,14 @@ static void read_manifest(struct mod_info *mod) {
         bool top_level = !table[0];
         bool sdk = !strcmp(table, "sdk");
         bool map = !strcmp(table, "[[map]]");
-        if (!top_level && !sdk && !map) {
+        bool network = !strcmp(table, "network");
+        if (!top_level && !sdk && !map && !network) {
+            continue;
+        }
+        if (network) {
+            if (!strcmp(key, "connects") && *value == '[') {
+                read_list(value, mod->connects, sizeof(mod->connects));
+            }
             continue;
         }
         if (top_level && !strcmp(key, "maps") && *value == '[') {
@@ -208,6 +231,20 @@ bool mods_read_folder(const char *dir, struct mod_info *mod) {
         snprintf(mod->name, sizeof(mod->name), "%s", mod->id);
     }
     return true;
+}
+
+bool mods_may_connect(const struct mod_info *mod, const char *host) {
+    const char *at = mod->connects;
+    size_t length = strlen(host);
+    while (*at) {
+        const char *end = strchr(at, ',');
+        size_t size = end ? (size_t)(end - at) : strlen(at);
+        if ((size == 1 && *at == '*') || (size == length && !strncasecmp(at, host, size))) {
+            return true;
+        }
+        at = end ? end + 1 : at + size;
+    }
+    return false;
 }
 
 bool mods_api_differs(const struct mod_info *mod) {

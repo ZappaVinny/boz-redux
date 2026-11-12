@@ -9,5 +9,7 @@
 char *test_temp_dir(char *out, size_t size, const char *name);
 /* Deletes a folder and everything in it. */
 void test_remove_tree(const char *path);
+/* Waits ms milliseconds. */
+void test_sleep_ms(int ms);
 
 #endif

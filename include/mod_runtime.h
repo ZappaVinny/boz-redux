@@ -66,6 +66,9 @@ struct overlay_event {
 void overlay_event(const struct overlay_event *event);
 /* True while a mod has the overlay take the mouse and keyboard from the game. */
 bool overlay_capturing(void);
+/* Whether a point (drawable pixels) is on a mod window marked clickable (ui.window opts
+ * clickable): a click or tap there goes to the window, not the game, while nothing captures. */
+bool overlay_point_clickable(float x, float y);
 /* Wraps the Lua frame: begin before lua_runtime_frame, end after (draws into framebuffer 0). */
 void overlay_begin_frame(int width, int height, double dt);
 void overlay_end_frame(void);

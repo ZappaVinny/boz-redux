@@ -258,8 +258,42 @@ StagedMod mod_zip_stage(const std::string &zip_path, const std::string &mods_dir
                                   " (this one has " + std::to_string(BOZ_LUA_API) +
                                   "); it may not work.");
     }
+    std::string connects = mod_connects_text(staged.mod);
+    if (!connects.empty()) {
+        staged.warnings.push_back(connects);
+    }
     staged.ok = true;
     return staged;
+}
+
+std::string mod_connects_text(const mod_info &mod) {
+    std::string named;
+    bool any = false;
+    std::string list = mod.connects;
+    size_t at = 0;
+    while (at <= list.size() && !list.empty()) {
+        size_t end = list.find(',', at);
+        std::string host = list.substr(at, end == std::string::npos ? std::string::npos : end - at);
+        if (host == "*") {
+            any = true;
+        } else if (!host.empty()) {
+            named += (named.empty() ? "" : ", ") + host;
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        at = end + 1;
+    }
+    if (named.empty() && !any) {
+        return "";
+    }
+    std::string text = "Can send Play Online to ";
+    if (!named.empty()) {
+        text += named + (any ? ", or to any server you enter." : ".");
+    } else {
+        text += "any server you enter.";
+    }
+    return text;
 }
 
 bool mod_zip_commit(const StagedMod &staged, const std::string &mods_dir, std::string *error) {

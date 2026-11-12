@@ -921,6 +921,9 @@ static void desktop_set_game_mode(int enabled) {
     fprintf(stderr, "[input] %s mode\n", enabled ? "game (mouse captured)" : "menu (mouse pointer)");
 }
 
+/* The left button went down on a clickable mod window (overlay_point_clickable). */
+static int g_window_click;
+
 static void desktop_update_menu(void *window) {
     int mx = 0, my = 0, ww = 0, wh = 0;
     uint32_t buttons = g_sdl.GetMouseState(&mx, &my);
@@ -940,7 +943,7 @@ static void desktop_update_menu(void *window) {
         g_pointer_y = y;
         pointer_dispatch_motion();
     }
-    int left = (buttons & MOUSE_LEFT) != 0;
+    int left = (buttons & MOUSE_LEFT) != 0 && !g_window_click;
     if (left != g_prev_mouse_left) {
         pointer_set_down(left);
         pointer_dispatch_button(0, left ? 1 : 0);
@@ -1376,9 +1379,36 @@ int input_test_finger(int id, const char *action, float x, float y) {
     return 1;
 }
 
+/* Fingers that went down on a clickable mod window: theirs until lifted, never the game's. */
+static int64_t g_window_fingers[8];
+static int g_window_finger_count;
+
+static bool finger_on_window(uint32_t type, int64_t finger, float nx, float ny) {
+    for (int i = 0; i < g_window_finger_count; ++i) {
+        if (g_window_fingers[i] == finger) {
+            if (type == SDL_FINGERUP_EVENT) {
+                g_window_fingers[i] = g_window_fingers[--g_window_finger_count];
+            }
+            return true;
+        }
+    }
+    int dw = 0, dh = 0;
+    if (type != SDL_FINGERDOWN_EVENT || !egl_backend_drawable_size(&dw, &dh) || dw <= 0 || dh <= 0 ||
+        !overlay_point_clickable(nx * (float)dw, ny * (float)dh)) {
+        return false;
+    }
+    if (g_window_finger_count < (int)ARRAY_SIZE(g_window_fingers)) {
+        g_window_fingers[g_window_finger_count++] = finger;
+    }
+    return true;
+}
+
 static void touch_finger(uint32_t type, int64_t finger, float nx, float ny) {
     if (overlay_capturing()) {
         touch_release_all();
+        return;
+    }
+    if (finger_on_window(type, finger, nx, ny)) {
         return;
     }
     int slot = touch_slot_for(finger, type == SDL_FINGERDOWN_EVENT);
@@ -1503,6 +1533,12 @@ static void mod_handle_event(const uint8_t *ev) {
         out.x = (float)x * sx;
         out.y = (float)y * sy;
         overlay_event(&out);
+        if (button == 1 && type == SDL_MOUSEBUTTONDOWN_EVENT && !overlay_capturing() &&
+            overlay_point_clickable(out.x, out.y)) {
+            g_window_click = 1;  /* a clickable mod window's: the game's menu does not see it */
+        } else if (button == 1 && type == SDL_MOUSEBUTTONUP_EVENT) {
+            g_window_click = 0;
+        }
         if (button >= 1 && button <= 3) {
             out.kind = OVERLAY_MOUSE_BUTTON;
             out.button = buttons[button];

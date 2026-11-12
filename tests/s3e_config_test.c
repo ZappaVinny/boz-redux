@@ -43,6 +43,26 @@ static void test_offline_defaults(void) {
     assert_config_string("Demonware", "LSGServer", "");
     assert_config_string("ONLINE", "dispatcher", "");
     assert_config_string("GAME", "VoiceChatEnabled", "0");
+    /* Offline, the online service's names lead nowhere (no DNS question to Activision). */
+    assert(strcmp(s3e_multiplayer_resolve_hostname("codboh-iphone.stun.demonware.net"), "") == 0);
+    assert(strcmp(s3e_multiplayer_resolve_hostname("example.net"), "example.net") == 0);
+}
+
+/* A mod switches online play on and off while the game runs (network.set_server). */
+static void test_server_switch(void) {
+    s3e_host_set_config((const uint8_t *)embedded_config, (uint32_t)strlen(embedded_config));
+    s3e_multiplayer_set_server("192.0.2.20");
+    assert(strcmp(s3e_multiplayer_server(), "192.0.2.20") == 0);
+    assert_config_string("GAME", "OnlineAccount", "GENERIC");
+    assert_config_string("GAME", "MatchmakingSearchAndPublishMode", "1");
+    assert_config_string("Demonware", "LSGServer", "codboh-iphone-lobby.prod.demonware.net:3074");
+    assert_config_string("ONLINE", "dispatcher", "/isonline/dispatcher.php");
+    assert(strcmp(s3e_multiplayer_resolve_hostname("codboh-iphone-auth.prod.demonware.net"),
+                  "192.0.2.20") == 0);
+    s3e_multiplayer_set_server("");
+    assert_config_string("GAME", "OnlineAccount", "NONE");
+    assert_config_string("Demonware", "LSGServer", "");
+    assert(strcmp(s3e_multiplayer_resolve_hostname("codboh-iphone-auth.prod.demonware.net"), "") == 0);
 }
 
 static void test_direct_multiplayer_server(void) {
@@ -124,6 +144,7 @@ int main(void) {
     snprintf(g_root, sizeof(g_root), "%s", directory);
 
     test_offline_defaults();
+    test_server_switch();
     test_direct_multiplayer_server();
     test_voice_chat_opt_in();
     test_player_name();

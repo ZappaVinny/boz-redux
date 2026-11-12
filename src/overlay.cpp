@@ -457,6 +457,9 @@ bool g_context;
 bool g_in_frame;
 bool g_capturing;
 float g_scale = 1.0f;
+// Windows marked clickable (x, y, w, h): this frame's, being drawn, and the last frame's, which
+// input checks clicks against.
+std::vector<ImVec4> g_click_rects, g_click_rects_drawn;
 // Touch screens without a DPI from SDL: the PC size times this.
 constexpr float TOUCH_SCREEN_UI_SCALE = 1.6f;
 
@@ -625,6 +628,15 @@ extern "C" void overlay_event(const struct overlay_event *e) {
     }
 }
 
+extern "C" bool overlay_point_clickable(float x, float y) {
+    for (const ImVec4 &r : g_click_rects) {
+        if (x >= r.x && y >= r.y && x < r.x + r.z && y < r.y + r.w) {
+            return true;
+        }
+    }
+    return false;
+}
+
 extern "C" bool overlay_capturing(void) {
     return g_capturing;
 }
@@ -648,8 +660,8 @@ extern "C" void overlay_begin_frame(int width, int height, double dt) {
         g_scale = scale;
     }
     io.MouseDrawCursor = g_capturing && !touch_screen_mode();
-    if (!g_capturing) {
-        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+    if (!g_capturing && g_click_rects.empty()) {
+        io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);  // only clickable windows take the mouse
     }
     ImGui::NewFrame();
     if (touch_screen_mode() && g_capturing) {
@@ -669,6 +681,8 @@ extern "C" void overlay_end_frame(void) {
     }
     g_in_frame = false;
     ImGui::ErrorRecoveryTryToRecoverState(&g_recovery);
+    g_click_rects.swap(g_click_rects_drawn);
+    g_click_rects_drawn.clear();
     ImGui::Render();
     ImDrawData *draw = ImGui::GetDrawData();
     if (draw && (draw->TotalVtxCount > 0 || (draw->Textures && !draw->Textures->empty()))) {
@@ -737,7 +751,10 @@ bool opt_bool(lua_State *L, int opts, const char *key) {
     return value;
 }
 
-// ui.window(title, opts, fn) -> open. opts: x, y, w, h (first use, in 720p units), closable, flags.
+// ui.window(title, opts, fn) -> open. opts: x, y, w, h (first use, in 720p units), closable, flags;
+// clickable: takes clicks and taps while nothing captures input (a button on the game's screen);
+// pivot_x, pivot_y (0..1): that point of the window stays at x, y of a 1280x720 screen (1, 0: its
+// top right corner there; 0.5, 0.5 at 640, 360: centred).
 int ui_window(lua_State *L) {
     check_frame(L);
     const char *title = luaL_checkstring(L, 1);
@@ -755,7 +772,14 @@ int ui_window(lua_State *L) {
         size.y = std::min(size.y, display.y);
         ImGui::SetNextWindowSize(size, ImGuiCond_FirstUseEver);
     }
-    if (x >= 0 && y >= 0) {
+    float pivot_x = opt_number(L, opts, "pivot_x", -1), pivot_y = opt_number(L, opts, "pivot_y", -1);
+    if (x >= 0 && y >= 0 && (pivot_x >= 0 || pivot_y >= 0)) {
+        // Pinned: that point of the window (0..1 across it) stays at x, y of a 1280x720 screen
+        // (the UI's scale is larger on phones; the screen point is not).
+        ImVec2 at(std::min(x, 1280.0f) * display.x / 1280.0f, std::min(y, 720.0f) * display.y / 720.0f);
+        ImVec2 pivot(std::max(0.0f, std::min(pivot_x, 1.0f)), std::max(0.0f, std::min(pivot_y, 1.0f)));
+        ImGui::SetNextWindowPos(at, ImGuiCond_Always, pivot);
+    } else if (x >= 0 && y >= 0) {
         ImVec2 at(x * g_scale, y * g_scale);
         if (w > 0 && h > 0) {
             at.x = std::max(0.0f, std::min(at.x, display.x - size.x));
@@ -767,7 +791,16 @@ int ui_window(lua_State *L) {
         ImGui::SetNextWindowFocus();
     }
     bool open = true;
-    bool visible = ImGui::Begin(title, opt_bool(L, opts, "closable") ? &open : nullptr, window_flags(L, opts));
+    bool clickable = opt_bool(L, opts, "clickable");
+    int flags = window_flags(L, opts);
+    if (!g_capturing && !clickable) {
+        flags |= ImGuiWindowFlags_NoInputs;  // only clickable windows take clicks meant for the game
+    }
+    bool visible = ImGui::Begin(title, opt_bool(L, opts, "closable") ? &open : nullptr, flags);
+    if (clickable && !g_capturing) {
+        ImVec2 at = ImGui::GetWindowPos(), size = ImGui::GetWindowSize();
+        g_click_rects_drawn.push_back(ImVec4(at.x, at.y, size.x, size.y));
+    }
     int status = visible ? call_body(L, body) : LUA_OK;
     ImGui::End();
     if (status != LUA_OK) {

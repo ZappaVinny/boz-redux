@@ -26,5 +26,8 @@ void lua_settings_open(lua_State *state);
 /* Saves changed settings; the runtime calls it once per frame. */
 void lua_settings_flush(lua_State *state);
 void lua_assets_open(lua_State *state);
+void lua_network_open(lua_State *state);
+/* Hands finished server checks to their mods; the runtime calls it once per frame. */
+void lua_network_poll(lua_State *state);
 
 #endif

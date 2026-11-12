@@ -1216,6 +1216,10 @@ void mod_details(Launcher &l) {
     if (mod.description[0]) {
         ImGui::TextWrapped("%s", mod.description);
     }
+    std::string connects = mod_connects_text(mod);
+    if (!connects.empty()) {
+        ImGui::TextWrapped("%s", connects.c_str());
+    }
     if (is_map_mod(mod)) {
         ImGui::TextDisabled("Played from PLAY > Where to play.");
     }

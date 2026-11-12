@@ -37,6 +37,8 @@ struct mod_info {
     char preview[128];      /* picture of the mod (manifest `preview`), relative to its folder */
     char boz[32];           /* [sdk] boz: the standard library version the mod was built with */
     int client_api;         /* [sdk] client_api: the client Lua API it was built for; 0 unknown */
+    char connects[256];     /* [network] connects: online servers the mod may point the game at,
+                               comma separated; "*" any server the player enters. Empty: none */
     bool has_manifest;
     bool enabled;
 };
@@ -58,6 +60,10 @@ bool mods_set_setting(const char *saves, const char *mod_id, const char *key, co
  * Returns the number of files. */
 int mods_list_assets(const struct mod_info *mod,
                      void (*fn)(const char *relative, const char *full, void *user), void *user);
+
+/* Whether the mod's manifest lets it point the game at this online server ([network] connects:
+ * the name, or "*"). Matched without case. */
+bool mods_may_connect(const struct mod_info *mod, const char *host);
 
 /* True when the mod was built for another client Lua API than this client's (BOZ_LUA_API): it
  * may not work. Mods without the number (older SDKs, hand-made) are not flagged. */

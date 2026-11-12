@@ -298,6 +298,9 @@ static const char *address_text(const struct s3e_inet_address *address, char *bu
 
 static int resolve_hostname(const char *hostname, struct sockaddr_storage *result,
                             socklen_t *result_length) {
+    if (!hostname[0]) {
+        return EAI_NONAME;  /* an online service name while online play is off */
+    }
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -452,6 +455,13 @@ int32_t s3eInetLookup(const char *hostname, struct s3e_inet_address *address, vo
     }
     uint16_t port = address->port ? address->port : htons(80);
     const char *resolved_hostname = s3e_multiplayer_resolve_hostname(hostname);
+    if (!resolved_hostname[0]) {
+        NET_TRACE("lookup %s -> none (online play is off)\n", hostname);
+    } else if (strcmp(resolved_hostname, hostname) != 0) {
+        NET_TRACE("lookup %s -> %s\n", hostname, resolved_hostname);
+    } else {
+        NET_TRACE("lookup %s\n", hostname);
+    }
     if (!callback) {
         struct sockaddr_storage result;
         socklen_t result_length = 0;

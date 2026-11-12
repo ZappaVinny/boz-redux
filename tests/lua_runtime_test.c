@@ -30,6 +30,16 @@ int input_test_finger(int id, const char *action, float x, float y) {
     return 0;
 }
 
+static char g_server[128];
+
+const char *s3e_multiplayer_server(void) {
+    return g_server;
+}
+
+void s3e_multiplayer_set_server(const char *host) {
+    snprintf(g_server, sizeof(g_server), "%s", host);
+}
+
 static void write_file(const char *path, const char *text) {
     FILE *file = fopen(path, "w");
     assert(file);
@@ -78,7 +88,19 @@ int main(void) {
                "assert(client.version == '" BOZ_VERSION "' and client.api >= 1, 'client info')\n"
                "assert(client.arch == 'x86' or client.arch == 'x64' or client.arch == 'arm64')\n"
                "assert(type(client.platform) == 'string' and type(client.touch) == 'boolean')\n"
+               "assert(network.server() == '')\n"
+               "network.set_server('Play.Example.org')\n"
+               "assert(network.server() == 'Play.Example.org', 'a listed server')\n"
+               "assert(not pcall(network.set_server, 'other.example.com'), 'unlisted server')\n"
+               "assert(not pcall(network.set_server, 'bad host'), 'not a name')\n"
+               "network.set_server('')\n"
+               "assert(network.server() == '', 'off again')\n"
+               "network.check('127.0.0.1', 1, function(ok, message)\n"
+               "  settings.set('check', (ok and 'up: ' or 'down: ') .. message)\n"
+               "end)\n"
                "settings.set('ok', true)\n");
+    snprintf(path, sizeof(path), "%s/mods/t/mod.toml", root);
+    write_file(path, "id = \"t\"\n\n[network]\nconnects = [\"play.example.org\", \"127.0.0.1\"]\n");
     snprintf(path, sizeof(path), "%s/mods/t/scripts/lib", root);
     mkdir(path, 0755);
     snprintf(path, sizeof(path), "%s/mods/t/scripts/lib/helper.lua", root);
@@ -96,6 +118,15 @@ int main(void) {
     assert(lua_runtime_key("F5", true, false));
     assert(!lua_runtime_key("F6", true, false));
     lua_runtime_frame(0.016);
+    /* network.check: port 1 on this machine is closed, so the check fails, on a later frame. */
+    char *checked = NULL;
+    for (int i = 0; i < 400 && !(checked && strstr(checked, "check=")); ++i) {
+        test_sleep_ms(20);
+        lua_runtime_frame(0.016);
+        snprintf(path, sizeof(path), "%s/mods/t.cfg", root);
+        checked = read_file(path);
+    }
+    assert(checked && strstr(checked, "check=s:down: "));
 
     /* assets.patch: matched by file name without case, chained output. */
     assert(lua_runtime_has_asset_patch("data-etc/menu.bin"));
@@ -113,7 +144,7 @@ int main(void) {
     assert(strstr(saved, "ok=b:true"));
     assert(strstr(saved, "n=n:12.5"));
     assert(strstr(saved, "s=s:hello world"));
-    assert(strstr(saved, "frames=n:3"));
+    assert(strstr(saved, "frames=n:"));
     assert(strstr(saved, "f5=b:true"));
 
     test_remove_tree(root);

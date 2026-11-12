@@ -73,16 +73,19 @@ static bool multiplayer_server_enabled(void) {
     return g_multiplayer_server[0] != 0;
 }
 
+/* The game's online service names (*.demonware.net) go to the chosen server; with none, to
+ * nothing ("": the lookup fails without asking DNS), so the game never reaches Activision's
+ * servers, which still answer for some of these names. */
 const char *s3e_multiplayer_resolve_hostname(const char *hostname) {
     static const char suffix[] = ".demonware.net";
-    if (!hostname || !multiplayer_server_enabled()) {
+    if (!hostname) {
         return hostname;
     }
     size_t hostname_length = strlen(hostname);
     size_t suffix_length = sizeof(suffix) - 1;
     if (hostname_length >= suffix_length &&
         strcasecmp(hostname + hostname_length - suffix_length, suffix) == 0) {
-        return g_multiplayer_server;
+        return multiplayer_server_enabled() ? g_multiplayer_server : "";
     }
     return hostname;
 }
@@ -121,6 +124,73 @@ static void config_set(const char *section, const char *key, const char *value) 
     snprintf(g_config_entries[index].key, sizeof(g_config_entries[index].key), "%s", key);
     snprintf(g_config_entries[index].value, sizeof(g_config_entries[index].value), "%s",
              value ? value : "");
+}
+
+static void config_remove(const char *section, const char *key) {
+    int index = config_find(section, key);
+    if (index >= 0) {
+        g_config_entries[index] = g_config_entries[--g_config_entry_count];
+    }
+}
+
+/* The online settings the client changes, with the game's own values (from its config) so
+ * online play can be switched on and off again while the game runs: the game reads them when
+ * it uses them (the Multiplayer screen, login, matchmaking), not once at start. */
+static const char *const ONLINE_KEYS[][2] = {
+    {"GAME", "OnlineAccount"},       {"GAME", "GameVersion"},
+    {"GAME", "OnlineUseGameCenterMM"}, {"GAME", "MatchmakingSearchAndPublishMode"},
+    {"Demonware", "OnlineAccount"},  {"Demonware", "LSGServer"},
+    {"Demonware", "AuthServer"},     {"Demonware", "STUNServer"},
+    {"ONLINE", "dispatcher"},
+};
+enum { ONLINE_KEY_COUNT = sizeof(ONLINE_KEYS) / sizeof(ONLINE_KEYS[0]) };
+static struct {
+    bool present;
+    char value[sizeof(g_config_entries[0].value)];
+} g_online_saved[ONLINE_KEY_COUNT];
+static bool g_config_loaded;
+
+static void save_online_config(void) {
+    for (int i = 0; i < ONLINE_KEY_COUNT; ++i) {
+        const char *value = config_get(ONLINE_KEYS[i][0], ONLINE_KEYS[i][1]);
+        g_online_saved[i].present = value != NULL;
+        snprintf(g_online_saved[i].value, sizeof(g_online_saved[i].value), "%s", value ? value : "");
+    }
+    g_config_loaded = true;
+}
+
+static void apply_online_config(void) {
+    for (int i = 0; i < ONLINE_KEY_COUNT; ++i) {
+        if (g_online_saved[i].present) {
+            config_set(ONLINE_KEYS[i][0], ONLINE_KEYS[i][1], g_online_saved[i].value);
+        } else {
+            config_remove(ONLINE_KEYS[i][0], ONLINE_KEYS[i][1]);
+        }
+    }
+    if (multiplayer_server_enabled()) {
+        config_set("GAME", "OnlineAccount", "GENERIC");
+        config_set("GAME", "GameVersion", "1.0.11");
+    } else {
+        config_set("GAME", "OnlineAccount", "NONE");
+        config_set("GAME", "OnlineUseGameCenterMM", "0");
+        config_set("GAME", "MatchmakingSearchAndPublishMode", "0");
+        config_set("Demonware", "OnlineAccount", "NONE");
+        config_set("Demonware", "LSGServer", "");
+        config_set("Demonware", "AuthServer", "");
+        config_set("Demonware", "STUNServer", "");
+        config_set("ONLINE", "dispatcher", "");
+    }
+}
+
+const char *s3e_multiplayer_server(void) {
+    return g_multiplayer_server;
+}
+
+void s3e_multiplayer_set_server(const char *host) {
+    snprintf(g_multiplayer_server, sizeof(g_multiplayer_server), "%s", host ? host : "");
+    if (g_config_loaded) {
+        apply_online_config();
+    }
 }
 
 static int contains_case_insensitive(const char *text, const char *needle) {
@@ -305,19 +375,8 @@ void s3e_host_set_config(const uint8_t *data, uint32_t size) {
     config_set("GAME", "LowMemoryDevice", "0");
     config_set("GAME", "GuiBucketSize", "2500000");
     config_set("GAME", "FrontendMemoryWarningLevel", "0");
-    if (multiplayer_server_enabled()) {
-        config_set("GAME", "OnlineAccount", "GENERIC");
-        config_set("GAME", "GameVersion", "1.0.11");
-    } else {
-        config_set("GAME", "OnlineAccount", "NONE");
-        config_set("GAME", "OnlineUseGameCenterMM", "0");
-        config_set("GAME", "MatchmakingSearchAndPublishMode", "0");
-        config_set("Demonware", "OnlineAccount", "NONE");
-        config_set("Demonware", "LSGServer", "");
-        config_set("Demonware", "AuthServer", "");
-        config_set("Demonware", "STUNServer", "");
-        config_set("ONLINE", "dispatcher", "");
-    }
+    save_online_config();
+    apply_online_config();
     config_set("FLASH", "FlashBucketSize", "32000000");
     config_set("FLASH", "FlashBucketHeapAnalyse", "0");
     if (root_asset_exists("blackops_etc.dz")) {

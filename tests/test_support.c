@@ -82,6 +82,12 @@ __attribute__((weak)) bool overlay_capturing(void) {
     return false;
 }
 
+__attribute__((weak)) bool overlay_point_clickable(float x, float y) {
+    (void)x;
+    (void)y;
+    return false;
+}
+
 __attribute__((weak)) bool lua_runtime_key(const char *name, bool down, bool repeat) {
     (void)name;
     (void)down;
@@ -150,4 +156,13 @@ __attribute__((weak)) bool native_input_aiming(void) {
 /* No CPU in these tests: host functions are called directly, at their own address. */
 uint32_t arm_emu_guest_fn(const void *fn) {
     return (uint32_t)(uintptr_t)fn;
+}
+
+void test_sleep_ms(int ms) {
+#if defined(_WIN32)
+    Sleep((DWORD)ms);
+#else
+    struct timespec wait = {ms / 1000, (long)(ms % 1000) * 1000000L};
+    nanosleep(&wait, NULL);
+#endif
 }

@@ -43,3 +43,8 @@ bool mod_zip_peek(const std::string &zip_path, std::string *id, std::string *nam
 
 // Whether a zip entry name is safe to unpack (relative, no "..", no drive or device names).
 bool mod_zip_safe_name(const std::string &name);
+
+// What a mod's [network] connects lets it do, for the player ("" when nothing): "Can send Play
+// Online to boz-online.example.org, or to any server you enter."
+std::string mod_connects_text(const mod_info &mod);
+

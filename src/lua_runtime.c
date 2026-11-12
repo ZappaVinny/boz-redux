@@ -618,6 +618,7 @@ static void open_api(void) {
     add_functions("gamedef", gamedef);
     lua_settings_open(L);
     lua_assets_open(L);
+    lua_network_open(L);
     add_functions("game", game);
     overlay_open_lua(L);
     lua_hooks_open(L);
@@ -843,6 +844,7 @@ void lua_runtime_frame(double dt) {
         return;
     }
     dispatch_event("frame", push_frame_args, &dt, 1);
+    lua_network_poll(L);
     lua_settings_flush(L);
 }
 

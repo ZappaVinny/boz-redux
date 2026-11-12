@@ -388,6 +388,10 @@ void s3e_socket_pump(void);
 void s3e_socket_shutdown(void);
 /* The configured-server result is borrowed and remains valid until the config is reloaded. */
 const char *s3e_multiplayer_resolve_hostname(const char *hostname);
+/* The online server (client.ini [network] server, or a mod's network.set_server); "" offline.
+ * Setting it applies at once: the game reads its online settings when it goes online. */
+const char *s3e_multiplayer_server(void);
+void s3e_multiplayer_set_server(const char *host);
 void s3e_memory_shutdown(void);
 void s3e_zero_conf_pump(void);
 void s3e_zero_conf_shutdown(void);
