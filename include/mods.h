@@ -15,6 +15,13 @@ extern "C" {
 
 enum { MODS_MAX = 128, MOD_MAPS_MAX = 8 };
 
+/* A [[map]] entry of mod.toml: how the launcher shows one of the mod's maps. */
+struct mod_map_info {
+    char title[96];         /* shown name; empty: the mod's name (or the map id) */
+    char description[256];
+    char picture[128];      /* image file in the mod folder (PNG or JPEG), or empty */
+};
+
 struct mod_info {
     char folder[128];       /* folder name under mods/ */
     char id[64];            /* manifest id, or the folder name */
@@ -26,6 +33,8 @@ struct mod_info {
     char dir[1024];         /* full path of the mod folder */
     char maps[MOD_MAPS_MAX][64]; /* levels the mod adds (manifest `maps = ["name", ...]`) */
     int map_count;
+    struct mod_map_info map_info[MOD_MAPS_MAX]; /* [[map]] entries, by the index in maps */
+    char preview[128];      /* picture of the mod (manifest `preview`), relative to its folder */
     char boz[32];           /* [sdk] boz: the standard library version the mod was built with */
     int client_api;         /* [sdk] client_api: the client Lua API it was built for; 0 unknown */
     bool has_manifest;
@@ -36,6 +45,10 @@ struct mod_info {
  * order, then the rest by id. Ids named in disabled are switched off. Returns the count. */
 int mods_scan(const char *root, const char *order, const char *disabled, struct mod_info *mods,
               int max);
+
+/* Reads one mod folder (its mod.toml; id and name default to the folder name). False when dir
+ * is not a folder. */
+bool mods_read_folder(const char *dir, struct mod_info *mod);
 
 /* Sets one string value in a mod's saved settings (<saves>/mods/<id>.cfg, the file the Lua
  * `settings` module reads), keeping its other values. A NULL value removes the key. */

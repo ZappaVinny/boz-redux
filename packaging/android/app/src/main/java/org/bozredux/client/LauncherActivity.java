@@ -25,13 +25,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 /**
  * The launcher: the desktop launcher's screens (src/launcher, libboz_launcher.so) on SDL, in the
  * app's main process. Its native side calls the static methods here for what only Android can
- * do: the system file picker, reading picked files, downloads, mod zips and starting the game,
+ * do: the system file picker, reading picked files, downloads and starting the game,
  * which runs in its own process (GameActivity). The game root is the app's external files
  * folder, laid out like the desktop install: game/assets, game/gamedef, game/mods, game/saves,
  * game/client.ini.
@@ -237,92 +235,6 @@ public final class LauncherActivity extends SDLActivity {
             Log.e(TAG, "copy of " + uri, e);
             return false;
         }
-    }
-
-    /**
-     * Unpacks a mod's .zip into modsDir: a zip of the mod's folder, or of its contents (then the
-     * folder is named after the zip). Answers "ok:folder" or "error:reason".
-     */
-    public static String importModZip(String uri, String modsDir) {
-        // Pass 1: where mod.toml sits (zip root or one folder down).
-        String prefix = null;
-        try (ZipInputStream zip = new ZipInputStream(
-                activity().getContentResolver().openInputStream(Uri.parse(uri)))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                String name = entry.getName().replace('\\', '/');
-                if (name.equals("mod.toml")) {
-                    prefix = "";
-                    break;
-                }
-                int slash = name.indexOf('/');
-                if (slash > 0 && name.substring(slash + 1).equals("mod.toml")) {
-                    prefix = name.substring(0, slash + 1);
-                }
-            }
-        } catch (IOException | RuntimeException e) {
-            return "error:That file is not a .zip.";
-        }
-        if (prefix == null) {
-            return "error:That .zip has no mod.toml: it is not a BOZ Redux mod.";
-        }
-        String folder = prefix.isEmpty() ? zipName(uri) : prefix.substring(0, prefix.length() - 1);
-        if (folder.isEmpty() || folder.startsWith(".") || folder.contains("/")) {
-            return "error:That mod's folder name is not usable.";
-        }
-        File target = new File(modsDir, folder);
-        File staging = new File(modsDir, "." + folder + ".part");
-        deleteTree(staging);
-        // Pass 2: unpack into a staging folder, then replace the old copy.
-        try (ZipInputStream zip = new ZipInputStream(
-                activity().getContentResolver().openInputStream(Uri.parse(uri)))) {
-            String root = staging.getCanonicalPath() + File.separator;
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                String name = entry.getName().replace('\\', '/');
-                if (!name.startsWith(prefix)) {
-                    continue;
-                }
-                File out = new File(staging, name.substring(prefix.length()));
-                if (!out.getCanonicalPath().startsWith(root) && !out.getCanonicalPath().equals(staging.getCanonicalPath())) {
-                    deleteTree(staging);
-                    return "error:That .zip has unsafe file names.";
-                }
-                if (entry.isDirectory()) {
-                    out.mkdirs();
-                    continue;
-                }
-                out.getParentFile().mkdirs();
-                try (OutputStream file = new FileOutputStream(out)) {
-                    copy(zip, file);
-                }
-            }
-        } catch (IOException | RuntimeException e) {
-            deleteTree(staging);
-            return "error:Could not unpack the mod: " + e.getMessage();
-        }
-        deleteTree(target);
-        if (!staging.renameTo(target)) {
-            deleteTree(staging);
-            return "error:Could not install the mod.";
-        }
-        return "ok:" + folder;
-    }
-
-    private static String zipName(String uri) {
-        String name = "mod";
-        try (Cursor cursor = activity().getContentResolver().query(Uri.parse(uri),
-                new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
-            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) {
-                name = cursor.getString(0);
-            }
-        } catch (RuntimeException e) {
-            // keep "mod"
-        }
-        if (name.toLowerCase().endsWith(".zip")) {
-            name = name.substring(0, name.length() - 4);
-        }
-        return name.replaceAll("[^A-Za-z0-9._-]", "-");
     }
 
     /** Downloads url into the file to (HTTP 200 only). */

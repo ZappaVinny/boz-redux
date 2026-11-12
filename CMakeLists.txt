@@ -308,6 +308,11 @@ endif()
 set_target_properties(codboz_s3e_loader PROPERTIES ENABLE_EXPORTS ON BUILD_RPATH "$ORIGIN")
 add_dependencies(codboz_s3e_loader SDL2 SDL2_mixer)
 
+# miniz (third_party/miniz, MIT): mod .zip files in the launcher.
+add_library(miniz STATIC third_party/miniz/miniz.c)
+target_include_directories(miniz PUBLIC third_party/miniz)
+target_compile_definitions(miniz PUBLIC MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
+
 if(ANDROID)
   # The launcher on phones and TVs: the desktop launcher as libboz_launcher.so, run by its own
   # SDL activity (packaging/android LauncherActivity) in the app's main process; the game keeps
@@ -316,6 +321,7 @@ if(ANDROID)
     src/launcher/main.cpp
     src/branding/brand_imgui.cpp
     src/launcher/game_files.cpp
+    src/launcher/mod_install.cpp
     src/launcher/ini_file.cpp
     src/launcher/os.cpp
     src/launcher/os_android.cpp
@@ -330,7 +336,7 @@ if(ANDROID)
   set_source_files_properties(tools/apk_extract/codboz_apk_extract.c PROPERTIES
     COMPILE_DEFINITIONS "main=boz_apk_extract_main;exit=boz_apk_extract_exit")
   target_include_directories(boz_launcher PRIVATE include third_party/imgui/backends)
-  target_link_libraries(boz_launcher PRIVATE imgui_core boz_common boz_branding SDL2::SDL2 log)
+  target_link_libraries(boz_launcher PRIVATE imgui_core boz_common boz_branding miniz SDL2::SDL2 log)
   return() # the desktop launcher, the extractor program and the tests are desktop programs
 endif()
 
@@ -345,6 +351,7 @@ add_executable(boz-redux
   src/launcher/main.cpp
   src/branding/brand_imgui.cpp
   src/launcher/game_files.cpp
+  src/launcher/mod_install.cpp
   src/launcher/ini_file.cpp
   src/launcher/os.cpp
   src/launcher/sha256.cpp
@@ -352,7 +359,7 @@ add_executable(boz-redux
   src/mods.c)
 target_include_directories(boz-redux PRIVATE include)
 target_compile_options(boz-redux PRIVATE ${BOZ_WARNINGS})
-target_link_libraries(boz-redux PRIVATE imgui boz_common boz_branding)
+target_link_libraries(boz-redux PRIVATE imgui boz_common boz_branding miniz)
 boz_windows_resources(boz-redux "BOZ Redux launcher")
 if(WIN32)
   target_link_libraries(boz-redux PRIVATE comdlg32 shell32 ole32)
@@ -396,6 +403,15 @@ boz_test(s3e_timer_test SOURCES src/s3e_timer.c)
 boz_test(client_config_test SOURCES src/client_config.c)
 boz_test(mods_test SOURCES src/mods.c src/client_config.c)
 boz_test(gamedef_test SOURCES src/gamedef.c)
+# The launcher's mod .zip installer (C++).
+add_executable(mod_install_test tests/mod_install_test.cpp src/launcher/mod_install.cpp src/mods.c
+               src/client_config.c tests/test_support.c)
+target_link_libraries(mod_install_test PRIVATE boz_project boz_common miniz ${BOZ_SYSTEM_LIBS})
+target_link_options(mod_install_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
+target_compile_options(mod_install_test PRIVATE -UNDEBUG)
+target_include_directories(mod_install_test PRIVATE src/launcher tests)
+set_target_properties(mod_install_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+add_test(NAME mod_install_test COMMAND mod_install_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 boz_test(lua_runtime_test SOURCES src/lua_runtime.c ${BOZ_TEST_MODE_SOURCES} src/lua_settings.c src/lua_assets.c src/mods.c src/client_config.c src/gamedef.c
          src/game_image.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(lua_runtime_test PRIVATE lua ${CMAKE_DL_LIBS})

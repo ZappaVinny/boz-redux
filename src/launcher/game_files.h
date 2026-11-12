@@ -2,6 +2,8 @@
 // folder. Long steps run on a worker thread; the UI polls status().
 #pragma once
 
+#include "mod_install.h"
+
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -42,9 +44,11 @@ public:
     // Picked files (content:// URIs): each one with the size of a pack becomes that pack, so an
     // Android OBB (main.*.obb is blackops_etc.dz) works under any name.
     void import_pack_documents(const std::vector<std::string> &uris);
-    void import_mod(const std::string &uri);
-    bool mods_changed();  // once after a mod was imported
 #endif
+    // A mod's .zip (a path, or a content:// URI on Android) unpacked into mods/ staging; the UI
+    // then takes it (take_staged_mod) and asks before putting it in place.
+    void stage_mod(const std::string &zip);
+    bool take_staged_mod(StagedMod *staged);  // once per staged zip
 
 private:
     void start(void (GameFiles::*job)(std::string), std::string argument);
@@ -54,11 +58,12 @@ private:
     void job_import(std::string folder);
 #if defined(__ANDROID__)
     void job_import_documents(std::string uris);
-    void job_import_mod(std::string uri);
     bool fetch(bool (*copy)(const std::string &, const std::string &), const std::string &from,
                const std::string &part, int64_t size);
-    std::atomic<bool> mods_changed_{false};
 #endif
+    void job_stage_mod(std::string zip);
+    std::atomic<bool> staged_ready_{false};
+    StagedMod staged_;
     void check_image();
     bool verify_pack(int index, const std::string &path);
 

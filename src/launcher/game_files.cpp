@@ -266,14 +266,6 @@ void GameFiles::import_pack_documents(const std::vector<std::string> &uris) {
     start(&GameFiles::job_import_documents, joined);
 }
 
-void GameFiles::import_mod(const std::string &uri) {
-    start(&GameFiles::job_import_mod, uri);
-}
-
-bool GameFiles::mods_changed() {
-    return mods_changed_.exchange(false);
-}
-
 // Runs a blocking copy or download on its own thread and shows its progress from the size of
 // the file it writes.
 bool GameFiles::fetch(bool (*copy)(const std::string &, const std::string &),
@@ -350,16 +342,51 @@ void GameFiles::job_import_documents(std::string uris) {
     }
 }
 
-void GameFiles::job_import_mod(std::string uri) {
-    std::string mods = os::join(root_, "mods");
-    os::make_dir(mods);
-    set_message("Installing the mod...");
-    std::string error;
-    std::string folder = os::import_mod_zip(uri, mods, &error);
-    set_message(folder.empty() ? error : "Mod installed in mods/" + folder + ".");
-    if (!folder.empty()) {
-        mods_changed_ = true;
-    }
+#endif
+
+void GameFiles::stage_mod(const std::string &zip) {
+    start(&GameFiles::job_stage_mod, zip);
 }
 
+bool GameFiles::take_staged_mod(StagedMod *staged) {
+    if (!staged_ready_.exchange(false)) {
+        return false;
+    }
+    *staged = staged_;
+    staged_ = StagedMod();
+    return true;
+}
+
+void GameFiles::job_stage_mod(std::string zip) {
+    std::string mods = os::join(root_, "mods");
+    os::make_dir(mods);
+    mod_clean_leftovers(mods);
+    std::string name = zip.substr(zip.find_last_of("/\\") + 1);
+    if (name.size() > 4 && (name.compare(name.size() - 4, 4, ".zip") == 0 ||
+                            name.compare(name.size() - 4, 4, ".ZIP") == 0)) {
+        name.resize(name.size() - 4);
+    }
+    std::string local = zip;
+#if defined(__ANDROID__)
+    if (zip.compare(0, 10, "content://") == 0) {
+        // Only Java reads a picked file: copy it next to the mods first.
+        local = os::join(mods, ".incoming.zip");
+        name = "mod";
+        set_message("Copying the mod...");
+        if (!fetch(os::copy_document, zip, local, os::document_size(zip))) {
+            std::remove(local.c_str());
+            set_message("Could not read that file.");
+            return;
+        }
+    }
 #endif
+    set_message("Unpacking the mod...");
+    progress_ = -1.0f;
+    StagedMod staged = mod_zip_stage(local, mods, name);
+    if (local != zip) {
+        std::remove(local.c_str());
+    }
+    set_message(staged.ok ? "" : staged.error);
+    staged_ = staged;
+    staged_ready_ = true;
+}

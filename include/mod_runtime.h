@@ -71,6 +71,10 @@ void overlay_begin_frame(int width, int height, double dt);
 void overlay_end_frame(void);
 /* Whether a mod's text field has the keyboard focus (touch screens show their keyboard). */
 bool overlay_wants_text_input(void);
+
+/* The screen's diagonal DPI as SDL reports it, or 0 (s3e_input.c): the overlay sizes itself for
+ * fingers on touch screens. */
+float input_display_dpi(void);
 /* Adds the `ui` and `overlay` modules to a Lua state. */
 void overlay_open_lua(void *lua_state);
 

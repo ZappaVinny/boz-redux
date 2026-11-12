@@ -160,27 +160,6 @@ bool copy_document(const std::string &uri, const std::string &to) {
     return !java.failed() && ok;
 }
 
-std::string import_mod_zip(const std::string &uri, const std::string &mods_dir, std::string *error) {
-    Java java;
-    jmethodID id = java.ok() ? java.method("importModZip",
-                                           "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;")
-                             : nullptr;
-    if (!id) {
-        *error = "The launcher's Java side is missing importModZip.";
-        return "";
-    }
-    jstring juri = java.string(uri), jdir = java.string(mods_dir);
-    // "ok:<folder>" or "error:<reason>"
-    std::string result = java.take((jstring)java.env->CallStaticObjectMethod(java.cls, id, juri, jdir));
-    java.env->DeleteLocalRef(juri);
-    java.env->DeleteLocalRef(jdir);
-    if (java.failed() || result.compare(0, 3, "ok:") != 0) {
-        *error = result.compare(0, 6, "error:") == 0 ? result.substr(6) : "That file could not be read.";
-        return "";
-    }
-    return result.substr(3);
-}
-
 bool download(const std::string &url, const std::string &to) {
     Java java;
     jmethodID id =

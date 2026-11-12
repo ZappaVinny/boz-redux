@@ -212,6 +212,9 @@ static bool apply(const char *section, const char *key, const char *value) {
         }
         return false;
     }
+    if (!strcmp(section, "launcher")) {   /* the launcher's own memory (last map played) */
+        return true;
+    }
     if (!strcmp(section, "player")) {
         if (!strcmp(key, "name")) {
             if (value[0]) {

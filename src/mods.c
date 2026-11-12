@@ -32,8 +32,64 @@ static void read_maps(struct mod_info *mod, const char *value) {
     }
 }
 
-/* mod.toml: top-level `key = "string"` lines, the `maps` list, and [sdk] `boz` and `client_api`;
- * other tables and keys are left for later readers. */
+/* A [[map]] entry while it is read: committed when the next table starts or the file ends. */
+struct map_entry {
+    bool open;
+    char id[64], title[96], description[256], picture[128];
+};
+
+static int map_index(struct mod_info *mod, const char *id, bool add) {
+    for (int i = 0; i < mod->map_count; ++i) {
+        if (!strcmp(mod->maps[i], id)) {
+            return i;
+        }
+    }
+    if (!add || mod->map_count >= MOD_MAPS_MAX) {
+        return -1;
+    }
+    snprintf(mod->maps[mod->map_count], sizeof(mod->maps[0]), "%s", id);
+    return mod->map_count++;
+}
+
+static void commit_map(struct mod_info *mod, struct map_entry *entry) {
+    if (entry->open && entry->id[0]) {
+        int i = map_index(mod, entry->id, true);
+        if (i >= 0) {
+            struct mod_map_info *info = &mod->map_info[i];
+            snprintf(info->title, sizeof(info->title), "%s", entry->title);
+            snprintf(info->description, sizeof(info->description), "%s", entry->description);
+            snprintf(info->picture, sizeof(info->picture), "%s", entry->picture);
+        }
+    }
+    memset(entry, 0, sizeof(*entry));
+}
+
+/* A TOML basic string's text ("a\"b" -> a"b, \n -> newline) in place; false when not a string. */
+static bool unquote(char **value) {
+    char *text = *value;
+    if (*text != '"') {
+        return false;
+    }
+    char *out = text;
+    for (char *c = text + 1; *c; ++c) {
+        if (*c == '"') {
+            *out = '\0';
+            *value = text;
+            return true;
+        }
+        if (*c == '\\' && c[1]) {
+            ++c;
+            *out++ = *c == 'n' ? '\n' : *c == 't' ? '\t' : *c;
+        } else {
+            *out++ = *c;
+        }
+    }
+    return false;
+}
+
+/* mod.toml: top-level `key = "string"` lines, the `maps` list, `preview`, [[map]] entries (id,
+ * title, description, picture) and [sdk] `boz` and `client_api`; other tables and keys are left
+ * for later readers. */
 static void read_manifest(struct mod_info *mod) {
     char path[1200];
     snprintf(path, sizeof(path), "%s/mod.toml", mod->dir);
@@ -44,12 +100,17 @@ static void read_manifest(struct mod_info *mod) {
     mod->has_manifest = true;
     char line[1024];
     char table[32] = "";
+    struct map_entry entry = {0};
     while (fgets(line, sizeof(line), file)) {
         char *text = str_trim(line);
         if (*text == '[') {
-            /* [name] sets the table; [[name]] (arrays of tables) is never one this reads. */
+            commit_map(mod, &entry);
+            /* [name] sets the table; of the arrays of tables only [[map]] is read here. */
             char *end = strchr(text, ']');
-            if (text[1] == '[' || !end) {
+            if (!strncmp(text, "[[map]]", 7)) {
+                snprintf(table, sizeof(table), "[[map]]");
+                entry.open = true;
+            } else if (text[1] == '[' || !end) {
                 snprintf(table, sizeof(table), "[[");
             } else {
                 snprintf(table, sizeof(table), "%.*s", (int)(end - text - 1), text + 1);
@@ -65,7 +126,8 @@ static void read_manifest(struct mod_info *mod) {
         char *value = str_trim(equals + 1);
         bool top_level = !table[0];
         bool sdk = !strcmp(table, "sdk");
-        if (!top_level && !sdk) {
+        bool map = !strcmp(table, "[[map]]");
+        if (!top_level && !sdk && !map) {
             continue;
         }
         if (top_level && !strcmp(key, "maps") && *value == '[') {
@@ -76,15 +138,27 @@ static void read_manifest(struct mod_info *mod) {
             mod->client_api = atoi(value);
             continue;
         }
-        if (*value != '"') {
+        if (!unquote(&value)) {
             continue;
         }
-        char *close = strchr(value + 1, '"');
-        if (!close) {
+        if (map) {
+            struct {
+                const char *key;
+                char *field;
+                size_t size;
+            } fields[] = {
+                {"id", entry.id, sizeof(entry.id)},
+                {"title", entry.title, sizeof(entry.title)},
+                {"description", entry.description, sizeof(entry.description)},
+                {"picture", entry.picture, sizeof(entry.picture)},
+            };
+            for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+                if (!strcmp(key, fields[i].key)) {
+                    snprintf(fields[i].field, fields[i].size, "%s", value);
+                }
+            }
             continue;
         }
-        *close = '\0';
-        ++value;
         if (sdk) {
             if (!strcmp(key, "boz")) {
                 snprintf(mod->boz, sizeof(mod->boz), "%s", value);
@@ -102,6 +176,7 @@ static void read_manifest(struct mod_info *mod) {
             {"author", mod->author, sizeof(mod->author)},
             {"game", mod->game, sizeof(mod->game)},
             {"description", mod->description, sizeof(mod->description)},
+            {"preview", mod->preview, sizeof(mod->preview)},
         };
         for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
             if (!strcmp(key, fields[i].key)) {
@@ -109,7 +184,30 @@ static void read_manifest(struct mod_info *mod) {
             }
         }
     }
+    commit_map(mod, &entry);
     fclose(file);
+}
+
+bool mods_read_folder(const char *dir, struct mod_info *mod) {
+    memset(mod, 0, sizeof(*mod));
+    snprintf(mod->dir, sizeof(mod->dir), "%s", dir);
+    if (!is_dir(mod->dir)) {
+        return false;
+    }
+    const char *slash = strrchr(dir, '/');
+    const char *backslash = strrchr(dir, '\\');
+    if (backslash && (!slash || backslash > slash)) {
+        slash = backslash;
+    }
+    snprintf(mod->folder, sizeof(mod->folder), "%s", slash ? slash + 1 : dir);
+    read_manifest(mod);
+    if (!mod->id[0]) {
+        snprintf(mod->id, sizeof(mod->id), "%s", mod->folder);
+    }
+    if (!mod->name[0]) {
+        snprintf(mod->name, sizeof(mod->name), "%s", mod->id);
+    }
+    return true;
 }
 
 bool mods_api_differs(const struct mod_info *mod) {
@@ -220,18 +318,10 @@ int mods_scan(const char *root, const char *order, const char *disabled, struct 
             continue;
         }
         struct mod_info *mod = &mods[count];
-        memset(mod, 0, sizeof(*mod));
-        snprintf(mod->dir, sizeof(mod->dir), "%s/%s", base, entry->d_name);
-        if (!is_dir(mod->dir)) {
+        char path[1200];
+        snprintf(path, sizeof(path), "%s/%s", base, entry->d_name);
+        if (!mods_read_folder(path, mod)) {
             continue;
-        }
-        snprintf(mod->folder, sizeof(mod->folder), "%s", entry->d_name);
-        read_manifest(mod);
-        if (!mod->id[0]) {
-            snprintf(mod->id, sizeof(mod->id), "%s", mod->folder);
-        }
-        if (!mod->name[0]) {
-            snprintf(mod->name, sizeof(mod->name), "%s", mod->id);
         }
         mod->enabled = list_index(disabled, mod->id) < 0;
         ++count;

@@ -33,6 +33,8 @@ enum {
 
 /* Decodes a PNG blob to 8-bit RGBA rows; NULL on failure. Free with brand_image_free. */
 unsigned char *brand_image_decode(const struct brand_blob *blob, int *width, int *height);
+/* A PNG or JPEG file decoded the same way (map pictures in the launcher); NULL on failure. */
+unsigned char *brand_image_load_file(const char *path, int *width, int *height);
 void brand_image_free(unsigned char *pixels);
 
 #ifdef __cplusplus

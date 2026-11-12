@@ -21,6 +21,7 @@ void *lookup_gl(const char *symbol);
 }
 
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -456,7 +457,42 @@ bool g_context;
 bool g_in_frame;
 bool g_capturing;
 float g_scale = 1.0f;
+// Touch screens without a DPI from SDL: the PC size times this.
 constexpr float TOUCH_SCREEN_UI_SCALE = 1.6f;
+
+// Touch screens: a finger dragged over a window scrolls it (ImGui scrolls with a wheel or the
+// scrollbar only). The innermost window under the finger that can scroll does; a drag that
+// starts on a button or a field stays theirs.
+void touch_drag_scroll() {
+    ImGuiContext &g = *ImGui::GetCurrentContext();
+    ImGuiIO &io = g.IO;
+    ImGuiWindow *window = g.HoveredWindow;
+    if (!window || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        return;
+    }
+    while (window && window->ScrollMax.y <= 0.0f && (window->Flags & ImGuiWindowFlags_ChildWindow)) {
+        window = window->ParentWindow;
+    }
+    if (!window || window->ScrollMax.y <= 0.0f) {
+        return;
+    }
+    // A finger that has clearly moved up or down scrolls, even when it landed on a field or a
+    // button (lists of them would never scroll otherwise); its press is cancelled. Sideways
+    // drags (sliders) and the scrollbar keep working.
+    ImVec2 moved = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+    bool vertical = std::fabs(moved.y) > 10.0f * g_scale && std::fabs(moved.y) > std::fabs(moved.x) * 1.5f;
+    if (!vertical) {
+        return;
+    }
+    if (g.ActiveId != 0 && g.ActiveId != window->MoveId && g.ActiveId != window->RootWindow->MoveId) {
+        if (g.ActiveId == ImGui::GetWindowScrollbarID(window, ImGuiAxis_Y)) {
+            return;
+        }
+        ImGui::ClearActiveID();
+    }
+    ImGui::SetScrollY(window, window->Scroll.y - io.MouseDelta.y);
+}
+
 ImGuiErrorRecoveryState g_recovery;
 
 ImGuiKey imgui_key(int scancode) {
@@ -526,6 +562,16 @@ void ensure_context() {
     style.WindowBorderSize = 1.0f;
     style.FrameBorderSize = 1.0f;
     style.FramePadding = ImVec2(8, 5);
+    if (touch_screen_mode()) {
+        // Finger-sized targets; the hit area reaches a little past each item.
+        style.FramePadding = ImVec2(12, 10);
+        style.ItemSpacing = ImVec2(10, 10);
+        style.ScrollbarSize = 20.0f;
+        style.GrabMinSize = 22.0f;
+        style.TouchExtraPadding = ImVec2(4, 4);
+        // Dragging a window's body scrolls it; only its title bar moves it.
+        io.ConfigWindowsMoveFromTitleBarOnly = true;
+    }
     brand_imgui_colours(style);
     style.Colors[ImGuiCol_WindowBg].w = 0.94f;
     style.Colors[ImGuiCol_TitleBgActive] = brand(BRAND_RED_DARK);
@@ -556,11 +602,21 @@ extern "C" void overlay_event(const struct overlay_event *e) {
         }
         break;
     case OVERLAY_MOUSE_MOVE:
+        if (touch_screen_mode()) {
+            io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+        }
         io.AddMousePosEvent(e->x, e->y);
         break;
     case OVERLAY_MOUSE_BUTTON:
         if (e->button >= 0 && e->button < 3) {
+            if (touch_screen_mode()) {
+                io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+            }
             io.AddMouseButtonEvent(e->button, e->down);
+            if (touch_screen_mode() && !e->down) {
+                // A lifted finger hovers nothing (no tooltips left behind).
+                io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
+            }
         }
         break;
     case OVERLAY_MOUSE_WHEEL:
@@ -580,9 +636,10 @@ extern "C" void overlay_begin_frame(int width, int height, double dt) {
     io.DeltaTime = dt > 0.0 ? (float)dt : 1.0f / 60.0f;
     float scale = height >= 720 ? (float)height / 720.0f : 1.0f;
     if (touch_screen_mode()) {
-        /* A phone screen is a few inches tall: text and buttons at the PC's share of the screen
-         * would be too small to read or tap. */
-        scale *= TOUCH_SCREEN_UI_SCALE;
+        /* A phone screen is a few inches tall: one overlay pixel per Android dp (the size the
+         * system's own text has), never smaller than the PC's share of the screen. */
+        float dpi = input_display_dpi();
+        scale = dpi > 0.0f ? std::max(scale, dpi / 160.0f) : scale * TOUCH_SCREEN_UI_SCALE;
     }
     if (scale != g_scale) {
         ImGuiStyle &style = ImGui::GetStyle();
@@ -595,6 +652,9 @@ extern "C" void overlay_begin_frame(int width, int height, double dt) {
         io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
     }
     ImGui::NewFrame();
+    if (touch_screen_mode() && g_capturing) {
+        touch_drag_scroll();
+    }
     ImGui::ErrorRecoveryStoreState(&g_recovery);
     g_in_frame = true;
 }

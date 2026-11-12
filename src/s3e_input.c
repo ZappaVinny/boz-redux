@@ -156,6 +156,7 @@ struct sdl_input_api {
     const char *(*GetScancodeName)(int scancode);
     void (*StartTextInput)(void);
     void (*StopTextInput)(void);
+    int (*GetDisplayDPI)(int display, float *ddpi, float *hdpi, float *vdpi);
 };
 
 static const uint32_t KEY_ACTION[] = {XPERIA_KEY_ACTION_SPRINT};
@@ -309,6 +310,7 @@ static void input_open(void) {
     sdl_load_optional_symbol((void **)&g_sdl.GetScancodeName, "SDL_GetScancodeName");
     sdl_load_optional_symbol((void **)&g_sdl.StartTextInput, "SDL_StartTextInput");
     sdl_load_optional_symbol((void **)&g_sdl.StopTextInput, "SDL_StopTextInput");
+    sdl_load_optional_symbol((void **)&g_sdl.GetDisplayDPI, "SDL_GetDisplayDPI");
     if (!ok || g_sdl.InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
         if (!ok) {
             fprintf(stderr, "[input] SDL2 controller symbols unavailable\n");
@@ -1348,6 +1350,29 @@ int input_test_finger(int id, const char *action, float x, float y) {
         return 0;
     }
     touch_finger(type, TEST_FINGER_BASE + id, x, y);
+    /* As SDL does on a phone, the first finger down is also the mouse (mod windows use it). */
+    static int mouse_finger = -1;
+    if (type == SDL_FINGERDOWN_EVENT && mouse_finger < 0) {
+        mouse_finger = id;
+    }
+    int dw = 0, dh = 0;
+    if (id == mouse_finger && egl_backend_drawable_size(&dw, &dh) && dw > 0 && dh > 0) {
+        struct overlay_event out;
+        memset(&out, 0, sizeof(out));
+        out.kind = OVERLAY_MOUSE_MOVE;
+        out.x = x * (float)dw;
+        out.y = y * (float)dh;
+        overlay_event(&out);
+        if (type != SDL_FINGERMOTION_EVENT) {
+            out.kind = OVERLAY_MOUSE_BUTTON;
+            out.button = 0;
+            out.down = type == SDL_FINGERDOWN_EVENT;
+            overlay_event(&out);
+        }
+        if (type == SDL_FINGERUP_EVENT) {
+            mouse_finger = -1;
+        }
+    }
     return 1;
 }
 
@@ -1390,6 +1415,14 @@ static void touch_menu_hold(void) {
 }
 
 /* The on-screen keyboard while a mod's text field has the focus. */
+float input_display_dpi(void) {
+    float dpi = 0.0f;
+    if (!g_sdl.GetDisplayDPI || g_sdl.GetDisplayDPI(0, &dpi, NULL, NULL) != 0) {
+        return 0.0f;
+    }
+    return dpi;
+}
+
 static void touch_screen_keyboard(void) {
     static bool shown;
     bool want = overlay_wants_text_input();
