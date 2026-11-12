@@ -2,13 +2,19 @@ package org.bozredux.client;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Log;
@@ -233,6 +239,66 @@ public final class LauncherActivity extends SDLActivity {
             return true;
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "copy of " + uri, e);
+            return false;
+        }
+    }
+
+    private static final String INSTALL_RESULT = "org.bozredux.client.INSTALL_RESULT";
+    private static boolean sInstallReceiver;
+
+    /**
+     * Hands a downloaded APK to Android's package installer (a session the system shows to the
+     * player, who confirms it). Updates only install over an app signed with the same key.
+     */
+    public static boolean installApk(String path) {
+        final Activity activity = activity();
+        try {
+            if (!sInstallReceiver) {
+                sInstallReceiver = true;
+                BroadcastReceiver receiver = new BroadcastReceiver() {
+                    @Override
+                    public void onReceive(Context context, Intent intent) {
+                        int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999);
+                        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                            if (confirm != null) {
+                                confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                context.startActivity(confirm);
+                            }
+                        } else if (status != PackageInstaller.STATUS_SUCCESS) {
+                            Log.e(TAG, "update install: " + status + " "
+                                    + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
+                        }
+                    }
+                };
+                IntentFilter filter = new IntentFilter(INSTALL_RESULT);
+                if (Build.VERSION.SDK_INT >= 33) {
+                    activity.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    activity.registerReceiver(receiver, filter);
+                }
+            }
+            PackageInstaller installer = activity.getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionParams params =
+                    new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+            params.setAppPackageName(activity.getPackageName());
+            int id = installer.createSession(params);
+            try (PackageInstaller.Session session = installer.openSession(id)) {
+                File apk = new File(path);
+                try (InputStream in = new java.io.FileInputStream(apk);
+                     OutputStream out = session.openWrite("update.apk", 0, apk.length())) {
+                    copy(in, out);
+                    session.fsync(out);
+                }
+                Intent result = new Intent(INSTALL_RESULT).setPackage(activity.getPackageName());
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT
+                        | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
+                PendingIntent pending = PendingIntent.getBroadcast(activity, id, result, flags);
+                session.commit(pending.getIntentSender());
+            }
+            return true;
+        } catch (IOException | RuntimeException e) {
+            Log.e(TAG, "update install", e);
             return false;
         }
     }

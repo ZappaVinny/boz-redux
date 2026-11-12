@@ -322,6 +322,7 @@ if(ANDROID)
     src/branding/brand_imgui.cpp
     src/launcher/game_files.cpp
     src/launcher/mod_install.cpp
+    src/launcher/updater.cpp
     src/launcher/ini_file.cpp
     src/launcher/os.cpp
     src/launcher/os_android.cpp
@@ -352,6 +353,7 @@ add_executable(boz-redux
   src/branding/brand_imgui.cpp
   src/launcher/game_files.cpp
   src/launcher/mod_install.cpp
+  src/launcher/updater.cpp
   src/launcher/ini_file.cpp
   src/launcher/os.cpp
   src/launcher/sha256.cpp
@@ -412,6 +414,18 @@ target_compile_options(mod_install_test PRIVATE -UNDEBUG)
 target_include_directories(mod_install_test PRIVATE src/launcher tests)
 set_target_properties(mod_install_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
 add_test(NAME mod_install_test COMMAND mod_install_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# The launcher's client updates (C++).
+add_executable(updater_test tests/updater_test.cpp src/launcher/updater.cpp src/launcher/os.cpp
+               src/launcher/sha256.cpp tests/test_support.c)
+target_link_libraries(updater_test PRIVATE boz_project boz_common miniz ${BOZ_SYSTEM_LIBS})
+target_link_options(updater_test PRIVATE ${BOZ_SYSTEM_LINK_OPTIONS} ${BOZ_GUEST_LINK_OPTIONS})
+target_compile_options(updater_test PRIVATE -UNDEBUG)
+target_include_directories(updater_test PRIVATE src/launcher tests)
+if(WIN32)
+  target_link_libraries(updater_test PRIVATE comdlg32 shell32 ole32)
+endif()
+set_target_properties(updater_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests)
+add_test(NAME updater_test COMMAND updater_test WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 boz_test(lua_runtime_test SOURCES src/lua_runtime.c ${BOZ_TEST_MODE_SOURCES} src/lua_settings.c src/lua_assets.c src/mods.c src/client_config.c src/gamedef.c
          src/game_image.c ${BOZ_PLATFORM_SOURCES})
 target_link_libraries(lua_runtime_test PRIVATE lua ${CMAKE_DL_LIBS})

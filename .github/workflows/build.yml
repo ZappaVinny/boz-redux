@@ -76,8 +76,13 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build and test
+      - name: Build, test and package
         run: scripts/ci.sh linux64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BOZ-Redux-linux-x64
+          path: build/linux-x64/package/BOZ-Redux-linux-x64.tar.gz
 
   # The Android APK (arm64, phones). The runner image has the Android SDK; the NDK and CMake
   # versions the Gradle build asks for are installed here.
@@ -99,14 +104,28 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
             "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0"
 
+      # Release build (the debug one is unoptimised and too slow to play). Signed with the key in
+      # the BOZ_ANDROID_KEYSTORE_BASE64, BOZ_ANDROID_KEYSTORE_PASSWORD and BOZ_ANDROID_KEY_ALIAS
+      # secrets when set, else a throwaway debug key: updates only install over the same key, so
+      # public releases need the secrets.
       - name: Build the APK
         working-directory: packaging/android
-        run: ./gradlew --no-daemon assembleDebug
+        env:
+          KEYSTORE_BASE64: ${{ secrets.BOZ_ANDROID_KEYSTORE_BASE64 }}
+          BOZ_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.BOZ_ANDROID_KEYSTORE_PASSWORD }}
+          BOZ_ANDROID_KEY_ALIAS: ${{ secrets.BOZ_ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/boz.keystore"
+            export BOZ_ANDROID_KEYSTORE="$RUNNER_TEMP/boz.keystore"
+          fi
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk BOZ-Redux-android-arm64.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BOZ-Redux-android-arm64-debug
-          path: packaging/android/app/build/outputs/apk/debug/app-debug.apk
+          name: BOZ-Redux-android-arm64
+          path: packaging/android/BOZ-Redux-android-arm64.apk
 
   # The Windows build on real Windows: unit tests, then the extractor and the launcher start.
   windows-test:
@@ -171,7 +190,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, windows-test]
+    needs: [build, windows-test, linux64, android]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -180,9 +199,17 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # The launcher checks its download against SHA256SUMS before installing an update.
+      - name: Checksums
+        run: cd artifacts && sha256sum BOZ-Redux-* > SHA256SUMS && cat SHA256SUMS
+
+      # A tag with a pre-release part (v0.4.0-beta.1) is a test version: only launchers set
+      # to include test versions offer it.
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" artifacts/* $pre \
             --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

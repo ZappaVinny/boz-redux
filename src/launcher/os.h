@@ -54,6 +54,8 @@ std::vector<std::string> pick_documents(bool multiple);
 int64_t document_size(const std::string &uri);  // -1 when unknown
 bool copy_document(const std::string &uri, const std::string &to);
 bool download(const std::string &url, const std::string &to);
+// Hands an APK file to Android's installer (the player confirms the update).
+bool install_apk(const std::string &path);
 // Starts the game's activity (its own process) with these arguments; env sets HOME and BOZ_*.
 bool start_game(const std::vector<std::string> &args, const std::map<std::string, std::string> &env);
 #endif

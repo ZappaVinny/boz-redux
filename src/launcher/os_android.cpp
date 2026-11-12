@@ -174,6 +174,18 @@ bool download(const std::string &url, const std::string &to) {
     return !java.failed() && ok;
 }
 
+bool install_apk(const std::string &path) {
+    Java java;
+    jmethodID id = java.ok() ? java.method("installApk", "(Ljava/lang/String;)Z") : nullptr;
+    if (!id) {
+        return false;
+    }
+    jstring jpath = java.string(path);
+    bool ok = java.env->CallStaticBooleanMethod(java.cls, id, jpath);
+    java.env->DeleteLocalRef(jpath);
+    return !java.failed() && ok;
+}
+
 bool start_game(const std::vector<std::string> &args, const std::map<std::string, std::string> &env) {
     Java java;
     jmethodID id = java.ok() ? java.method("startGame", "([Ljava/lang/String;[Ljava/lang/String;)Z")

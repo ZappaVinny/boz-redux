@@ -24,6 +24,8 @@ mkdir -p "$stage/mesa"
 cp "$build/mesa/"*.dll "$stage/mesa/"
 cp "$here/packaging/THIRD-PARTY.txt" "$stage/"
 mkdir -p "$stage/gamedef" && cp -r "$here/gamedef/"*.toml "$here/gamedef/symbols" "$here/gamedef/console" "$here/gamedef/reflection" "$here/gamedef/events" "$stage/gamedef/"
+# files.txt: every file the package owns, which the launcher's updates replace (and nothing else).
+(cd "$stage" && { find . -type f | sed 's|^\./||'; echo files.txt; } | sort -u > files.txt)
 for f in "$here/packaging/windows/"*.bat "$here/packaging/windows/README.txt" "$here/packaging/THIRD-PARTY.txt"; do sed -i 's/$/\r/' "$stage/$(basename "$f")"; done
 (cd "$build/package" && rm -f "BOZ-Redux-windows-$arch.zip" && zip -qr "BOZ-Redux-windows-$arch.zip" BOZ-Redux)
 echo "$build/package/BOZ-Redux-windows-$arch.zip"

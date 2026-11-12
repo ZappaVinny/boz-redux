@@ -135,7 +135,7 @@ android {
     // imported game files survive); without it the machine's debug key is used.
     val keystore = System.getenv("BOZ_ANDROID_KEYSTORE")
     val keystorePassword = System.getenv("BOZ_ANDROID_KEYSTORE_PASSWORD")
-    val keyAlias = System.getenv("BOZ_ANDROID_KEY_ALIAS") ?: "boz"
+    val keyAlias = System.getenv("BOZ_ANDROID_KEY_ALIAS").takeUnless { it.isNullOrEmpty() } ?: "boz"
     signingConfigs {
         if (!keystore.isNullOrEmpty() && !keystorePassword.isNullOrEmpty()) {
             create("boz") {

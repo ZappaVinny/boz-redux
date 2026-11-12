@@ -8,6 +8,7 @@
 #include "mod_install.h"
 #include "mods.h"
 #include "os.h"
+#include "updater.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"  // touch_scroll: the active id and the window's move id
@@ -74,6 +75,11 @@ struct Launcher {
     int remove_index = -1;       // mod waiting for the Remove question
     std::string mods_note;
     bool mods_note_error = false;
+
+    Updates *updates = nullptr;
+    bool update_hidden = false;   // "Later" pressed
+    bool update_asked = false;    // the player started the check or the update: show failures
+    bool restart = false;         // the update is in place: start the new launcher
 
     os::Process game;
     bool game_running = false;
@@ -847,6 +853,38 @@ void settings_troubleshooting(Launcher &l) {
     }
 }
 
+void settings_updates(Launcher &l) {
+    section("Updates");
+    bool check = l.ini.get("launcher", "check_updates", "true") != "false";
+    if (ImGui::Checkbox("Check for updates when the launcher starts", &check)) {
+        save_setting(l, "launcher", "check_updates", check ? "true" : "false");
+    }
+    bool beta = l.ini.get("launcher", "beta", "false") == "true";
+    if (ImGui::Checkbox("Include test versions (beta)", &beta)) {
+        save_setting(l, "launcher", "beta", beta ? "true" : "false");
+    }
+    hint("Test versions come before a release and may have problems.");
+    Updates::State state = l.updates->state();
+    ImGui::BeginDisabled(state == Updates::CHECKING || state == Updates::DOWNLOADING);
+    if (ImGui::Button("Check now")) {
+        l.update_hidden = false;
+        l.update_asked = true;
+        l.updates->check(beta, l.ini.get("launcher", "update_api"));
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    if (state == Updates::CHECKING) {
+        ImGui::TextDisabled("Checking...");
+    } else if (state == Updates::FOUND) {
+        ImGui::TextDisabled("BOZ Redux %s is available (see the top of the window).",
+                            l.updates->release().version.c_str());
+    } else {
+        ImGui::TextDisabled("%s", l.updates->message().empty() ? (std::string("This is version ") + BOZ_VERSION + ".").c_str()
+                                                               : l.updates->message().c_str());
+    }
+}
+
 struct SettingsPage {
     const char *name;
     void (*draw)(Launcher &);
@@ -858,6 +896,7 @@ const SettingsPage SETTINGS_PAGES[] = {
     {"Mouse", settings_mouse},
     {"Controls", settings_controls},
 #endif
+    {"Updates", settings_updates},
     {"Troubleshooting", settings_troubleshooting},
 };
 const int SETTINGS_PAGE_COUNT = (int)(sizeof(SETTINGS_PAGES) / sizeof(SETTINGS_PAGES[0]));
@@ -1882,6 +1921,83 @@ void draw_desktop(Launcher &l, const GameStatus &status) {
     footer();
 }
 
+const char *const NOTES_POPUP = "What's new";
+
+void notes_popup(Launcher &l) {
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(px(640), viewport->Size.x - px(32)),
+                                    std::min(px(520), viewport->Size.y - px(32))));
+    if (!ImGui::BeginPopupModal(NOTES_POPUP, nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize)) {
+        return;
+    }
+    Release release = l.updates->release();
+    ImGui::PushFont(g_brand.strong, 0.0f);
+    ImGui::TextWrapped("BOZ Redux %s", release.version.c_str());
+    ImGui::PopFont();
+    ImGui::BeginChild("notes", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.3f), ImGuiChildFlags_Borders);
+    ImGui::TextWrapped("%s", release.notes.empty() ? "No notes for this release." : release.notes.c_str());
+    touch_scroll();
+    ImGui::EndChild();
+    if (ImGui::Button("Close", ImVec2(-1, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+// A line under the header while an update is available, downloading or done.
+void update_banner(Launcher &l) {
+    Updates::State state = l.updates->state();
+    Release release;
+    if (state == Updates::FOUND && !l.update_hidden) {
+        release = l.updates->release();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(OK_COLOUR, "BOZ Redux %s is available (you have %s).", release.version.c_str(),
+                           BOZ_VERSION);
+        flow_next("What's new");
+        if (ImGui::Button("What's new")) {
+            ImGui::OpenPopup(NOTES_POPUP);
+        }
+        const char *action = l.updates->can_install() ? "Update now" : "Open the download page";
+        flow_next(action);
+        ImGui::BeginDisabled(l.game_running || l.files->busy());
+        if (primary_button(action)) {
+            l.update_asked = true;
+            if (l.updates->can_install()) {
+                l.updates->install();
+            } else {
+                os::open_path(release.page);
+            }
+        }
+        ImGui::EndDisabled();
+        flow_next("Later");
+        if (ImGui::Button("Later")) {
+            l.update_hidden = true;
+        }
+        // BOZ_LAUNCHER_AUTO_UPDATE=1 presses Update now (tests of the update path).
+        static bool automatic = os::getenv_str("BOZ_LAUNCHER_AUTO_UPDATE") == "1";
+        if (automatic && l.updates->can_install()) {
+            automatic = false;
+            l.update_asked = true;
+            l.updates->install();
+        }
+    } else if (state == Updates::DOWNLOADING) {
+        float progress = l.updates->progress();
+        ImGui::ProgressBar(progress < 0 ? -1.0f * (float)ImGui::GetTime() : progress, ImVec2(-1, 0),
+                           l.updates->message().c_str());
+    } else if (state == Updates::READY) {
+        ImGui::TextColored(OK_COLOUR, "%s", l.updates->message().c_str());
+#if !defined(__ANDROID__)
+        l.restart = true;
+#endif
+    } else if (state == Updates::FAILED && l.update_asked) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ERROR_COLOUR);
+        ImGui::TextWrapped("%s", l.updates->message().c_str());
+        ImGui::PopStyleColor();
+    }
+    notes_popup(l);
+}
+
 void draw(Launcher &l, SDL_Window *window) {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -1896,6 +2012,7 @@ void draw(Launcher &l, SDL_Window *window) {
         scan_mods(l);
     }
     header(l, window, status);
+    update_banner(l);
     if (!l.game_note.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ERROR_COLOUR);
         ImGui::TextWrapped("%s", l.game_note.c_str());
@@ -2078,8 +2195,17 @@ int main(int argc, char **argv) {
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
+    finish_update(l.root);  // what the last update left behind
     GameFiles files(l.root, l.bin_dir);
     l.files = &files;
+    Updates updates(l.root);
+    l.updates = &updates;
+    ensure_ini(l);
+    // Screenshots check only against a test server (BOZ_UPDATE_API).
+    if (l.ini.get("launcher", "check_updates", "true") != "false" &&
+        (os::getenv_str("BOZ_LAUNCHER_SCREENSHOT").empty() || !os::getenv_str("BOZ_UPDATE_API").empty())) {
+        updates.check(l.ini.get("launcher", "beta", "false") == "true", l.ini.get("launcher", "update_api"));
+    }
     mod_clean_leftovers(os::join(l.root, "mods"));
     // The first start goes to the game files until the game is installed; later ones to the mods.
     l.tab = files.status().ready() ? TAB_MODS : TAB_GAME_FILES;
@@ -2143,11 +2269,25 @@ int main(int argc, char **argv) {
         SDL_SetRenderDrawColor(renderer, (BRAND_BLACK >> 16) & 0xff, (BRAND_BLACK >> 8) & 0xff, BRAND_BLACK & 0xff, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
-        if (!screenshot.empty() && ++frames == 4) {
+        if (!screenshot.empty() && updates.state() != Updates::CHECKING && ++frames == 4) {
             save_screenshot(renderer, screenshot);
             done = true;
         }
         SDL_RenderPresent(renderer);
+        if (l.restart) {
+            // The update is in place: the new launcher takes over (without the test switch).
+#if defined(_WIN32)
+            _putenv("BOZ_LAUNCHER_AUTO_UPDATE=");
+#else
+            unsetenv("BOZ_LAUNCHER_AUTO_UPDATE");
+#endif
+            os::Process next;
+            std::string launcher = os::join(l.bin_dir, os::executable_name("boz-redux"));
+            if (!os::spawn(next, launcher, {"--root", l.root}, {}, "", l.root)) {
+                std::fprintf(stderr, "could not start %s: %s\n", launcher.c_str(), os::spawn_error().c_str());
+            }
+            done = true;
+        }
     }
 
     if (l.staged_pending) {

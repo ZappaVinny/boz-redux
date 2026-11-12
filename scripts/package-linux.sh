@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-build="$here/build/linux-x86"
+arch="${BOZ_ARCH:-x86}" # x86, or x64 for the 64-bit build (build/linux-x64)
+build="$here/build/linux-$arch"
 stage="$build/package/BOZ-Redux"
 rm -rf "$build/package"
 mkdir -p "$stage"
@@ -12,5 +13,7 @@ cp "$here/packaging/linux/setup.sh" "$here/packaging/linux/run.sh" "$here/packag
 cp "$here/branding/icons/boz-redux-256.png" "$stage/boz-redux.png"
 cp "$here/packaging/THIRD-PARTY.txt" "$stage/"
 mkdir -p "$stage/gamedef" && cp -r "$here/gamedef/"*.toml "$here/gamedef/symbols" "$here/gamedef/console" "$here/gamedef/reflection" "$here/gamedef/events" "$stage/gamedef/"
-(cd "$build/package" && tar -czf BOZ-Redux-linux-x86.tar.gz BOZ-Redux)
-echo "$build/package/BOZ-Redux-linux-x86.tar.gz"
+# files.txt: every file the package owns, which the launcher's updates replace (and nothing else).
+(cd "$stage" && { find . \( -type f -o -type l \) | sed 's|^\./||'; echo files.txt; } | sort -u > files.txt)
+(cd "$build/package" && tar -czf "BOZ-Redux-linux-$arch.tar.gz" BOZ-Redux)
+echo "$build/package/BOZ-Redux-linux-$arch.tar.gz"

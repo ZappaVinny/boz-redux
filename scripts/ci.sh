@@ -59,6 +59,7 @@ case "$target" in
       cmake --build --preset "$preset-tests" -j"$(nproc)"
       ctest --preset "$preset" --output-on-failure
     done
+    BOZ_ARCH=x64 scripts/package-linux.sh
     ;;
   *)
     echo "unknown target: $target" >&2
