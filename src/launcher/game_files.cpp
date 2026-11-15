@@ -156,8 +156,8 @@ void GameFiles::job_install(std::string apk_path) {
     check_image();
     set_message(image_state_ == 1
                     ? "APK installed: version 1.0.11."
-                    : "APK installed, but it is not the 1.0.11 release this client was built for. "
-                      "It may not work.");
+                    : "That APK is not the 1.0.11 release, so BOZ Redux can't run it (another "
+                      "version, or a changed copy). Choose your original APK, version 1.0.11.");
 }
 
 bool GameFiles::verify_pack(int index, const std::string &path) {

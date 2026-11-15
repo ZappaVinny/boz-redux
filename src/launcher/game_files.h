@@ -21,7 +21,9 @@ struct GameStatus {
     bool image_checked = false;
     PackStatus packs[2] = {{"blackops_etc.dz"}, {"blackops_gles1.dz"}};
 
-    bool ready() const { return image && packs[0].present && packs[1].present; }
+    // PLAY needs the exact 1.0.11 game code: mods and the client call it at fixed addresses, so
+    // another version (1.0.8.7, a repack) starts but breaks them.
+    bool ready() const { return image && image_verified && packs[0].present && packs[1].present; }
 };
 
 class GameFiles {

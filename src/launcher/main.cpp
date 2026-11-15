@@ -419,7 +419,21 @@ void image_status(const GameStatus &status) {
     } else if (status.image_verified) {
         status_line(true, "Installed: version 1.0.11", "");
     } else {
-        ImGui::TextColored(WARN_COLOUR, "Installed, but not the 1.0.11 release. It may not work.");
+        ImGui::PushStyleColor(ImGuiCol_Text, ERROR_COLOUR);
+        ImGui::TextWrapped("This APK is not the 1.0.11 release, so BOZ Redux can't run it. Choose "
+                           "your original Black Ops Zombies APK, version 1.0.11.");
+        ImGui::PopStyleColor();
+    }
+}
+
+// Under the APK section: where to ask when the APK or the import does not work.
+const char *const DISCORD_URL = "https://discord.gg/kVPQSMmsPF";
+
+void apk_help() {
+    ImGui::TextDisabled("Trouble with your APK version or importing?");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Ask on the Discord")) {
+        SDL_OpenURL(DISCORD_URL);   // a browser on every platform (os::open_path is a no-op on Android)
     }
 }
 
@@ -437,7 +451,9 @@ void setup_checklist(const GameStatus &status) {
     ImGui::PushFont(g_brand.strong, 0.0f);
     ImGui::TextUnformatted("Two steps, once, then press PLAY:");
     ImGui::PopFont();
-    status_line(status.image, "1. The game APK is installed.", "1. Install your game APK (below).");
+    status_line(status.image && status.image_verified, "1. The game APK is installed.",
+                status.image && status.image_checked ? "1. That APK is not version 1.0.11: choose the right one (below)."
+                                                     : "1. Install your game APK (below).");
     bool packs = status.packs[0].present && status.packs[1].present;
     status_line(packs, "2. The data packs are in place.", "2. Get the data packs (below).");
     ImGui::EndChild();
@@ -473,6 +489,7 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
 
     section("1. Game APK");
     image_status(status);
+    apk_help();
     ImGui::BeginDisabled(busy);
     if (picker && primary_button(status.image ? "Reinstall from an APK file..." : "Choose the APK file...")) {
         std::string picked = os::pick_file("", "", "");
@@ -538,6 +555,7 @@ void game_files_tab(Launcher &l, const GameStatus &status) {
 
     section("1. Game APK");
     image_status(status);
+    apk_help();
     ImGui::SetNextItemWidth(px(-260));
     ImGui::InputTextWithHint("##apk", "Path to com.activision.boz.apk (or drag it onto this window)",
                              l.apk_path, sizeof(l.apk_path));
