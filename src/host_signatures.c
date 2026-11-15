@@ -1035,6 +1035,8 @@ static const struct host_signature SIGNATURES[] = {
     {"s3e_loaded_image_unmap", "v:p"},
     {"s3e_memory_shutdown", "v:"},
     {"s3e_multiplayer_resolve_hostname", "s:p"},
+    {"s3e_multiplayer_server", "s:"},
+    {"s3e_multiplayer_set_server", "v:p"},
     {"s3e_socket_pump", "v:"},
     {"s3e_socket_shutdown", "v:"},
     {"s3e_trampoline_dispatch", "i:i"},

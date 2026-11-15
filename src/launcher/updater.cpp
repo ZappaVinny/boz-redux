@@ -25,7 +25,9 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path to_path(const std::string &utf8) {
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(__cpp_char8_t)
+    return fs::path(std::u8string(utf8.begin(), utf8.end()));   // C++20: u8path is deprecated
+#elif defined(_WIN32)
     return fs::u8path(utf8);
 #else
     return fs::path(utf8);
