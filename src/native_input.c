@@ -366,7 +366,11 @@ void native_input_move(float x, float y, bool sprint) {
 }
 
 static uint32_t hash_string(const char *text) {
-    return s3e_guest_call(g_hash_string, 1, S3E_GUEST_ARG(text));
+    /* In guest memory: a string literal may lie above 4 GiB (the guest-base build). */
+    char *copy = guest_strdup(text);
+    uint32_t value = copy ? s3e_guest_call(g_hash_string, 1, S3E_GUEST_ARG(copy)) : 0;
+    guest_free(copy);
+    return value;
 }
 
 /* What the weapon button's reload branch does: flag it and send ON_RELOAD_BUTTON. */
