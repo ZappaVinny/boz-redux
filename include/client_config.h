@@ -2,6 +2,7 @@
 #define CLIENT_CONFIG_H
 
 #include <stdbool.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +30,23 @@ struct client_binding {
 };
 extern const struct client_binding CLIENT_BINDINGS[];
 extern const int CLIENT_BINDING_COUNT;
+
+/* [display] fov: the game's own field-of-view number (50 in most maps). */
+enum { FOV_MIN = 20, FOV_MAX = 140, FOV_GAME_DEFAULT = 50 };
+
+/* True for a whole or decimal number in FOV_MIN..FOV_MAX; *out gets it. */
+static inline bool fov_parse(const char *text, float *out) {
+    if (!text || !text[0]) {
+        return false;
+    }
+    char *end = NULL;
+    double value = strtod(text, &end);
+    if (end == text || *end || value < (double)(int)FOV_MIN || value > (double)(int)FOV_MAX) {
+        return false;
+    }
+    *out = (float)value;
+    return true;
+}
 
 /* Writes the commented default client.ini to path. */
 bool client_config_write_default(const char *path);

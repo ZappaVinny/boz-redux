@@ -32,6 +32,9 @@ static const char DEFAULT_CONFIG_HEAD[] =
     "# Windows only. auto: ANGLE (Direct3D 11, works on almost every GPU). d3d12, vulkan and\n"
     "# software use the bundled Mesa instead; software is slow but always works.\n"
     "renderer = auto\n"
+    "# Field of view when not aiming, as the game counts it (50 in most maps, 20-140). Empty: each\n"
+    "# map's own. Aiming down sights still zooms.\n"
+    "fov =\n"
     "\n"
     "[input]\n"
     "# Mouse look speed: 0.022 degrees per mouse count at 1.0, the scale Source and Quake games\n"
@@ -63,8 +66,10 @@ static const char DEFAULT_CONFIG_TAIL[] =
     "name =\n"
     "\n"
     "[network]\n"
-    "# Online play: a server that answers for the game's online service (empty: offline).\n"
+    "# Online play: the BOZ server Play Online goes to (empty: offline, Wi-Fi co-op only), and the\n"
+    "# servers added in the launcher's Online settings (comma-separated).\n"
     "server =\n"
+    "servers =\n"
     "voice_chat = false\n"
     "# Co-op discovery: the IPv4 address of the adapter to find rooms on, e.g. your Radmin VPN\n"
     "# address (empty: picked automatically).\n"
@@ -229,6 +234,9 @@ static bool apply(const char *section, const char *key, const char *value) {
             set_default("BOZ_MULTIPLAYER_SERVER", value);
             return true;
         }
+        if (!strcmp(key, "servers")) {   /* the launcher's list to choose from */
+            return true;
+        }
         if (!strcmp(key, "interface")) {
             if (value[0]) {
                 set_default("BOZ_NETWORK_INTERFACE", value);
@@ -242,6 +250,17 @@ static bool apply(const char *section, const char *key, const char *value) {
         return false;
     }
     if (!strcmp(section, "display")) {
+        if (!strcmp(key, "fov")) {
+            float degrees;
+            if (!value[0]) {
+                return true;
+            }
+            if (!fov_parse(value, &degrees)) {
+                return false;
+            }
+            set_default("BOZ_FOV", value);
+            return true;
+        }
         if (!strcmp(key, "fullscreen") && parse_bool(value, &flag)) {
             set_default("BOZ_WINDOWED", flag ? "0" : "1");
             return true;

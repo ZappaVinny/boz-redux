@@ -1,7 +1,8 @@
-/* The `network` module: which online server the game uses for Play Online, for mods that let
- * the player choose one. The game's online service names (*.demonware.net) go to that server
- * (s3e_multiplayer_resolve_hostname); "" keeps the game offline, which is the default. A mod may
- * only name servers its mod.toml lists under [network] connects ("*": any the player enters). */
+/* The `network` module: the online server the game uses for Play Online (chosen in the launcher's
+ * Settings > Online, client.ini [network] server), and server checks for mods. The game's online
+ * service names (*.demonware.net) go to that server (s3e_multiplayer_resolve_hostname); "" keeps
+ * the game offline, the default. A mod may only check servers its mod.toml lists under
+ * [network] connects ("*": any the player enters). */
 #include "lua_runtime_internal.h"
 #include "mods.h"
 #include "s3e_host_internal.h"
@@ -62,17 +63,16 @@ static int api_server(lua_State *state) {
     return 1;
 }
 
-/* network.set_server(host): Play Online goes to host from the next time the player opens
- * Multiplayer; "" or nil turns online play off. */
+/* network.set_server(host): retired. The launcher's Settings > Online chooses the server (it
+ * checks that it is a BOZ server); a mod's choice is ignored so the two never disagree. */
 static int api_set_server(lua_State *state) {
     const struct mod_info *mod = calling_mod(state);
     const char *host = luaL_optstring(state, 1, "");
-    if (host[0]) {
-        check_allowed(state, mod, host);
-    }
-    if (strcmp(host, s3e_multiplayer_server()) != 0) {
-        fprintf(stderr, "[network] mod %s: online server %s\n", mod->id, host[0] ? host : "off");
-        s3e_multiplayer_set_server(host);
+    static bool told;
+    if (!told) {
+        told = true;
+        fprintf(stderr, "[network] mod %s asked for online server %s: ignored, the launcher's "
+                        "Online settings choose it\n", mod->id, host[0] ? host : "off");
     }
     return 0;
 }

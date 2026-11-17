@@ -8,6 +8,7 @@
 #include "mod_install.h"
 #include "mods.h"
 #include "os.h"
+#include "server_check.h"
 #include "updater.h"
 
 #include "imgui.h"
@@ -25,6 +26,8 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <future>
 #include <map>
 #include <set>
 #include <string>
@@ -80,6 +83,13 @@ struct Launcher {
     bool update_hidden = false;   // "Later" pressed
     bool update_asked = false;    // the player started the check or the update: show failures
     bool restart = false;         // the update is in place: start the new launcher
+
+    char server_input[128] = "";
+    std::future<ServerCheck> server_check;  // a server being checked (added or chosen)
+    std::string server_checking;            // its name
+    bool server_adding = false;             // Add (true) or choosing one in the list (false)
+    std::string server_note;                // the last check's result
+    bool server_note_ok = false;
 
     os::Process game;
     bool game_running = false;
@@ -430,6 +440,15 @@ void image_status(const GameStatus &status) {
 const char *const DISCORD_URL = "https://discord.gg/kVPQSMmsPF";
 
 void apk_help() {
+    if (g_touch) {   // phones: the line wraps, and a full-size button a finger can hit
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Trouble with your APK version or importing? Ask on the Discord.");
+        ImGui::PopTextWrapPos();
+        if (ImGui::Button("Open the Discord")) {
+            SDL_OpenURL(DISCORD_URL);
+        }
+        return;
+    }
     ImGui::TextDisabled("Trouble with your APK version or importing?");
     ImGui::SameLine();
     if (ImGui::SmallButton("Ask on the Discord")) {
@@ -749,6 +768,30 @@ void settings_player_display(Launcher &l) {
             save_setting(l, "display", "scaling", chosen);
         }
     }
+    {
+        float saved = 0.0f;
+        bool custom = fov_parse(l.ini.get("display", "fov").c_str(), &saved);
+        int fov = custom ? (int)(saved + 0.5f) : FOV_GAME_DEFAULT;
+        ImGui::SetNextItemWidth(g_portrait ? -px(120) : px(260));
+        ImGui::SliderInt("Field of view", &fov, FOV_MIN, FOV_MAX, custom ? "%d" : "%d (map's own)",
+                         ImGuiSliderFlags_AlwaysClamp);
+        // Keep the dragged value in memory each frame; write the file once on release.
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            save_setting(l, "display", "fov", std::to_string(fov));
+        } else if (ImGui::IsItemActive() && (custom || fov != FOV_GAME_DEFAULT)) {
+            l.ini.set("display", "fov", std::to_string(fov));
+        }
+        hint("The game's own number: most maps use 50. Higher shows more around you. Aiming down "
+             "sights still zooms.");
+        if (custom) {
+            if (!g_touch) {
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Map's own##fov")) {
+                save_setting(l, "display", "fov", "");
+            }
+        }
+    }
 #if !defined(__ANDROID__)
     bool software_cursor = l.ini.get("display", "software_cursor", "false") == "true";
     if (ImGui::Checkbox("Crosshair pointer in menus", &software_cursor)) {
@@ -855,6 +898,141 @@ void settings_controls(Launcher &l) {
 }
 #endif
 
+// Online: where Play Online goes. Off, or BOZ servers the player adds (never a preset one).
+// A server is checked before it is added or chosen (server_check.cpp), so a typo or another
+// kind of server is refused with what is wrong.
+std::vector<std::string> saved_servers(Launcher &l) {
+    std::vector<std::string> servers;
+    std::string list = l.ini.get("network", "servers");
+    size_t start = 0;
+    while (start <= list.size()) {
+        size_t comma = list.find(',', start);
+        std::string host = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        host.erase(0, host.find_first_not_of(" \t"));
+        host.erase(host.find_last_not_of(" \t") + 1);
+        if (!host.empty() && std::find(servers.begin(), servers.end(), host) == servers.end()) {
+            servers.push_back(host);
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    std::string chosen = l.ini.get("network", "server");   // set before the list existed
+    if (!chosen.empty() && std::find(servers.begin(), servers.end(), chosen) == servers.end()) {
+        servers.push_back(chosen);
+    }
+    return servers;
+}
+
+void save_servers(Launcher &l, const std::vector<std::string> &servers) {
+    std::string list;
+    for (const std::string &host : servers) {
+        list += (list.empty() ? "" : ",") + host;
+    }
+    save_setting(l, "network", "servers", list);
+}
+
+void start_server_check(Launcher &l, const std::string &host, bool adding) {
+    l.server_checking = host;
+    l.server_adding = adding;
+    l.server_note = "Checking " + host + "...";
+    l.server_note_ok = true;
+    l.server_check = std::async(std::launch::async, check_boz_server, host);
+}
+
+// A finished check: add or choose the server when it is a BOZ server.
+void finish_server_check(Launcher &l) {
+    if (!l.server_check.valid() ||
+        l.server_check.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return;
+    }
+    ServerCheck result = l.server_check.get();
+    std::string host = l.server_checking;
+    l.server_checking.clear();
+    l.server_note_ok = result.ok;
+    if (!result.ok) {
+        l.server_note = host + ": " + result.message;
+        return;
+    }
+    std::vector<std::string> servers = saved_servers(l);
+    if (std::find(servers.begin(), servers.end(), host) == servers.end()) {
+        servers.push_back(host);
+        save_servers(l, servers);
+    }
+    save_setting(l, "network", "server", host);
+    if (l.server_adding) {
+        l.server_input[0] = 0;
+    }
+    l.server_note = host + ": BOZ server found. Play Online goes there from the next game start.";
+}
+
+void settings_online(Launcher &l) {
+    finish_server_check(l);
+    section("Online");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted("Play Online, in the game's Multiplayer menu, goes to the BOZ server chosen "
+                           "here. Everyone who plays together chooses the same one. Wi-Fi co-op "
+                           "needs none.");
+    ImGui::PopTextWrapPos();
+    bool busy = l.server_check.valid();
+    std::string chosen = l.ini.get("network", "server");
+    std::vector<std::string> servers = saved_servers(l);
+    ImGui::BeginDisabled(busy);
+    if (ImGui::RadioButton("Off (Wi-Fi co-op only)", chosen.empty()) && !chosen.empty()) {
+        save_setting(l, "network", "server", "");
+        l.server_note = "Online play is off from the next game start.";
+        l.server_note_ok = true;
+    }
+    int remove = -1;
+    for (size_t i = 0; i < servers.size(); ++i) {
+        ImGui::PushID((int)i);
+        if (ImGui::RadioButton(servers[i].c_str(), servers[i] == chosen) && servers[i] != chosen) {
+            start_server_check(l, servers[i], false);   // still a BOZ server? then it is chosen
+        }
+        ImGui::SameLine();
+        if (g_touch ? ImGui::Button("Remove") : ImGui::SmallButton("Remove")) {
+            remove = (int)i;
+        }
+        ImGui::PopID();
+    }
+    if (remove >= 0) {
+        if (servers[remove] == chosen) {
+            save_setting(l, "network", "server", "");
+        }
+        servers.erase(servers.begin() + remove);
+        save_servers(l, servers);
+        l.server_note.clear();
+    }
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(g_portrait ? -1.0f : px(320));
+    bool entered = ImGui::InputTextWithHint("##server", "A server's name or IP address", l.server_input,
+                                            sizeof(l.server_input), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!g_portrait) {
+        ImGui::SameLine();
+    }
+    std::string host = l.server_input;
+    host.erase(0, host.find_first_not_of(" \t"));
+    host.erase(host.find_last_not_of(" \t") + 1);
+    ImGui::BeginDisabled(host.empty());
+    if ((ImGui::Button("Add server") || entered) && !host.empty()) {
+        start_server_check(l, host, true);
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    if (!l.server_note.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, busy ? ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+                                                  : l.server_note_ok ? OK_COLOUR : ERROR_COLOUR);
+        ImGui::TextUnformatted(l.server_note.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+    }
+    hint("Only BOZ servers are accepted (they run the game's online service, like cod-boz-online). "
+         "The launcher checks a server before adding or choosing it.");
+}
+
 void settings_troubleshooting(Launcher &l) {
     section("Troubleshooting");
     bool status = l.ini.get("debug", "status", "false") == "true";
@@ -914,6 +1092,7 @@ const SettingsPage SETTINGS_PAGES[] = {
     {"Mouse", settings_mouse},
     {"Controls", settings_controls},
 #endif
+    {"Online", settings_online},
     {"Updates", settings_updates},
     {"Troubleshooting", settings_troubleshooting},
 };

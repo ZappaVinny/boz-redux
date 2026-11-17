@@ -226,6 +226,7 @@ target_sources(codboz_s3e_loader PRIVATE
   ${BOZ_CPU_SOURCES}
   src/client_config.c
   src/game_patches/crash_recovery.c
+  src/game_patches/fov.c
   src/game_patches/frame_interpolation.c
   src/game_patches/hud_sticks.c
   src/game_patches/prompt_button.c
@@ -328,6 +329,7 @@ if(ANDROID)
     src/launcher/os.cpp
     src/launcher/os_android.cpp
     src/launcher/sha256.cpp
+    src/launcher/server_check.cpp
     src/client_config.c
     src/mods.c
     tools/apk_extract/codboz_apk_extract.c
@@ -358,6 +360,7 @@ add_executable(boz-redux
   src/launcher/ini_file.cpp
   src/launcher/os.cpp
   src/launcher/sha256.cpp
+  src/launcher/server_check.cpp
   src/client_config.c
   src/mods.c)
 target_include_directories(boz-redux PRIVATE include)
@@ -365,7 +368,7 @@ target_compile_options(boz-redux PRIVATE ${BOZ_WARNINGS})
 target_link_libraries(boz-redux PRIVATE imgui boz_common boz_branding miniz)
 boz_windows_resources(boz-redux "BOZ Redux launcher")
 if(WIN32)
-  target_link_libraries(boz-redux PRIVATE comdlg32 shell32 ole32)
+  target_link_libraries(boz-redux PRIVATE comdlg32 shell32 ole32 ws2_32)
   target_link_options(boz-redux PRIVATE -static -static-libgcc -static-libstdc++)
   set_target_properties(boz-redux PROPERTIES WIN32_EXECUTABLE ON)
 else()

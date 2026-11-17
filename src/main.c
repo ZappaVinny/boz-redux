@@ -263,6 +263,7 @@ int main(int argc, char **argv) {
         /* Mods start before the game so their hooks and asset patches see everything it does. */
         lua_runtime_start();
         native_input_init();
+        fov_install();
         int rc = (int)arm_emu_call(GUEST_ADDRESS(loaded.base + loaded.entry_offset), 0, NULL);
         fprintf(stderr, "S3E entry returned %d\n", rc);
     }

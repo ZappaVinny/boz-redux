@@ -24,6 +24,10 @@ bool player_name_install(struct s3e_loaded_image *loaded, uint32_t player_name_a
  * BOZ_TOUCHPAD_CONTROLS. */
 bool prompt_button_install(struct s3e_loaded_image *loaded);
 
+/* The field of view from client.ini [display] fov (BOZ_FOV, the game's own number; unset or 0:
+ * each map's own). Hooks CWeaponManager::UpdateFov; needs the emulator and gamedef. */
+bool fov_install(void);
+
 /* The HUD's touch stick art in ingame.group.bin made transparent (hud_sticks.c). */
 bool hud_sticks_apply_to(const char *name);
 bool hud_sticks_hide(uint8_t *data, size_t size);

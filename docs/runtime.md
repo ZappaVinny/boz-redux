@@ -57,7 +57,8 @@ scripts/run-desktop.sh [game-dir]
 | `BOZ_FPS=N` | Frame rate limit (0: none) |
 | `BOZ_RENDERER=mesa` | Windows: the bundled Mesa instead of ANGLE (with `GALLIUM_DRIVER`) |
 | `BOZ_PLAYER_NAME` | The name the game uses for you (`[player] name`) |
-| `BOZ_MULTIPLAYER_SERVER` | A server answering the game's online service (`[network] server`) |
+| `BOZ_MULTIPLAYER_SERVER` | The BOZ server Play Online goes to (`[network] server`, chosen in the launcher's Settings > Online) |
+| `BOZ_FOV` | Field of view when not aiming, the game's number 20-140 (`[display] fov`; unset: each map's own, mostly 50) |
 | `BOZ_VOICE_CHAT=1` | Voice chat on (`[network] voice_chat`) |
 | `BOZ_NETWORK_INTERFACE` | IPv4 address of the adapter co-op discovery uses, e.g. a Radmin VPN address (`[network] interface`; empty: automatic) |
 | `BOZ_TRACE_NET=1` | Log sockets (bind, listen, accept, connect, errors) and co-op discovery (published and found games, the chosen interface) (`[debug] log_network`) |

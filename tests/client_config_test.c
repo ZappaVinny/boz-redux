@@ -39,8 +39,10 @@ int main(void) {
     unsetenv("BOZ_PERF_STATS");
     unsetenv("BOZ_TRACE_NET");
     unsetenv("BOZ_PLAYER_NAME");
+    unsetenv("BOZ_FOV");
     client_config_load(root);
     assert(access(path, R_OK) == 0);
+    expect_env("BOZ_FOV", NULL);   /* empty: each map's own field of view */
     expect_env("BOZ_WINDOWED", "0");
     expect_env("BOZ_VSYNC", "1");
     expect_env("BOZ_FPS", NULL);
@@ -51,6 +53,25 @@ int main(void) {
     expect_env("BOZ_PLAYER_NAME", NULL);   /* empty: s3e_config.c picks a name per PC */
     for (int i = 0; i < CLIENT_BINDING_COUNT; ++i) {   /* every binding is in the file */
         assert(!strcmp(client_config_key_binding(CLIENT_BINDINGS[i].action), CLIENT_BINDINGS[i].defaults));
+    }
+
+    /* [display] fov: the game's number, 20-140; [network] servers is the launcher's list. */
+    {
+        float degrees = 0.0f;
+        assert(fov_parse("90", &degrees) && degrees == 90.0f);
+        assert(fov_parse("62.5", &degrees) && degrees == 62.5f);
+        assert(!fov_parse("10", &degrees) && !fov_parse("141", &degrees));
+        assert(!fov_parse("", &degrees) && !fov_parse("wide", &degrees) && !fov_parse("90x", &degrees));
+        unsetenv("BOZ_FOV");
+        unsetenv("BOZ_MULTIPLAYER_SERVER");
+        write_file(path, "[display]\nfov = 85\n[network]\nserver = boz.example\nservers = boz.example,other.example\n");
+        client_config_load(root);
+        expect_env("BOZ_FOV", "85");
+        expect_env("BOZ_MULTIPLAYER_SERVER", "boz.example");
+        unsetenv("BOZ_FOV");
+        write_file(path, "[display]\nfov = 400\n");
+        client_config_load(root);
+        expect_env("BOZ_FOV", NULL);   /* out of range: ignored */
     }
 
     /* File values apply; variables already set by the user win; comments and bad lines are
