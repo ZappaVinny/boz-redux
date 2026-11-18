@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The client's version, the one source for every program and the Android app (its Gradle file
 # reads these two lines). A release clears the suffix: "0.4.0-dev" during work, "0.4.0" released.
-project(boz_redux_client VERSION 0.4.2 LANGUAGES C CXX)
+project(boz_redux_client VERSION 0.4.3 LANGUAGES C CXX)
 set(BOZ_VERSION_SUFFIX "")
 set(BOZ_VERSION "${PROJECT_VERSION}${BOZ_VERSION_SUFFIX}")
 if(WIN32)
