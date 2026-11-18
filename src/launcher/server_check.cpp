@@ -129,20 +129,29 @@ Lobby check_lobby(addrinfo *addresses) {
         }
         connected_any = true;
         send(s, (const char *)request, sizeof(request), SEND_FLAGS);
-        unsigned char reply[6];   // frame length, then the body's first two bytes
-        size_t got = 0;
-        while (got < sizeof(reply) && wait_for(s, false, milliseconds_left(deadline))) {
-            int n = (int)recv(s, (char *)reply + got, (int)(sizeof(reply) - got), 0);
+        // The reply must be one whole frame: a length, then exactly that many bytes, the first
+        // being the game's cleartext (0) or encrypted (1) marker. Servers differ in what they
+        // answer (cod-boz-online: an AccountForMMP error, 00 0b; others a ticket), but anything
+        // that isn't a BOZ server can't produce a frame that matches its own length.
+        unsigned char reply[4100];
+        size_t got = 0, want = 4;
+        while (got < want && wait_for(s, false, milliseconds_left(deadline))) {
+            int n = (int)recv(s, (char *)reply + got, (int)(want - got), 0);
             if (n <= 0) {
                 break;
             }
             got += (size_t)n;
+            if (got == 4) {
+                uint32_t length = (uint32_t)reply[0] | (uint32_t)reply[1] << 8 |
+                                  (uint32_t)reply[2] << 16 | (uint32_t)reply[3] << 24;
+                if (length < 2 || length > sizeof(reply) - 4) {
+                    break;
+                }
+                want = 4 + length;
+            }
         }
         close_socket(s);
-        uint32_t length = got >= 4 ? (uint32_t)reply[0] | (uint32_t)reply[1] << 8 |
-                                         (uint32_t)reply[2] << 16 | (uint32_t)reply[3] << 24
-                                   : 0;
-        if (got == sizeof(reply) && length >= 2 && length < 4096 && reply[4] == 0x00 && reply[5] == 0x0b) {
+        if (want > 4 && got == want && reply[4] <= 0x01) {
             return Lobby::BOZ;
         }
         return Lobby::NOT_BOZ;  // it answered (or kept quiet), but not like a BOZ server
